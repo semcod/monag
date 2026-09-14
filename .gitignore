@@ -1,0 +1,13 @@
+/.worktrees/
+/.subactor/leases/
+/.subactor/sessions/
+/.subactor/recovery/
+/.subactor/receipts/
+/.subactor/cache/
+/.subactor/snapshots/
+/.venv/
+/dist/
+/build/
+*.egg-info/
+__pycache__/
+*.pyc
