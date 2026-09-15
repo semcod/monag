@@ -1,0 +1,86 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-022",
+  "summary": "Add a single-repository semcod/regix quality gate command",
+  "workstream": "application",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P2",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-022/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/**",
+    "tests/**"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [
+    "ticket-006"
+  ],
+  "conflictsWith": [],
+  "integrationTicket": "ticket-001",
+  "delivery": {
+    "acceptedBaseSha": "ed5a84fa47a2c794255c1cf917505ecce9ecc1ff",
+    "targetBranch": "main",
+    "outcome": "Add `monag quality`: a read-only semcod/regix quality gate (`regix gates`) for exactly one repository. Deliberately refuses workspace mode (--root must be a Git checkout) since regix gates costs roughly a minute per repository (measured ~8-78s depending on cache warmth) -- scanning many repositories the way catalog/audit/export do would take tens of minutes.",
+    "nonGoals": [
+      "monag never invokes a regix write/fix command; only the read-only `gates` subcommand.",
+      "No workspace-wide scanning; explicitly refused, not silently slow.",
+      "monag does not vendor, install, or require regix; it is an optional external tool."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 45,
+    "budgets": {
+      "maxImplementationFiles": 3,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 1,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "New src/monag/quality.py: regix_available()/run_regix()/scan()/markdown(), following the same mockable-subprocess-boundary pattern as export.py's ticket-radar integration. Wire a new `quality` subcommand (not a flag on catalog/export, since its cost/scope model is fundamentally different: single-repository, ~1 minute, not bulk-scannable).",
+      "components": [
+        {
+          "name": "cli",
+          "paths": [
+            "src/monag/**"
+          ]
+        },
+        {
+          "name": "tests",
+          "paths": [
+            "tests/**"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "monag quality subcommand"
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the application slice through protected review."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python -m unittest discover -s tests -v"
+        ],
+        "evidence": "Quality gate module (workspace-refusal, missing-binary, success, failure, invalid-output) and CLI wiring regression suite passes."
+      }
+    ]
+  }
+}
