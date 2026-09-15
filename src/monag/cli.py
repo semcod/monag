@@ -1,4 +1,4 @@
-"""Terminal dashboard and explicit task wrapper."""
+"""Terminal dashboard, interactive shell and explicit task wrapper."""
 import argparse
 from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
@@ -17,6 +17,29 @@ from .agents import aliases
 from . import history
 from .doctor import diagnose
 from . import presentation
+
+
+SHELL_COMMANDS = {
+    'refresh': 'odśwież status i backlog Planfile',
+    'status': 'pokaż jeden snapshot agentów i checkoutów',
+    'resume': 'pokaż worktree, lease i otwarte tickety Planfile',
+    'audit': 'porównaj lokalne tickety Planfile z GitHub Issues',
+    'catalog': 'pokaż lokalny katalog projektów',
+    'history': 'pokaż zapisane obserwacje',
+    'help': 'pokaż tę pomoc',
+    'quit': 'zakończ powłokę',
+}
+
+
+def shell_help():
+    """Return a short, stable command reference for the interactive shell."""
+    lines = ['MONAG shell — polecenia:']
+    lines.extend(f'  {name:<8} {description}' for name, description in SHELL_COMMANDS.items())
+    lines.append('  exit     alias dla quit')
+    lines.append('')
+    lines.append('Raporty są tylko obserwacją. Synchronizację wykonaj jawnie:')
+    lines.append('  planfile sync github --direction both')
+    return '\n'.join(lines)
 
 
 def safe(value):
@@ -139,7 +162,7 @@ def run_task(args):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Monitor local agents and Git workspace activity (Linux). No command: interactive watch in a terminal, otherwise one snapshot.')
+    parser = argparse.ArgumentParser(description='Monitor local agents and Git workspace activity (Linux). No command: interactive shell in a terminal, otherwise one snapshot.')
     parser.set_defaults(interval=5, no_record=False, retention_days=7)
     parser.add_argument('--root', type=Path, default=Path.home() / 'github')
     parser.add_argument('--state-dir', type=Path, default=Path(os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state'))) / 'monag')
@@ -196,6 +219,7 @@ def main(argv=None):
     watch.add_argument('--no-record', action='store_true', help='disable local history recording')
     watch.add_argument('--retention-days', type=int, default=7)
     watch.add_argument('--interval', type=float, default=5)
+    sub.add_parser('shell', help='interactive command shell (default in a terminal)')
     run = sub.add_parser('run', help='wrap an agent command with an explicit task description')
     run.add_argument('--agent-kind', default='reported', help='label for an otherwise unknown agent')
     run.add_argument('--task', required=True)
@@ -204,7 +228,7 @@ def main(argv=None):
     run.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     if args.mode is None:
-        args.mode = ('watch' if sys.stdout.isatty() and args.output not in {'json', 'markdown'}
+        args.mode = ('shell' if sys.stdout.isatty() and args.output not in {'json', 'markdown'}
                      else 'status')
     if sys.platform != 'linux':
         parser.error('process monitoring currently requires Linux /proc')
@@ -312,6 +336,83 @@ def main(argv=None):
                        args.open_files, announce)
             return 0
         cache = {}
+        if args.mode == 'shell':
+            # The shell deliberately uses regular Markdown reports rather than
+            # Rich Live's alternate screen.  This keeps the first useful
+            # dashboard visible while the user chooses the next observation.
+            def show_status():
+                since = (datetime.now(timezone.utc) - timedelta(hours=args.hours)).isoformat()
+                data = snapshot(root, args.state_dir, args.depth, since, args.github, cache,
+                                registry, args.machine, args.all_users, args.open_files, args.agents_only)
+                data['detector_scope'] = sorted(args.agent)
+                data['events'] = history.record(args.state_dir, data, 7)
+                if output_format == 'json':
+                    print(json.dumps(data, ensure_ascii=True), flush=True)
+                elif output_format in {'terminal', 'markdown'}:
+                    display_report(presentation.markdown(data, args.limit, args.view))
+                else:
+                    print(render(data, args.limit), flush=True)
+
+            def show_resume():
+                from . import resume
+                data = resume.scan(root, args.depth)
+                if output_format == 'json':
+                    print(json.dumps(data, ensure_ascii=True), flush=True)
+                else:
+                    display_report(resume.markdown(data, args.limit, all_projects=True))
+
+            def show_report(command_name):
+                if command_name == 'status':
+                    show_status()
+                elif command_name == 'resume':
+                    show_resume()
+                elif command_name == 'refresh':
+                    show_status()
+                    show_resume()
+                elif command_name == 'audit':
+                    from . import audit
+                    data = audit.scan(root, args.depth, 200)
+                    if output_format == 'json':
+                        print(json.dumps(data, ensure_ascii=True), flush=True)
+                    else:
+                        display_report(audit.markdown(data, args.limit))
+                elif command_name == 'catalog':
+                    from . import catalog
+                    data = catalog.scan(root, args.depth)
+                    if output_format == 'json':
+                        print(json.dumps(data, ensure_ascii=True), flush=True)
+                    else:
+                        display_report(catalog.markdown(data, args.limit))
+                elif command_name == 'history':
+                    data = history.read(args.state_dir, args.limit, None, None, args.hours)
+                    if output_format == 'json':
+                        print(json.dumps(data, ensure_ascii=True), flush=True)
+                    elif output_format in {'terminal', 'markdown'}:
+                        display_report(presentation.history_markdown(data))
+                    else:
+                        print('\n'.join(event_line(e) for e in data) or 'No recorded observations.', flush=True)
+
+            print(shell_help(), flush=True)
+            show_report('refresh')
+            while True:
+                try:
+                    command_line = input('monag> ').strip()
+                except (EOFError, OSError):
+                    print('\nMONAG shell zakończony.', flush=True)
+                    return 0
+                if not command_line:
+                    continue
+                command_name = command_line.split(maxsplit=1)[0].lower()
+                if command_name in {'quit', 'exit'}:
+                    print('MONAG shell zakończony.', flush=True)
+                    return 0
+                if command_name in {'help', '?'}:
+                    print(shell_help(), flush=True)
+                    continue
+                if command_name not in SHELL_COMMANDS:
+                    print(f'Nieznane polecenie: {command_name}. Wpisz help.', flush=True)
+                    continue
+                show_report(command_name)
         if console is not None and args.mode == 'watch' and sys.stdout.isatty():
             loading = Markdown('# MONAG\n\nScanning workspace… Press Ctrl-C to exit.')
             live = Live(loading, console=console, screen=True, auto_refresh=False, vertical_overflow='ellipsis')

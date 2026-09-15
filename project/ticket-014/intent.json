@@ -1,0 +1,99 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-014",
+  "summary": "Planfile backlog visibility and interactive shell",
+  "workstream": "integration",
+  "allowedPaths": [
+    "project/ticket-014/**",
+    "src/monag/**",
+    "tests/**",
+    "README.md"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [
+    "ticket-003",
+    "ticket-006"
+  ],
+  "integrationTicket": "ticket-001",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P2",
+    "origin": "requested"
+  },
+  "delivery": {
+    "acceptedBaseSha": "391ea77a147fdbb36028267e21bef431713198bd",
+    "targetBranch": "main",
+    "outcome": "Make the Planfile backlog visible and provide an interactive shell that presents Markdown observations at startup while preserving explicit one-shot and watch modes. Repository-local Planfile/workflow files remain a separately serialized adoption slice because existing worktrees own those paths.",
+    "nonGoals": [
+      "No automatic takeover or task execution; reports remain read-only.",
+      "No credential access beyond configured Planfile/GitHub tooling."
+    ],
+    "complexity": "M",
+    "estimatedMinutes": 120,
+    "budgets": {
+      "maxImplementationFiles": 9,
+      "maxAffectedComponents": 3,
+      "maxPublicInterfaceChanges": 2,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Add a command dispatcher around existing read-only reports; keep the live watch path explicit and add a tracked repository-local Planfile with a GitHub sync workflow.",
+      "components": [
+        {
+          "name": "cli",
+          "paths": [
+            "src/monag/**"
+          ]
+        },
+        {
+          "name": "tests",
+          "paths": [
+            "tests/**"
+          ]
+        },
+        {
+          "name": "documentation",
+          "paths": [
+            "README.md"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "monag shell command",
+        "bare monag TTY default"
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the protected PR."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "PYTHONPATH=src python -m unittest discover -s tests -q"
+        ],
+        "evidence": "Monag regression suite passes."
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "planfile validate schema .planfile/sprints/current.yaml"
+        ],
+        "evidence": "Repository-local sprint schema passes."
+      }
+    ]
+  }
+}
