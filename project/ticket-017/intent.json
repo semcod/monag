@@ -1,0 +1,74 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-017",
+  "summary": "Fix goal.yaml publish command pattern",
+  "workstream": "governance",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P3",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-017/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "goal.yaml"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "6cfdd5b1687865b8afa49fd7f234a12d63fab6c9",
+    "targetBranch": "main",
+    "outcome": "goal.yaml's strategies.python.publish used 'python -m twine upload --non-interactive dist/monag-{version}*', which `goal doctor` flags as PY013 (wrong pattern; expected 'twine upload --skip-existing dist/monag-{version}*'). Fixed to the expected pattern; `goal doctor` now reports no issues.",
+    "nonGoals": [
+      "Publishing stays disabled (publish_enabled: false, publishing.enabled: false); this only fixes the command pattern for when it is later turned on.",
+      "No change to versioning, changelog, or governance.delivery settings beyond what `goal doctor`'s own auto_update_config expansion adds verbatim."
+    ],
+    "complexity": "XS",
+    "estimatedMinutes": 10,
+    "budgets": {
+      "maxImplementationFiles": 1,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Single-line fix to strategies.python.publish in goal.yaml. Running `goal doctor` to verify also re-expands the file to its full canonical template (goal's own auto_update_config: true behavior, not a deliberate expansion here) -- kept as-is since goal doctor validates it clean and it contains no secrets, only token_env names and detection regexes.",
+      "components": [
+        {
+          "name": "config",
+          "paths": [
+            "goal.yaml"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert goal.yaml through protected review."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "goal doctor"
+        ],
+        "evidence": "PY013 no longer reported; doctor summary shows no issues found."
+      }
+    ]
+  }
+}
