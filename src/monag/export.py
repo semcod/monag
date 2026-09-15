@@ -16,13 +16,23 @@ Merges three existing monag reports into one reviewable list:
 Every candidate keeps its own evidence (repository, URL, source report) so
 a reviewer can trace it back. Priority is passed through only where a
 source already declared one; this module never invents one.
+
+With ``--radar``, each candidate is additionally, optionally sized by the
+external, deterministic `subactor/ticket-radar` tool (complexity/score/time
+estimate/split recommendation) when it is installed on PATH -- monag still
+works identically without it; a missing or failing ticket-radar leaves
+``radar: None`` on the candidate, never a guessed size.
 """
 from datetime import datetime, timezone
+import json
+import shutil
+import subprocess
 import time
 
 from . import audit, catalog, resume
 
 SCHEMA = 'monag.export/v1'
+RADAR_BIN = 'ticket-radar'
 
 
 def audit_candidates(audit_data):
@@ -83,12 +93,69 @@ def resume_context(resume_data):
     return context
 
 
-def scan(root, depth=2, issue_limit=200):
+def radar_available():
+    return shutil.which(RADAR_BIN) is not None
+
+
+def run_radar(args, input_text, timeout=20):
+    """Thin, mockable subprocess boundary -- monitor.command() has no stdin support."""
+    try:
+        proc = subprocess.run(args, input=input_text, capture_output=True,
+                              text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return None, f'{args[0]}: {type(error).__name__}'
+    if proc.returncode:
+        return None, f'{args[0]} failed (exit {proc.returncode}): {proc.stderr.strip()[:200]}'
+    return proc.stdout, None
+
+
+def radar_assess(candidate, repository_root, timeout=20):
+    """One candidate's size/risk from subactor/ticket-radar; (None, error) on any failure.
+
+    ticket-radar is optional and external: a missing binary, a timeout, or
+    unparseable output all fall back to (None, error) -- never a guessed size.
+    """
+    payload = json.dumps({
+        'id': candidate.get('id') or (candidate['title'] or 'candidate')[:64],
+        'name': candidate['title'],
+        'status': 'open',
+        **({'priority': candidate['priority']} if candidate.get('priority') not in (None, 'unknown') else {}),
+    })
+    out, error = run_radar([RADAR_BIN, '--repository-root', str(repository_root), '-'], payload, timeout)
+    if error:
+        return None, error
+    try:
+        assessment = json.loads(json.loads(out)['jsonl'])
+    except (ValueError, KeyError, TypeError):
+        return None, f'{RADAR_BIN}: invalid output'
+    estimate = assessment.get('estimate') if isinstance(assessment.get('estimate'), dict) else {}
+    split = assessment.get('split') if isinstance(assessment.get('split'), dict) else {}
+    return {
+        'complexity': assessment.get('complexity'),
+        'score': assessment.get('score'),
+        'estimated_minutes': estimate.get('minutes'),
+        'within_budget': estimate.get('within_budget'),
+        'diagnostics': assessment.get('diagnostics', []),
+        'split_recommended': bool(split.get('recommended')),
+    }, None
+
+
+def scan(root, depth=2, issue_limit=200, radar=False):
     started = time.monotonic()
     audit_data = audit.scan(root, depth, issue_limit)
     catalog_data = catalog.scan(root, depth)
     resume_data = resume.scan(root, depth)
     candidates = audit_candidates(audit_data) + catalog_candidates(catalog_data)
+    radar_errors = []
+    if radar:
+        if radar_available():
+            for candidate in candidates:
+                assessment, error = radar_assess(candidate, candidate['path'])
+                candidate['radar'] = assessment
+                if error:
+                    radar_errors.append(f"{candidate['path']}: {candidate['title']}: {error}")
+        else:
+            radar_errors.append(f'{RADAR_BIN} not found on PATH; candidates left unsized')
     context = resume_context(resume_data)
     return {
         'schema': SCHEMA, 'root': str(root),
@@ -96,6 +163,7 @@ def scan(root, depth=2, issue_limit=200):
         'duration_seconds': round(time.monotonic() - started, 2),
         'candidates': candidates, 'candidate_count': len(candidates),
         'existing_open_tickets': context, 'existing_open_ticket_count': len(context),
+        'radar_requested': radar, 'radar_errors': radar_errors,
         'sources': {'audit': {'repository_count': audit_data['repository_count'],
                               'errors': len(audit_data['errors'])},
                    'catalog': {'repository_count': catalog_data['repository_count']},
@@ -114,11 +182,25 @@ def markdown(data, limit=40):
              f"**{data['existing_open_ticket_count']}** · scan: {data['duration_seconds']} s.",
              '', 'monag creates, imports or claims nothing here; this is a reviewable list.', '']
     shown = data['candidates'][:limit]
-    lines.append(table(['Origin', 'Repository', 'Title', 'Evidence'],
-                       [[c['origin'], c['repo'] or c['path'], c['title'], c['evidence']]
-                        for c in shown]))
+    if data['radar_requested']:
+        def radar_cell(c):
+            r = c.get('radar')
+            if not r:
+                return 'unsized'
+            return f"{r['complexity']} · score {r['score']} · {r['estimated_minutes']}m" + \
+                   (' · split?' if r['split_recommended'] else '')
+        lines.append(table(['Origin', 'Repository', 'Title', 'Radar', 'Evidence'],
+                           [[c['origin'], c['repo'] or c['path'], c['title'], radar_cell(c), c['evidence']]
+                            for c in shown]))
+    else:
+        lines.append(table(['Origin', 'Repository', 'Title', 'Evidence'],
+                           [[c['origin'], c['repo'] or c['path'], c['title'], c['evidence']]
+                            for c in shown]))
     if len(data['candidates']) > limit:
         lines.append(f"\n{len(data['candidates']) - limit} more candidates; use `--json`.\n")
+    if data['radar_errors']:
+        lines.extend(['', f"Radar unavailable for {len(data['radar_errors'])} candidate(s) "
+                     "(shown as 'unsized', never guessed); see `--json` for details."])
     context = data['existing_open_tickets'][:limit]
     lines.extend(['', '## Existing open Planfile tickets (context, not candidates)', '',
                  table(['Path', 'Ticket', 'Priority', 'Status', 'Title'],
