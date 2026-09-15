@@ -211,6 +211,11 @@ def main(argv=None):
                                help="add a candidate per repository where semcod/taskill's read-only "
                                     "'status' (never 'run') reports it would update README/CHANGELOG/"
                                     "TODO; a missing/failing taskill checks nothing, never assumes clean")
+    quality = sub.add_parser('quality', help='read-only semcod/regix quality gate for ONE repository '
+                                             '(--root must be a Git checkout, not a workspace); '
+                                             'costs roughly a minute per run, never a write command')
+    quality.add_argument('--quality-timeout', dest='quality_timeout', type=float, default=180,
+                         help='seconds to wait for regix gates (default: 180)')
     panel = sub.add_parser('panel', help='serve a local-only HTTP dashboard (agents, repositories, '
                                          'Planfile backlog, on-demand audit/catalog); Ctrl-C to stop')
     panel.add_argument('--port', type=int, default=8090)
@@ -250,6 +255,8 @@ def main(argv=None):
                                      and args.port_attempts >= 0):
         parser.error('port must be 0-65535 (0 = always pick automatically), '
                     'panel-interval must be >= 1 second, port-attempts must be >= 0')
+    if args.mode == 'quality' and args.quality_timeout < 1:
+        parser.error('quality-timeout must be >= 1 second')
     stack = ExitStack()
     try:
         output_format = args.output
@@ -333,6 +340,20 @@ def main(argv=None):
             else:
                 display_report(export.markdown(data, args.limit))
             return 0
+        if args.mode == 'quality':
+            from . import quality
+            if output_format != 'json' and sys.stderr.isatty():
+                print('MONAG: running regix gates on this repository; commonly takes about a '
+                     'minute (coverage runs the whole test suite). No writes.',
+                     file=sys.stderr, flush=True)
+            data = quality.scan(root, args.quality_timeout)
+            if output_format == 'json':
+                print(json.dumps(data, ensure_ascii=True))
+            else:
+                display_report(quality.markdown(data, args.limit))
+            if not data['available']:
+                return 2
+            return int(data['all_passed'] is False)
         if args.mode == 'panel':
             from . import panel
             def announce(bind, actual_port):
