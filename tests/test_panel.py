@@ -86,6 +86,19 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)['repository_count'], 1)
 
+    def test_export_is_computed_lazily_cached_and_never_enriched(self):
+        server, state = self.start()
+        self.assertIsNone(state._export)
+        status, _, body = self.get(server, '/api/export.json')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        # The panel's on-demand refresh never shells out per candidate/repository.
+        self.assertFalse(data['radar_requested'])
+        self.assertFalse(data['hygiene_requested'])
+        first_at = state._export_at
+        self.get(server, '/api/export.json')
+        self.assertEqual(state._export_at, first_at)
+
     def test_unknown_path_is_404_json(self):
         server, _ = self.start()
         status, content_type, body = self.get(server, '/nope')

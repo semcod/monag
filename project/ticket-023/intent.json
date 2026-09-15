@@ -1,0 +1,90 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-023",
+  "summary": "Serve the candidate-work export report from monag panel",
+  "workstream": "application",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P2",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-023/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/**",
+    "tests/**"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [
+    "ticket-005",
+    "ticket-006"
+  ],
+  "conflictsWith": [],
+  "integrationTicket": "ticket-001",
+  "delivery": {
+    "acceptedBaseSha": "dddcffe06e8718a44163272b07a1df704ec955a2",
+    "targetBranch": "main",
+    "outcome": "Add /api/export.json to `monag panel` and a matching dashboard section, so the candidate-work list (audit-untracked-issue, catalog-undescribed, taskill-doc-drift) is visible in the live panel, not only via `monag export`. Lazily computed and TTL-cached like audit/catalog; served without --radar/--hygiene since both shell out per candidate/repository and would make the panel's on-demand refresh slow.",
+    "nonGoals": [
+      "The panel's export view is never enriched with --radar/--hygiene; use `monag export --radar --hygiene` directly for that.",
+      "No new data source -- export.scan() already existed (ticket-006/020/021); this only wires it into the panel."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 20,
+    "budgets": {
+      "maxImplementationFiles": 3,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 1,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Add State.get_export() to src/monag/panel.py mirroring get_audit()/get_catalog() exactly (same TTL-cache pattern); register /api/export.json in ROUTES; add an HTML section + loadExport() following the existing audit/catalog sections.",
+      "components": [
+        {
+          "name": "cli",
+          "paths": [
+            "src/monag/**"
+          ]
+        },
+        {
+          "name": "tests",
+          "paths": [
+            "tests/**"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "monag panel /api/export.json endpoint"
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "single-state",
+        "states": [
+          "success"
+        ],
+        "evidence": [
+          "PanelTests.test_export_is_computed_lazily_cached_and_never_enriched exercises the new /api/export.json endpoint and its HTML section"
+        ]
+      },
+      "rollback": "Revert the application slice through protected review."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python -m unittest discover -s tests -v"
+        ],
+        "evidence": "Panel export endpoint (lazy, cached, unenriched) and CLI/HTML wiring regression suite passes."
+      }
+    ]
+  }
+}

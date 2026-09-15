@@ -2,8 +2,11 @@
 
 Serves the live agent/repository snapshot and Planfile backlog (refreshed on
 a background timer, same data `status`/`resume` already compute) plus the
-Planfile/GitHub audit and project catalog reports computed lazily on first
-request and cached briefly, since both call out to `git`/`gh` per repository.
+Planfile/GitHub audit, project catalog, and candidate-work export reports,
+computed lazily on first request and cached briefly, since they call out to
+`git`/`gh` per repository. Export is served without --radar/--hygiene (both
+shell out per candidate/repository and would make an on-demand refresh slow);
+use `monag export --radar --hygiene` directly for the enriched report.
 
 Binds to 127.0.0.1 by default: this shows your own process activity, working
 directories and tickets, and is not meant to be reachable from another
@@ -23,7 +26,7 @@ import os
 import threading
 import time
 
-from . import audit, catalog, resume
+from . import audit, catalog, export, resume
 from .monitor import snapshot as monitor_snapshot
 from .presentation import clean
 
@@ -70,6 +73,11 @@ button{background:#16202b;color:#d6e0ea;border:1px solid #2a3a4a;border-radius:4
 <table id="catalog"><thead><tr><th>Name</th><th>Stacks</th>
 <th>Description</th></tr></thead><tbody></tbody></table></section>
 
+<section><h2>Candidate work (review only, nothing queued)
+<button onclick="loadExport()">refresh</button></h2>
+<table id="export"><thead><tr><th>Origin</th><th>Repository</th>
+<th>Title</th><th>Evidence</th></tr></thead><tbody></tbody></table></section>
+
 <script>
 function row(cells){const tr=document.createElement('tr');
   for(const c of cells){const td=document.createElement('td');td.textContent=c;tr.appendChild(td);}
@@ -106,7 +114,12 @@ async function loadCatalog(){
   fill('catalog', data.repositories.map(r=>[r.name, r.stacks.join(', ')||'-',
     r.description||'(undeclared)']), 'No repositories observed.');
 }
-loadLive(); loadAudit(); loadCatalog();
+async function loadExport(){
+  const data = await fetch('/api/export.json').then(r=>r.json());
+  fill('export', data.candidates.map(c=>[c.origin, c.repo||c.path, c.title, c.evidence]),
+       'No candidates observed.');
+}
+loadLive(); loadAudit(); loadCatalog(); loadExport();
 setInterval(loadLive, 5000);
 </script>
 </body></html>"""
@@ -124,6 +137,7 @@ class State:
         self._cache = {}
         self._audit, self._audit_at = None, 0.0
         self._catalog, self._catalog_at = None, 0.0
+        self._export, self._export_at = None, 0.0
 
     def refresh_live(self):
         since = '24 hours ago'
@@ -159,11 +173,23 @@ class State:
             self._catalog, self._catalog_at = data, time.monotonic()
         return data
 
+    def get_export(self, ttl=300):
+        """Candidates only (radar/hygiene off): both shell out per candidate/
+        repository and would make the panel's on-demand refresh slow."""
+        with self.lock:
+            if self._export is not None and time.monotonic() - self._export_at < ttl:
+                return self._export
+        data = export.scan(self.root, self.depth)
+        with self.lock:
+            self._export, self._export_at = data, time.monotonic()
+        return data
+
 
 ROUTES = {'/api/snapshot.json': lambda s: s.snapshot,
           '/api/resume.json': lambda s: s.resume,
           '/api/audit.json': State.get_audit,
-          '/api/catalog.json': State.get_catalog}
+          '/api/catalog.json': State.get_catalog,
+          '/api/export.json': State.get_export}
 
 
 def make_handler(state):
