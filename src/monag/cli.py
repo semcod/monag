@@ -175,6 +175,11 @@ def main(argv=None):
                               help='GitHub issues fetched per repository via gh (default: 200)')
     sub.add_parser('catalog', help='read-only, local-only catalog of what each repository under --root '
                                    'declares itself to be (description, stack, entry points)')
+    export_parser = sub.add_parser('export', help='read-only staging list of candidate work items '
+                                                   '(untracked GitHub issues, undescribed repositories) '
+                                                   'for human review; creates, imports or claims nothing')
+    export_parser.add_argument('--issue-limit', type=int, default=200,
+                               help='GitHub issues fetched per repository via gh (default: 200)')
     panel = sub.add_parser('panel', help='serve a local-only HTTP dashboard (agents, repositories, '
                                          'Planfile backlog, on-demand audit/catalog); Ctrl-C to stop')
     panel.add_argument('--port', type=int, default=8090)
@@ -207,7 +212,7 @@ def main(argv=None):
         parser.error('depth >= 0, limit >= 1 and 0 < hours < 876000 required')
     if args.mode == 'watch' and not 0.2 <= args.interval < 86400:
         parser.error('interval must be between 0.2 and 86400 seconds')
-    if args.mode == 'audit' and args.issue_limit < 1:
+    if args.mode in ('audit', 'export') and args.issue_limit < 1:
         parser.error('issue-limit must be >= 1')
     if args.mode == 'panel' and not (0 <= args.port <= 65535 and 1 <= args.panel_interval < 86400
                                      and args.port_attempts >= 0):
@@ -284,6 +289,17 @@ def main(argv=None):
                 print(json.dumps(data, ensure_ascii=True))
             else:
                 display_report(catalog.markdown(data, args.limit))
+            return 0
+        if args.mode == 'export':
+            from . import export
+            if output_format != 'json' and sys.stderr.isatty():
+                print('MONAG: building a candidate-work staging list (audit + catalog + resume); '
+                     'nothing is created or queued.', file=sys.stderr, flush=True)
+            data = export.scan(root, args.depth, args.issue_limit)
+            if output_format == 'json':
+                print(json.dumps(data, ensure_ascii=True))
+            else:
+                display_report(export.markdown(data, args.limit))
             return 0
         if args.mode == 'panel':
             from . import panel
