@@ -173,6 +173,8 @@ def main(argv=None):
                                                 'for one repository or every repository under --root')
     audit_parser.add_argument('--issue-limit', type=int, default=200,
                               help='GitHub issues fetched per repository via gh (default: 200)')
+    sub.add_parser('catalog', help='read-only, local-only catalog of what each repository under --root '
+                                   'declares itself to be (description, stack, entry points)')
     timeline = sub.add_parser('history', help='read local recorded observations')
     timeline.add_argument('--kind')
     timeline.add_argument('--search')
@@ -258,6 +260,17 @@ def main(argv=None):
                 print(json.dumps(data, ensure_ascii=True))
             else:
                 display_report(audit.markdown(data, args.limit))
+            return 0
+        if args.mode == 'catalog':
+            from . import catalog
+            if output_format != 'json' and sys.stderr.isatty():
+                print('MONAG: scanning repositories for self-declared metadata (no network calls).',
+                     file=sys.stderr, flush=True)
+            data = catalog.scan(root, args.depth)
+            if output_format == 'json':
+                print(json.dumps(data, ensure_ascii=True))
+            else:
+                display_report(catalog.markdown(data, args.limit))
             return 0
         cache = {}
         if console is not None and args.mode == 'watch' and sys.stdout.isatty():

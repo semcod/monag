@@ -1,0 +1,86 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-005",
+  "summary": "Add a read-only, local-only catalog of what each repository under --root declares itself to be",
+  "workstream": "application",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P2",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-005/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/**",
+    "tests/**"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [
+    "ticket-004"
+  ],
+  "conflictsWith": [],
+  "integrationTicket": "ticket-001",
+  "delivery": {
+    "acceptedBaseSha": "94e195f59aa78553682cabb77613fdd25c7cea20",
+    "targetBranch": "main",
+    "outcome": "Add a `monag catalog` subcommand: for one repository (--root is a checkout), or every repository under --root, reports what each project declares itself to be (description, stack, entry points, docs/tests/changelog presence, last commit) read verbatim from its own manifests and README -- no network calls, no LLM-generated text.",
+    "nonGoals": [
+      "No network calls (no gh/GitHub API metadata) and no LLM summarization; an undeclared description is reported as unknown, never guessed.",
+      "No browser, password-manager, or session credential access of any kind.",
+      "No write access to any scanned repository."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 45,
+    "budgets": {
+      "maxImplementationFiles": 3,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 1,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Add src/monag/catalog.py reusing audit.py's repository-discovery (targets()) plus local manifest/README parsing (pyproject.toml, package.json, README.md); wire a new `monag catalog` subcommand and JSON/Markdown reporting following the resume/audit conventions.",
+      "components": [
+        {
+          "name": "cli",
+          "paths": [
+            "src/monag/**"
+          ]
+        },
+        {
+          "name": "tests",
+          "paths": [
+            "tests/**"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "monag catalog subcommand"
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the application slice through protected review."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python -m unittest discover -s tests -v"
+        ],
+        "evidence": "Catalog module and CLI wiring regression suite passes."
+      }
+    ]
+  }
+}
