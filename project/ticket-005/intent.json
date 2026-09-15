@@ -1,0 +1,88 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-005",
+  "summary": "Add a read-only, local-only project catalog and a local-only HTTP dashboard over monag's existing observations",
+  "workstream": "application",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P2",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-005/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/**",
+    "tests/**"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [
+    "ticket-004"
+  ],
+  "conflictsWith": [],
+  "integrationTicket": "ticket-001",
+  "delivery": {
+    "acceptedBaseSha": "94e195f59aa78553682cabb77613fdd25c7cea20",
+    "targetBranch": "main",
+    "outcome": "Add a `monag catalog` subcommand: for one repository (--root is a checkout), or every repository under --root, reports what each project declares itself to be (description, stack, entry points, docs/tests/changelog presence, last commit) read verbatim from its own manifests and README -- no network calls, no LLM-generated text. Add a `monag panel` subcommand: a local-only HTTP dashboard (preferred port 8090, dynamically reassigned when taken -- tries the preferred port, then up to --port-attempts ports after it, then any OS-assigned free port, always reporting and persisting the actual bound port) serving the existing agent/repository snapshot and Planfile backlog on a background refresh timer, plus the audit/catalog reports computed lazily and cached on first request.",
+    "nonGoals": [
+      "No network calls (no gh/GitHub API metadata) and no LLM summarization in `catalog`; an undeclared description is reported as unknown, never guessed.",
+      "No browser, password-manager, or session credential access of any kind, anywhere in this ticket.",
+      "No write access to any scanned repository.",
+      "`panel` binds to 127.0.0.1 by default and serves only monag's own existing read-only reports; it adds no new data source and no authentication (not a public-facing service)."
+    ],
+    "complexity": "M",
+    "estimatedMinutes": 90,
+    "budgets": {
+      "maxImplementationFiles": 8,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 2,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Add src/monag/catalog.py reusing audit.py's repository-discovery (targets()) plus local manifest/README parsing (pyproject.toml, package.json, README.md); wire a new `monag catalog` subcommand and JSON/Markdown reporting following the resume/audit conventions. Add src/monag/panel.py: stdlib http.server.ThreadingHTTPServer (no new runtime dependency) serving a static HTML page plus /api/*.json endpoints backed by monitor.snapshot()/resume.scan() (background-refreshed) and audit.scan()/catalog.scan() (lazily computed, TTL-cached); wire a new `monag panel` subcommand.",
+      "components": [
+        {
+          "name": "cli",
+          "paths": [
+            "src/monag/**"
+          ]
+        },
+        {
+          "name": "tests",
+          "paths": [
+            "tests/**"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "monag catalog subcommand",
+        "monag panel subcommand"
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the application slice through protected review."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python -m unittest discover -s tests -v"
+        ],
+        "evidence": "Catalog module, panel module, and CLI wiring regression suite passes."
+      }
+    ]
+  }
+}
