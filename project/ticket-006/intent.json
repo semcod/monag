@@ -1,0 +1,87 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-006",
+  "summary": "Add a read-only candidate-work export report merging audit/catalog/resume",
+  "workstream": "application",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P2",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-006/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/**",
+    "tests/**"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [
+    "ticket-004",
+    "ticket-005"
+  ],
+  "conflictsWith": [],
+  "integrationTicket": "ticket-001",
+  "delivery": {
+    "acceptedBaseSha": "fc674b448790cc050088966a550ccf9319244a4e",
+    "targetBranch": "main",
+    "outcome": "Add a `monag export` subcommand merging audit's untracked-GitHub-issue candidates, catalog's undescribed-repository candidates, and resume's existing open Planfile backlog into one reviewable JSON/Markdown staging list, so a human (or a separately authorized tool such as planfile/koru) has one place to review candidate work instead of running audit/catalog/resume by hand and cross-referencing them.",
+    "nonGoals": [
+      "monag never creates, imports, queues or claims a Planfile ticket itself; export is a report only.",
+      "No integration code for koru or planfile in this slice -- the output is merely shaped to be easy to hand to either.",
+      "Closed untracked issues are excluded from candidates (already resolved, not work); audit still reports them."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 45,
+    "budgets": {
+      "maxImplementationFiles": 3,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 1,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Add src/monag/export.py composing audit.scan()/catalog.scan()/resume.scan() (no new discovery or GitHub logic); wire a new `monag export` subcommand and JSON/Markdown reporting following the audit/catalog conventions.",
+      "components": [
+        {
+          "name": "cli",
+          "paths": [
+            "src/monag/**"
+          ]
+        },
+        {
+          "name": "tests",
+          "paths": [
+            "tests/**"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "monag export subcommand"
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the application slice through protected review."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python -m unittest discover -s tests -v"
+        ],
+        "evidence": "Export module and CLI wiring regression suite passes."
+      }
+    ]
+  }
+}
