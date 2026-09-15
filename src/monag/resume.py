@@ -43,6 +43,26 @@ def github_mapping(item):
     return str(external_id) if external_id not in (None, '') else None
 
 
+def imported_record_evidence(key, item):
+    """Describe missing fields that a GitHub import must not hide."""
+    sync = item.get('sync')
+    github = sync.get('github') if isinstance(sync, dict) else None
+    imported = (str(key).upper().startswith('GITHUB-') or
+                item.get('backend') == 'github' or
+                item.get('external_id') not in (None, '') or
+                isinstance(github, dict))
+    if not imported:
+        return []
+    evidence = []
+    if not item.get('id'):
+        evidence.append('missing inline id')
+    if 'priority' not in item or item.get('priority') in (None, ''):
+        evidence.append('missing priority')
+    if not (isinstance(github, dict) and github.get('id') not in (None, '')):
+        evidence.append('missing sync.github mapping')
+    return evidence
+
+
 def planfile(path):
     """Read supported active YAML sources, never projections or historical copies.
 
@@ -86,11 +106,16 @@ def planfile(path):
                     if not identity:
                         errors.append(f'{file}: ticket without stable ID omitted')
                         continue
+                    evidence = imported_record_evidence(key, item)
+                    errors.extend(f'{file}: {key}: {finding}' for finding in evidence)
                     status = str(item.get('status', 'unknown')).lower()
                     priority = normalize_priority(item.get('priority'))
                     result.append({'id': str(identity), 'status': status,
                                    'title': str(item.get('name', item.get('title', identity))),
                                    'priority': priority,
+                                   'labels': [str(label) for label in item.get('labels', [])]
+                                   if isinstance(item.get('labels', []), list) else [],
+                                   'import_evidence': evidence,
                                    'source': str(file),
                                    'github': github_mapping(item)})
         except (OSError, ValueError, TypeError, yaml.YAMLError, RecursionError) as error:
@@ -134,11 +159,16 @@ def summarize_tickets(items, priorities=None):
         if statuses & OPEN:
             pending.append(key)
             blocked += 'blocked' in statuses
+            labels = sorted({str(label) for row in rows for label in row.get('labels', [])})
+            import_evidence = sorted({str(finding) for row in rows
+                                      for finding in row.get('import_evidence', [])})
             pending_tickets.append({
                 'id': key,
                 'status': '/'.join(sorted(statuses)),
                 'title': sorted(str(r.get('title', key)) for r in rows)[0],
                 'priority': effective_priority,
+                'labels': labels,
+                'import_evidence': import_evidence,
                 'source': sorted(str(r.get('source', '')) for r in rows)[0],
                 'priority_conflict': len(row_priorities) > 1,
             })
