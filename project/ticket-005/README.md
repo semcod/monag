@@ -32,19 +32,25 @@ the project already ships in its own checkout.
 - [x] AC-04: Regression tests cover pyproject.toml/package.json/README
       fallback order, blockquote/badge/heading skipping in README parsing,
       entry-point extraction, and an undeclared-description repository.
-- [x] AC-05: `monag panel` serves a local-only HTTP dashboard (default
-      `127.0.0.1:8090`) over the existing agent/repository snapshot and
-      Planfile backlog (background-refreshed), plus the `audit`/`catalog`
-      reports computed lazily and cached on first request. No new data
-      source, no authentication, binds to localhost by default.
+- [x] AC-05: `monag panel` serves a local-only HTTP dashboard (preferred
+      port `8090`) over the existing agent/repository snapshot and Planfile
+      backlog (background-refreshed), plus the `audit`/`catalog` reports
+      computed lazily and cached on first request. No new data source, no
+      authentication, binds to localhost by default.
+- [x] AC-06: the preferred port is never required to be free. `bind_server`
+      tries it, then up to `--port-attempts` (default 20) ports after it,
+      then falls back to any OS-assigned free port; the actually bound
+      `host:port` is always printed on startup and recorded in
+      `<state-dir>/panel.json` (mode 0600), so a caller never has to guess
+      which port a dynamically-reassigned panel ended up on.
 
-**Known operational note:** on this host, TCP port 8090 is already bound by
-an existing nginx service serving `taskand-glm53`'s own live-context page
-(`index.html`, title "taskand · kontekst i stan live"). `monag panel`
-defaults to 8090 per the request but will fail to bind there until that
-conflict is resolved (stop the other service, or start the panel with
-`--port <free-port>`). Not resolved here — needs an owner decision about
-which service actually owns 8090.
+**Resolved operational note:** on this host, TCP port 8090 (and 8091) are
+already bound by unrelated existing services (an nginx dashboard for
+`taskand-glm53`, and a separate "Subactor Platform"). With AC-06, `monag
+panel` no longer needs that conflict resolved by a human first — it tried
+8090/8091/8092, found 8093 free, and started there automatically
+(`MONAG: panel serving http://127.0.0.1:8093/ (requested 8090 was
+unavailable)`). No change was made to either pre-existing service.
 
 ## Tracking boundary
 

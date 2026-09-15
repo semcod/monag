@@ -9,10 +9,17 @@ Binds to 127.0.0.1 by default: this shows your own process activity, working
 directories and tickets, and is not meant to be reachable from another
 machine. Passing --bind widens that; the caller decides what network that
 exposes it to, this module never chooses a wider bind on its own.
+
+The preferred port may already be taken by an unrelated service (observed in
+practice: another local dashboard already listening on 8090). `bind_server`
+never binds to a substitute port silently: it tries the preferred port, then
+a bounded number of ports after it, then finally lets the OS assign any free
+port, and always reports which port it actually used.
 """
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 import threading
 import time
 
@@ -193,18 +200,66 @@ def make_handler(state):
     return Handler
 
 
-def build_server(root, state_dir, depth=2, bind='127.0.0.1', port=8090, registry=None,
-                 github=False, machine=False, all_users=False, open_files=False):
+def bind_server(handler_cls, bind, port, attempts=20):
+    """Bind to `port` if free, else scan forward, else let the OS assign one.
+
+    Binding (not a separate probe-then-bind) is the only reliable check --
+    a probe followed by a later bind is a race. Every rejected port and its
+    error is kept so a genuine permission problem (not just "in use") is
+    still visible if every candidate fails.
+    """
+    candidates = []
+    if port:
+        if not 1 <= port <= 65535:
+            raise ValueError('port must be between 1 and 65535, or 0 for automatic')
+        candidates = [p for p in range(port, min(port + attempts, 65536))]
+    candidates.append(0)  # last resort: any free port the OS assigns
+    errors = []
+    for candidate in candidates:
+        try:
+            return ThreadingHTTPServer((bind, candidate), handler_cls)
+        except OSError as error:
+            errors.append(f'{candidate}: {error}')
+    raise OSError('no available port: ' + '; '.join(errors))
+
+
+def write_state_file(state_dir, bind, port):
+    """Best-effort discoverability record; the server itself is the truth."""
+    path = state_dir / 'panel.json'
+    try:
+        state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        payload = json.dumps({'bind': bind, 'port': port, 'pid': os.getpid(),
+                              'url': f'http://{bind}:{port}/', 'started_at': time.time()})
+        temp = path.with_suffix('.tmp')
+        temp.write_text(payload)
+        temp.chmod(0o600)
+        temp.replace(path)
+    except OSError:
+        pass  # discoverability only; the bound server is unaffected
+
+
+def build_server(root, state_dir, depth=2, bind='127.0.0.1', port=8090, port_attempts=20,
+                 registry=None, github=False, machine=False, all_users=False, open_files=False):
     state = State(root, state_dir, depth, registry, github, machine, all_users, open_files)
-    server = ThreadingHTTPServer((bind, port), make_handler(state))
+    server = bind_server(make_handler(state), bind, port, port_attempts)
     return server, state
 
 
-def serve(root, state_dir, depth=2, bind='127.0.0.1', port=8090, interval=30, registry=None,
-         github=False, machine=False, all_users=False, open_files=False):
-    """Blocks until interrupted; the caller handles Ctrl-C / shutdown."""
-    server, state = build_server(root, state_dir, depth, bind, port, registry,
+def serve(root, state_dir, depth=2, bind='127.0.0.1', port=8090, interval=30, port_attempts=20,
+         registry=None, github=False, machine=False, all_users=False, open_files=False,
+         on_ready=None):
+    """Blocks until interrupted; the caller handles Ctrl-C / shutdown.
+
+    `on_ready(bind, actual_port)` is called once binding succeeds -- the
+    actual port can differ from the requested one, so callers that need to
+    log or display it should read it from here, not echo back `port`.
+    """
+    server, state = build_server(root, state_dir, depth, bind, port, port_attempts, registry,
                                  github, machine, all_users, open_files)
+    actual_port = server.server_address[1]
+    write_state_file(state_dir, bind, actual_port)
+    if on_ready is not None:
+        on_ready(bind, actual_port)
     state.refresh_live()
     stop_event = threading.Event()
     with ThreadPoolExecutor(max_workers=1) as pool:

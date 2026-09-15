@@ -182,6 +182,8 @@ def main(argv=None):
                        help='listen address (default: localhost only; widen only if you mean to)')
     panel.add_argument('--panel-interval', dest='panel_interval', type=float, default=30,
                        help='background refresh seconds for the live snapshot/resume view (default: 30)')
+    panel.add_argument('--port-attempts', type=int, default=20,
+                       help='ports tried after --port before falling back to any free port (default: 20)')
     timeline = sub.add_parser('history', help='read local recorded observations')
     timeline.add_argument('--kind')
     timeline.add_argument('--search')
@@ -207,8 +209,10 @@ def main(argv=None):
         parser.error('interval must be between 0.2 and 86400 seconds')
     if args.mode == 'audit' and args.issue_limit < 1:
         parser.error('issue-limit must be >= 1')
-    if args.mode == 'panel' and not (1 <= args.port <= 65535 and 1 <= args.panel_interval < 86400):
-        parser.error('port must be 1-65535 and panel-interval must be >= 1 second')
+    if args.mode == 'panel' and not (0 <= args.port <= 65535 and 1 <= args.panel_interval < 86400
+                                     and args.port_attempts >= 0):
+        parser.error('port must be 0-65535 (0 = always pick automatically), '
+                    'panel-interval must be >= 1 second, port-attempts must be >= 0')
     stack = ExitStack()
     try:
         output_format = args.output
@@ -283,10 +287,13 @@ def main(argv=None):
             return 0
         if args.mode == 'panel':
             from . import panel
-            print(f'MONAG: panel serving http://{args.bind}:{args.port}/ (Ctrl-C to stop).',
-                 file=sys.stderr, flush=True)
+            def announce(bind, actual_port):
+                note = '' if actual_port == args.port else f' (requested {args.port} was unavailable)'
+                print(f'MONAG: panel serving http://{bind}:{actual_port}/{note} (Ctrl-C to stop).',
+                     file=sys.stderr, flush=True)
             panel.serve(root, args.state_dir, args.depth, args.bind, args.port, args.panel_interval,
-                       registry, args.github, args.machine, args.all_users, args.open_files)
+                       args.port_attempts, registry, args.github, args.machine, args.all_users,
+                       args.open_files, announce)
             return 0
         cache = {}
         if console is not None and args.mode == 'watch' and sys.stdout.isatty():

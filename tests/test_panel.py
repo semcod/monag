@@ -1,6 +1,7 @@
 import http.client
 import json
 from pathlib import Path
+import socket
 import subprocess
 import tempfile
 import threading
@@ -91,6 +92,56 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertIn('application/json', content_type)
         self.assertEqual(json.loads(body)['error'], 'not found')
+
+    def test_bind_server_falls_back_when_preferred_port_is_taken(self):
+        blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        blocker.bind(('127.0.0.1', 0))
+        blocker.listen(1)
+        occupied_port = blocker.getsockname()[1]
+        try:
+            handler = panel.make_handler(panel.State(self.root, self.root / 'state', 2, None,
+                                                      False, False, False, False))
+            server = panel.bind_server(handler, '127.0.0.1', occupied_port, attempts=5)
+            try:
+                self.assertNotEqual(server.server_address[1], occupied_port)
+                self.assertGreater(server.server_address[1], 0)
+            finally:
+                server.server_close()
+        finally:
+            blocker.close()
+
+    def test_bind_server_port_zero_always_gets_a_free_port(self):
+        handler = panel.make_handler(panel.State(self.root, self.root / 'state', 2, None,
+                                                  False, False, False, False))
+        server = panel.bind_server(handler, '127.0.0.1', 0)
+        try:
+            self.assertGreater(server.server_address[1], 0)
+        finally:
+            server.server_close()
+
+    def test_write_state_file_records_the_actual_bound_port(self):
+        state_dir = self.root / 'state'
+        panel.write_state_file(state_dir, '127.0.0.1', 54321)
+        recorded = json.loads((state_dir / 'panel.json').read_text())
+        self.assertEqual(recorded['port'], 54321)
+        self.assertEqual(recorded['bind'], '127.0.0.1')
+        self.assertEqual(recorded['url'], 'http://127.0.0.1:54321/')
+
+    def test_build_server_with_preferred_port_taken_matches_bind_server_fallback(self):
+        blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        blocker.bind(('127.0.0.1', 0))
+        blocker.listen(1)
+        occupied_port = blocker.getsockname()[1]
+        try:
+            server, _ = panel.build_server(self.root, self.root / 'state', port=occupied_port, port_attempts=3)
+            try:
+                self.assertNotEqual(server.server_address[1], occupied_port)
+            finally:
+                server.server_close()
+        finally:
+            blocker.close()
 
 
 if __name__ == '__main__':
