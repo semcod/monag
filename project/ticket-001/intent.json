@@ -1,0 +1,115 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-001",
+  "summary": "Bootstrap monag delivery with adopted wellmanifest governance and repository-owned project files",
+  "workstream": "integration",
+  "allowedPaths": [
+    "project/ticket-001/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    ".governance/manifest.json",
+    ".governance/required-checks.json",
+    ".governance/ticket-allocation.json",
+    "CHANGELOG.md",
+    "VERSION",
+    "README.md",
+    "pyproject.toml",
+    "goal.yaml"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P2",
+    "origin": "requested"
+  },
+  "delivery": {
+    "acceptedBaseSha": "04228b366f42ddca24e9e66cc0bb07cc0c12f2c9",
+    "targetBranch": "main",
+    "outcome": "Adopt wellmanifest/new-project 0.20.30 as one verified bootstrap with the repository-owned governance manifest, required checks, ticket allocation, VERSION, CHANGELOG, README, package metadata and checkout-scoped Goal configuration, so the monag CLI can be delivered through governed dependent tickets.",
+    "nonGoals": [
+      "No CLI source, tests, packaging extras, documentation tree or resume inventory in this slice.",
+      "No self-approved merge or direct production policy changes.",
+      "No recording of secret environment values or agent prompt contents."
+    ],
+    "complexity": "M",
+    "estimatedMinutes": 60,
+    "budgets": {
+      "maxImplementationFiles": 9,
+      "maxAffectedComponents": 3,
+      "maxPublicInterfaceChanges": 1,
+      "maxRuntimeDependencies": 1
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Adopt immutable managed governance as one verified bootstrap and keep repository-owned project metadata in the same integration slice; deliver product code through dependent tickets.",
+      "components": [
+        {
+          "name": "governance-contracts",
+          "paths": [
+            ".governance/manifest.json",
+            ".governance/required-checks.json",
+            ".governance/ticket-allocation.json"
+          ]
+        },
+        {
+          "name": "packaging",
+          "paths": [
+            "pyproject.toml",
+            "VERSION",
+            "goal.yaml"
+          ]
+        },
+        {
+          "name": "documentation",
+          "paths": [
+            "README.md",
+            "CHANGELOG.md"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "Repository commits and pull requests are governed by the adopted host contract and gate."
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the bootstrap through the protected publication process; dependent tickets must be reverted first."
+    },
+    "runtimeDependencies": [
+      "rich>=14,<15"
+    ],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "./project/governance-check.sh --base f46db31050fbd615ab79d8d7e4bde4f92bea5097 --head HEAD"
+        ],
+        "evidence": "Atomic adoption verifies against the lock; intent, scope and budget are valid."
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "./scripts/install-agent-hosts.sh --check"
+        ],
+        "evidence": "Host files and the pre-commit hook are active for this clone."
+      }
+    ],
+    "standardAdoption": {
+      "sourceRepository": "wellmanifest/new-project",
+      "fromRevision": null,
+      "toRevision": "46aae350f5121874556bf9813fb9bf35854d3647"
+    }
+  }
+}

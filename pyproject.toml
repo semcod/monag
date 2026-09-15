@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "monag"
+version = "0.3.0"
+description = "See agent processes, concurrent checkouts and recent GitHub workspace activity in your terminal"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{name = "semcod"}]
+classifiers = ["Environment :: Console", "Operating System :: POSIX :: Linux", "Programming Language :: Python :: 3"]
+dependencies = ["rich>=14,<15"]
+
+[project.optional-dependencies]
+dev = ["build>=1,<2", "twine>=6,<7", "setuptools>=77.0.3"]
+
+[project.scripts]
+monag = "monag.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.wellmanifest]
+standard = "0.20.30"
+revision = "46aae350f5121874556bf9813fb9bf35854d3647"
+gate = "project/governance-check.sh"
+
+[tool.pytest.ini_options]
+addopts = "-p wellmanifest_governance"
+pythonpath = ["src", "tests"]
