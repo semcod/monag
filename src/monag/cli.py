@@ -169,6 +169,10 @@ def main(argv=None):
                                choices=['critical', 'high', 'medium', 'normal', 'low', 'unknown'],
                                help='show only tickets with this Planfile priority; repeat to select several')
     resume_parser.add_argument('--all-projects', action='store_true')
+    audit_parser = sub.add_parser('audit', help='read-only report of Planfile ticket coverage against GitHub Issues, '
+                                                'for one repository or every repository under --root')
+    audit_parser.add_argument('--issue-limit', type=int, default=200,
+                              help='GitHub issues fetched per repository via gh (default: 200)')
     timeline = sub.add_parser('history', help='read local recorded observations')
     timeline.add_argument('--kind')
     timeline.add_argument('--search')
@@ -192,6 +196,8 @@ def main(argv=None):
         parser.error('depth >= 0, limit >= 1 and 0 < hours < 876000 required')
     if args.mode == 'watch' and not 0.2 <= args.interval < 86400:
         parser.error('interval must be between 0.2 and 86400 seconds')
+    if args.mode == 'audit' and args.issue_limit < 1:
+        parser.error('issue-limit must be >= 1')
     stack = ExitStack()
     try:
         output_format = args.output
@@ -241,6 +247,17 @@ def main(argv=None):
                 print(json.dumps(data, ensure_ascii=True))
             else:
                 display_report(resume.markdown(data, args.limit, args.all_projects))
+            return 0
+        if args.mode == 'audit':
+            from . import audit
+            if output_format != 'json' and sys.stderr.isatty():
+                print('MONAG: scanning repositories and querying GitHub via gh; this can take a while.',
+                     file=sys.stderr, flush=True)
+            data = audit.scan(root, args.depth, args.issue_limit)
+            if output_format == 'json':
+                print(json.dumps(data, ensure_ascii=True))
+            else:
+                display_report(audit.markdown(data, args.limit))
             return 0
         cache = {}
         if console is not None and args.mode == 'watch' and sys.stdout.isatty():

@@ -32,10 +32,30 @@ def priority_rank(value):
     return PRIORITY_RANK.get(normalize_priority(value), -1)
 
 
+def github_mapping(item):
+    """A ticket's own GitHub issue id, from either supported field shape."""
+    sync = item.get('sync')
+    if isinstance(sync, dict):
+        github = sync.get('github')
+        if isinstance(github, dict) and github.get('id') not in (None, ''):
+            return str(github['id'])
+    external_id = item.get('external_id')
+    return str(external_id) if external_id not in (None, '') else None
+
+
 def planfile(path):
-    """Read supported active YAML sources, never projections or historical copies."""
-    files = [path / name for name in ('tickets.planfile.yaml', 'planfile.yaml',
-             '.planfile/sprints/current.yaml', '.planfile/sprints/backlog.yaml')]
+    """Read supported active YAML sources, never projections or historical copies.
+
+    Every `.planfile/sprints/*.yaml` file is read, not just current/backlog:
+    a repository can carry additional named active sprints (for example an
+    audit sprint), and a ticket that only exists there must still be visible.
+    Cache projections (`*.fast.json`) and a nested `.planfile/.planfile/`
+    duplicate store are excluded by construction (glob does not descend).
+    """
+    sprints_dir = path / '.planfile' / 'sprints'
+    files = [path / name for name in ('tickets.planfile.yaml', 'planfile.yaml')]
+    if sprints_dir.is_dir():
+        files.extend(sorted(sprints_dir.glob('*.yaml')))
     result, errors, sources = [], [], []
     for file in files:
         if not file.is_file():
@@ -71,7 +91,8 @@ def planfile(path):
                     result.append({'id': str(identity), 'status': status,
                                    'title': str(item.get('name', item.get('title', identity))),
                                    'priority': priority,
-                                   'source': str(file)})
+                                   'source': str(file),
+                                   'github': github_mapping(item)})
         except (OSError, ValueError, TypeError, yaml.YAMLError, RecursionError) as error:
             errors.append(f'{file}: {type(error).__name__}')
     return result, sources, errors

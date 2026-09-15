@@ -5,4 +5,5 @@
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **ticket-001** | [`README.md`](./ticket-001/README.md) | - | - | - | - | - |
 | **ticket-002** | [`README.md`](./ticket-002/README.md) | - | - | - | - | - |
+| **ticket-004** | [`README.md`](./ticket-004/README.md) | - | - | - | - | - |
 <!-- AUTO:TICKET_INDEX:END -->
