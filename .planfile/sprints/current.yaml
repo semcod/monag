@@ -1,0 +1,65 @@
+sprint:
+  id: sprint-001
+  name: Sprint 1
+  status: active
+  tickets:
+    PLF-001:
+      acceptance_criteria: []
+      backend: github
+      blocked_by: []
+      blocks: []
+      children: []
+      contract_version: planfile.ticket/v1
+      created_at: '2026-09-15T07:26:05.700623Z'
+      description: 'Monag had no repository-local .planfile. Running the CLI in its
+        root resolved a parent store and displayed unrelated STARTER tickets, so the
+        repository must be initialized explicitly before ticket operations. Adopt
+        the current Wellmanifest/new-project and wellmanifest/docs revisions through
+        their governed upgrade and protected-canary procedures. Acceptance: (1) all
+        Planfile commands in Monag use its own store; (2) GitHub synchronization is
+        idempotent and records the issue mapping; (3) adoption pins are exact immutable
+        revisions with a local protected validation receipt; (4) no generated operational
+        lock/cache files are committed.'
+      dsl: SODL/1 id=evt_789aae1ef91346d9ed7d8103 event_hash=1fe81e3e17b5870cd6e4bd510eb29495095b7d92331d9980bc80732c1e37912c
+        timestamp=2026-09-15T07%3A26%3A05.700623%2B00%3A00 kind=task source=planfile.ticket
+        ticket_id=PLF-001 actor=session-audit oql=ticket.create uri=planfile%3A%2F%2Ftickets%2FPLF-001%2Fcommand%2Fcreate
+        mode=apply status=open correlation_id=PLF-001 causation_id=- input_hash=13bd211d745b0a000b06e6cb6c3c35254da8655149316bc6cc66ba33b1a9aaab
+        receipt_ref=- replayable=true data=eyJwYXlsb2FkIjp7ImFjY2VwdGFuY2VfY3JpdGVyaWEiOltdLCJibG9ja2VkX2J5IjpbXSwiYmxvY2tzIjpbXSwiY2hpbGRyZW4iOltdLCJjb250cmFjdF92ZXJzaW9uIjoicGxhbmZpbGUudGlja2V0L3YxIiwiY3JlYXRlZF9hdCI6IjIwMjYtMDktMTVUMDc6MjY6MDUuNzAwNjIzWiIsImRlc2NyaXB0aW9uIjoiTW9uYWcgaGFkIG5vIHJlcG9zaXRvcnktbG9jYWwgLnBsYW5maWxlLiBSdW5uaW5nIHRoZSBDTEkgaW4gaXRzIHJvb3QgcmVzb2x2ZWQgYSBwYXJlbnQgc3RvcmUgYW5kIGRpc3BsYXllZCB1bnJlbGF0ZWQgU1RBUlRFUiB0aWNrZXRzLCBzbyB0aGUgcmVwb3NpdG9yeSBtdXN0IGJlIGluaXRpYWxpemVkIGV4cGxpY2l0bHkgYmVmb3JlIHRpY2tldCBvcGVyYXRpb25zLiBBZG9wdCB0aGUgY3VycmVudCBXZWxsbWFuaWZlc3QvbmV3LXByb2plY3QgYW5kIHdlbGxtYW5pZmVzdC9kb2NzIHJldmlzaW9ucyB0aHJvdWdoIHRoZWlyIGdvdmVybmVkIHVwZ3JhZGUgYW5kIHByb3RlY3RlZC1jYW5hcnkgcHJvY2VkdXJlcy4gQWNjZXB0YW5jZTogKDEpIGFsbCBQbGFuZmlsZSBjb21tYW5kcyBpbiBNb25hZyB1c2UgaXRzIG93biBzdG9yZTsgKDIpIEdpdEh1YiBzeW5jaHJvbml6YXRpb24gaXMgaWRlbXBvdGVudCBhbmQgcmVjb3JkcyB0aGUgaXNzdWUgbWFwcGluZzsgKDMpIGFkb3B0aW9uIHBpbnMgYXJlIGV4YWN0IGltbXV0YWJsZSByZXZpc2lvbnMgd2l0aCBhIGxvY2FsIHByb3RlY3RlZCB2YWxpZGF0aW9uIHJlY2VpcHQ7ICg0KSBubyBnZW5lcmF0ZWQgb3BlcmF0aW9uYWwgbG9jay9jYWNoZSBmaWxlcyBhcmUgY29tbWl0dGVkLiIsImZpbGVzIjpbXSwiaWQiOiJQTEYtMDAxIiwiaW50ZWdyYXRpb24iOlsiZ2l0aHViIl0sImxhYmVscyI6WyJnb3Zlcm5hbmNlIiwicmVwcm9kdWNpYmlsaXR5IiwicGxhbmZpbGUtYm9vdHN0cmFwIl0sIm5hbWUiOiJCb290c3RyYXAgcmVwby1sb2NhbCBQbGFuZmlsZSBhbmQgYWRvcHQgY3VycmVudCBXZWxsbWFuaWZlc3QgYmFzZWxpbmUiLCJwcmlvcml0eSI6ImhpZ2giLCJzb3VyY2UiOnsiY29udGV4dCI6e30sInRpbWVzdGFtcCI6IjIwMjYtMDktMTVUMDc6MjY6MDUuNjk3Mjg1WiIsInRvb2wiOiJzZXNzaW9uLWF1ZGl0In0sInNwcmludCI6ImN1cnJlbnQiLCJzdGF0dXMiOiJvcGVuIiwic3luYyI6e30sInVwZGF0ZWRfYXQiOiIyMDI2LTA5LTE1VDA3OjI2OjA1LjcwMDYyOVoifX0
+      external_id: '5'
+      files: []
+      history:
+      - action: update
+        changes:
+        - outputs
+        source: planfile.store
+        timestamp: '2026-09-15T07:32:16.963482+00:00'
+      id: PLF-001
+      integration:
+      - github
+      labels:
+      - governance
+      - reproducibility
+      - planfile-bootstrap
+      - 'priority: high'
+      name: Bootstrap repo-local Planfile and adopt current Wellmanifest baseline
+      outputs:
+        artifacts: []
+        notes:
+        - '2026-09-15 verification: PR #6 reached OneDev, but the deployed Monag profile
+          rejected a Planfile-only change with MONAG_APPLICATION_OR_TESTS_MISSING.
+          Synchronization itself was independently proven by a clean clone and idempotent
+          update of issue #5. Keep the ticket open until the governed baseline adoption
+          and profile classification are delivered.'
+      priority: high
+      source:
+        context: {}
+        timestamp: '2026-09-15T07:26:05.697285Z'
+        tool: session-audit
+      sprint: current
+      status: open
+      sync:
+        github:
+          id: '5'
+          key: semcod/monag#5
+          url: https://github.com/semcod/monag/issues/5
+      updated_at: '2026-09-15T07:32:16.963442+00:00'

@@ -1,0 +1,19 @@
+archive:
+  enabled: true
+  max_current_bytes: 1000000
+  max_current_tickets: 100
+  retain_terminal_days: 0
+  retain_terminal_tickets: 20
+  terminal_statuses:
+  - done
+  - canceled
+  - failed
+  - blocked
+next_id: 2
+prefix: PLF
+project: monag-planfile-bootstrap.8NMQMb
+storage:
+  backend: single-yaml
+  custom_shards: 16
+  index: none
+  shard_size: 100
