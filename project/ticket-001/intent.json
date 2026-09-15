@@ -31,7 +31,7 @@
     "origin": "requested"
   },
   "delivery": {
-    "acceptedBaseSha": "f46db31050fbd615ab79d8d7e4bde4f92bea5097",
+    "acceptedBaseSha": "04228b366f42ddca24e9e66cc0bb07cc0c12f2c9",
     "targetBranch": "main",
     "outcome": "Adopt wellmanifest/new-project 0.20.30 as one verified bootstrap with the repository-owned governance manifest, required checks, ticket allocation, VERSION, CHANGELOG, README, package metadata and checkout-scoped Goal configuration, so the monag CLI can be delivered through governed dependent tickets.",
     "nonGoals": [

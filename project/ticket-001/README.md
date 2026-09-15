@@ -1,6 +1,6 @@
 # ticket-001 — Agent activity CLI
 
-- **Owner**: claude-monag
+- **Owner**: codex-monag
 - **Status**: IN_PROGRESS
 - **Workflow state**: EDIT
 
@@ -30,3 +30,5 @@ adoption and the uncommitted continuation are preserved in a local bundle
 Delivery: [PR #1](https://github.com/semcod/monag/pull/1). The protected
 Validator profile for this repository is missing; merge requires the user's
 trusted review.
+
+Handoff 2026-09-15: user confirmed Claude finished and explicitly transferred delivery to Codex. Refresh against main 04228b366f42ddca24e9e66cc0bb07cc0c12f2c9 preserves checkout-scoped Goal configuration.

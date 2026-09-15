@@ -7,12 +7,12 @@ versioning:
     - src/monag/__init__.py:__version__
 strategies:
   python:
-    test: make test
+    test: ./project/governance-check.sh --base origin/main --head HEAD
     build: python -m build
     publish: python -m twine upload --non-interactive dist/monag-{version}*
-    publish_enabled: true
+    publish_enabled: false
 publishing:
-  enabled: true
+  enabled: false
   registries: [pypi]
   fallback:
     github_release:
