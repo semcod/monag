@@ -47,6 +47,9 @@ class AuditTests(unittest.TestCase):
     def fake_gh(self, responses):
         # Only `gh` calls are faked; every `git` call goes to the real, local repos.
         def fake(args, cwd=None, timeout=8):
+            if args[:3] == ['gh', 'repo', 'view']:
+                repo = args[3]
+                return responses.get(f'{repo}:metadata', ('{"isFork": false}', None))
             if args[:1] == ['gh']:
                 repo = args[args.index('--repo') + 1]
                 return responses.get(repo, ('[]', None))
@@ -73,6 +76,68 @@ class AuditTests(unittest.TestCase):
         self.assertEqual([i['number'] for i in r['untracked_issues']], [11])
         self.assertEqual(r['orphan_tickets'], [])
         self.assertEqual(data['total_untracked_issues'], 1)
+
+    def test_fork_repository_is_ignored_before_issue_query(self):
+        repo = self.make_repo('org/fork', remote='git@github.com:org/fork.git')
+        calls = []
+
+        def fake(args, cwd=None, timeout=8):
+            calls.append(args)
+            if args[:3] == ['gh', 'repo', 'view']:
+                return '{"isFork": true}', None
+            if args[:3] == ['gh', 'issue', 'list']:
+                self.fail('a confirmed fork must not be queried for Issues')
+            return real_command(args, cwd=cwd, timeout=timeout)
+
+        with patch('monag.audit.command', side_effect=fake):
+            data = audit.scan(repo)
+        self.assertEqual(data['repository_count'], 0)
+        self.assertEqual(data['ignored_fork_count'], 1)
+        self.assertEqual(data['ignored_forks'], [{'path': str(repo), 'repo': 'org/fork'}])
+        self.assertEqual([call[:3] for call in calls if call[:1] == ['gh']],
+                         [['gh', 'repo', 'view']])
+
+    def test_fork_metadata_failure_does_not_query_issues(self):
+        repo = self.make_repo('org/unknown', remote='git@github.com:org/unknown.git')
+        calls = []
+
+        def fake(args, cwd=None, timeout=8):
+            calls.append(args)
+            if args[:3] == ['gh', 'repo', 'view']:
+                return '', 'gh: metadata unavailable'
+            if args[:3] == ['gh', 'issue', 'list']:
+                self.fail('unknown fork metadata must not fall through to Issue listing')
+            return real_command(args, cwd=cwd, timeout=timeout)
+
+        with patch('monag.audit.command', side_effect=fake):
+            data = audit.scan(repo)
+        report = data['repositories'][0]
+        self.assertIsNone(report['is_fork'])
+        self.assertIsNone(report['github_issue_count'])
+        self.assertTrue(report['github_errors'])
+        self.assertEqual(data['ignored_fork_count'], 0)
+        self.assertEqual([call[:3] for call in calls if call[:1] == ['gh']],
+                         [['gh', 'repo', 'view']])
+
+    def test_malformed_fork_metadata_is_unknown_without_issue_query(self):
+        repo = self.make_repo('org/malformed', remote='git@github.com:org/malformed.git')
+        calls = []
+
+        def fake(args, cwd=None, timeout=8):
+            calls.append(args)
+            if args[:3] == ['gh', 'repo', 'view']:
+                return '{"isFork": "unknown"}', None
+            if args[:3] == ['gh', 'issue', 'list']:
+                self.fail('malformed fork metadata must not fall through to Issue listing')
+            return real_command(args, cwd=cwd, timeout=timeout)
+
+        with patch('monag.audit.command', side_effect=fake):
+            report = audit.scan(repo)['repositories'][0]
+        self.assertIsNone(report['is_fork'])
+        self.assertIsNone(report['github_issue_count'])
+        self.assertIn('invalid gh repository metadata JSON', report['github_errors'][0])
+        self.assertEqual([call[:3] for call in calls if call[:1] == ['gh']],
+                         [['gh', 'repo', 'view']])
 
     def test_workspace_mode_discovers_every_repository_under_root(self):
         self.make_repo('org/one', remote='git@github.com:org/one.git')
@@ -144,6 +209,7 @@ class AuditTests(unittest.TestCase):
         text = audit.markdown(data)
         self.assertIn('Planfile / GitHub coverage audit', text)
         self.assertIn('org/demo', text)
+        self.assertIn('ignored GitHub forks', text)
 
 
 if __name__ == '__main__':

@@ -1,0 +1,95 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-015",
+  "summary": "Ignore fork repositories in GitHub coverage audit",
+  "workstream": "application",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-015/**",
+    "project/TICKETS.md",
+    "src/monag/audit.py",
+    "tests/test_audit.py",
+    "tests/test_export.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "6cfdd5b1687865b8afa49fd7f234a12d63fab6c9",
+    "targetBranch": "main",
+    "outcome": "Make the read-only GitHub coverage audit detect repository forks before issue enumeration, exclude confirmed forks from totals, and retain explicit metadata failures.",
+    "nonGoals": [
+      "No GitHub repository, Issue, Planfile, or remote state is modified.",
+      "No repository discovery rules outside the audit report are changed.",
+      "No runtime dependency or external service is added."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 35,
+    "budgets": {
+      "maxImplementationFiles": 5,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 1,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Use gh repo view --json isFork as a fail-closed metadata gate before gh issue list; omit confirmed forks from normal repository aggregates while retaining a bounded ignored_forks inventory.",
+      "components": [
+        {
+            "name": "github-coverage-audit",
+          "paths": [
+            "src/monag/audit.py",
+            "tests/test_audit.py",
+            "tests/test_export.py"
+          ]
+        },
+        {
+          "name": "ticket-carrier",
+          "paths": [
+            "project/ticket-015/**",
+            "project/TICKETS.md"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "Adds ignored_fork_count and ignored_forks fields to the audit JSON report."
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert this ticket branch; the audit remains read-only and no remote repository data is changed."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+          "commands": [
+          "PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_audit.py'"
+        ],
+        "evidence": "Fork metadata gating, unknown metadata, non-fork behavior, and report fields are covered by tests."
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "./project/governance-check.sh --base 6cfdd5b1687865b8afa49fd7f234a12d63fab6c9 --head HEAD --actor ci",
+          "PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py'"
+        ],
+        "evidence": "The managed governance gate and full Python test suite pass."
+      }
+    ]
+  }
+}
