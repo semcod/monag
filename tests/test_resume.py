@@ -57,6 +57,66 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(result['conflicting_statuses'], 1)
         self.assertEqual(result['unknown_statuses'], 1)
 
+    def test_planfile_priorities_are_preserved_and_ranked(self):
+        sprint = self.repo / '.planfile/sprints'
+        sprint.mkdir(parents=True)
+        (sprint / 'current.yaml').write_text(
+            'sprint:\n  tickets:\n'
+            '    LOW:\n      status: open\n      priority: low\n'
+            '    HIGH:\n      status: open\n      priority: high\n'
+            '    MISSING:\n      status: open\n')
+        items, _, errors = resume.planfile(self.repo)
+        self.assertFalse(errors)
+        priorities = {item['id']: item['priority'] for item in items}
+        self.assertEqual(priorities, {'LOW': 'low', 'HIGH': 'high', 'MISSING': 'unknown'})
+        summary = resume.summarize_tickets(items)
+        self.assertEqual(summary['highest_priority'], 'high')
+        self.assertEqual([row['id'] for row in summary['remaining_tickets']], ['HIGH', 'LOW', 'MISSING'])
+        self.assertEqual(summary['priority_counts']['unknown'], 1)
+
+    def test_priority_conflict_and_filter_remain_explicit(self):
+        items = [
+            {'id': 'A', 'status': 'open', 'priority': 'low'},
+            {'id': 'A', 'status': 'open', 'priority': 'high'},
+            {'id': 'B', 'status': 'open', 'priority': 'normal'},
+        ]
+        result = resume.summarize_tickets(items, ['high'])
+        self.assertEqual(result['remaining_ids'], ['A'])
+        self.assertEqual(result['highest_priority'], 'high')
+        self.assertEqual(result['priority_conflicts'], 1)
+        self.assertTrue(result['remaining_tickets'][0]['priority_conflict'])
+
+    def test_markdown_shows_planfile_priority_and_open_tickets(self):
+        sprint = self.repo / '.planfile/sprints'
+        sprint.mkdir(parents=True)
+        (sprint / 'current.yaml').write_text(
+            'sprint:\n  tickets:\n'
+            '    HIGH:\n      name: Urgent repair\n      status: open\n      priority: high\n')
+        document = resume.markdown(self.scan(), all_projects=True)
+        self.assertIn('Najwyższy priorytet', document)
+        self.assertIn('Otwarte tickety Planfile', document)
+        self.assertIn('Urgent repair', document)
+        self.assertIn('high', document)
+
+    def test_resume_cli_priority_filter_and_sort(self):
+        sprint = self.repo / '.planfile/sprints'
+        sprint.mkdir(parents=True)
+        (sprint / 'current.yaml').write_text(
+            'sprint:\n  tickets:\n'
+            '    HIGH:\n      status: open\n      priority: high\n'
+            '    LOW:\n      status: open\n      priority: low\n')
+        from io import StringIO
+        from monag.cli import main
+        stream = StringIO()
+        with patch('sys.stdout', stream), patch('monag.resume.processes', return_value=([], 0)):
+            code = main(['--root', str(self.root), '--json', 'resume', '--sort', 'priority', '--priority', 'high'])
+        self.assertEqual(code, 0)
+        payload = json.loads(stream.getvalue())
+        self.assertEqual(payload['priority_filter'], ['high'])
+        self.assertEqual(payload['projects'][0]['planfile']['remaining_ids'], ['HIGH'])
+        self.assertIn('ranking priorytetów', resume.markdown(payload, all_projects=True))
+        self.assertIn('Filtr priorytetów Planfile: **high**', resume.markdown(payload, all_projects=True))
+
     def test_missing_and_malformed_planfile(self):
         self.assertFalse(self.scan()['projects'][0]['planfile']['available'])
         (self.repo / 'tickets.planfile.yaml').write_text('tickets: [broken')

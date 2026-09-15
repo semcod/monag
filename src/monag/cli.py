@@ -163,7 +163,11 @@ def main(argv=None):
     status.add_argument('--record', action='store_true', help='save changes to local history')
     sub.add_parser('doctor', help='diagnose dependencies and process visibility')
     resume_parser = sub.add_parser('resume', help='read-only restart inventory of worktrees and local Planfile backlog')
-    resume_parser.add_argument('--sort', choices=['backlog', 'changes'], default='backlog')
+    resume_parser.add_argument('--sort', choices=['backlog', 'priority', 'changes'], default='backlog',
+                               help='project ranking (priority uses highest remaining Planfile priority)')
+    resume_parser.add_argument('--priority', dest='priorities', action='append',
+                               choices=['critical', 'high', 'medium', 'normal', 'low', 'unknown'],
+                               help='show only tickets with this Planfile priority; repeat to select several')
     resume_parser.add_argument('--all-projects', action='store_true')
     timeline = sub.add_parser('history', help='read local recorded observations')
     timeline.add_argument('--kind')
@@ -232,7 +236,7 @@ def main(argv=None):
             from . import resume
             if output_format != 'json' and sys.stderr.isatty():
                 print('MONAG: skanuję repozytoria i worktree; Ctrl-C przerywa bez zmian.', file=sys.stderr, flush=True)
-            data = resume.scan(root, args.depth, args.sort)
+            data = resume.scan(root, args.depth, args.sort, args.priorities)
             if output_format == 'json':
                 print(json.dumps(data, ensure_ascii=True))
             else:

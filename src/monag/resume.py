@@ -15,6 +15,21 @@ from .presentation import table
 CLOSED = {'done', 'closed', 'cancelled', 'canceled', 'completed', 'merged'}
 OPEN = {'open', 'todo', 'backlog', 'planned', 'plan', 'ready', 'in_progress',
         'in-progress', 'active', 'review', 'blocked', 'pending'}
+PLANFILE_PRIORITIES = ('critical', 'high', 'medium', 'normal', 'low')
+PRIORITY_RANK = {value: len(PLANFILE_PRIORITIES) - index
+                 for index, value in enumerate(PLANFILE_PRIORITIES)}
+
+
+def normalize_priority(value):
+    """Return a supported Planfile priority or explicit unknown evidence."""
+    if not isinstance(value, str):
+        return 'unknown'
+    value = value.strip().lower()
+    return value if value in PRIORITY_RANK else 'unknown'
+
+
+def priority_rank(value):
+    return PRIORITY_RANK.get(normalize_priority(value), -1)
 
 
 def planfile(path):
@@ -52,29 +67,76 @@ def planfile(path):
                         errors.append(f'{file}: ticket without stable ID omitted')
                         continue
                     status = str(item.get('status', 'unknown')).lower()
+                    priority = normalize_priority(item.get('priority'))
                     result.append({'id': str(identity), 'status': status,
                                    'title': str(item.get('name', item.get('title', identity))),
+                                   'priority': priority,
                                    'source': str(file)})
         except (OSError, ValueError, TypeError, yaml.YAMLError, RecursionError) as error:
             errors.append(f'{file}: {type(error).__name__}')
     return result, sources, errors
 
 
-def summarize_tickets(items):
+def summarize_tickets(items, priorities=None):
+    """Summarize tickets while retaining deterministic priority evidence.
+
+    A ticket can occur in both the current sprint and backlog. Status and
+    priority conflicts remain visible instead of silently choosing a source.
+    When duplicate rows disagree, the highest known priority is the effective
+    value used for ordering and the conflict counter records the ambiguity.
+    """
     grouped = {}
     for item in items:
-        grouped.setdefault(item['id'], []).append(item)
-    pending, blocked, conflicts, unknown = [], 0, 0, 0
-    for key, rows in grouped.items():
+        row = dict(item)
+        row['priority'] = normalize_priority(row.get('priority'))
+        grouped.setdefault(str(row['id']), []).append(row)
+    selected_priorities = None
+    if priorities:
+        if isinstance(priorities, str):
+            priorities = [priorities]
+        selected_priorities = {normalize_priority(value) for value in priorities}
+    pending, blocked, conflicts, unknown, priority_conflicts = [], 0, 0, 0, 0
+    pending_tickets = []
+    included_tickets = 0
+    for key in sorted(grouped):
+        rows = grouped[key]
         statuses = {r['status'] for r in rows}
+        row_priorities = {r['priority'] for r in rows}
+        known = [value for value in row_priorities if value in PRIORITY_RANK]
+        effective_priority = max(known, key=priority_rank) if known else 'unknown'
+        if selected_priorities is not None and effective_priority not in selected_priorities:
+            continue
+        included_tickets += 1
         conflicts += len(statuses) > 1
+        priority_conflicts += len(row_priorities) > 1
         unknown += bool(statuses - OPEN - CLOSED)
         if statuses & OPEN:
             pending.append(key)
             blocked += 'blocked' in statuses
-    return {'known_tickets': len(grouped), 'remaining': len(pending),
+            pending_tickets.append({
+                'id': key,
+                'status': '/'.join(sorted(statuses)),
+                'title': sorted(str(r.get('title', key)) for r in rows)[0],
+                'priority': effective_priority,
+                'source': sorted(str(r.get('source', '')) for r in rows)[0],
+                'priority_conflict': len(row_priorities) > 1,
+            })
+    pending_tickets.sort(key=lambda row: (-priority_rank(row['priority']), row['id']))
+    priority_counts = {value: 0 for value in (*PLANFILE_PRIORITIES, 'unknown')}
+    for row in pending_tickets:
+        priority_counts[row['priority']] += 1
+    highest = pending_tickets[0]['priority'] if pending_tickets else 'unknown'
+    return {'known_tickets': included_tickets, 'total_known_tickets': len(grouped),
+            'remaining': len(pending),
             'blocked': blocked, 'conflicting_statuses': conflicts,
-            'unknown_statuses': unknown, 'remaining_ids': sorted(pending)}
+            'unknown_statuses': unknown, 'remaining_ids': sorted(pending),
+            'remaining_tickets': pending_tickets,
+            'priority_counts': priority_counts,
+            'highest_priority': highest,
+            'highest_priority_rank': priority_rank(highest),
+            'priority_conflicts': priority_conflicts,
+            'priority_filter': sorted(selected_priorities, key=lambda value: (-priority_rank(value), value))
+            if selected_priorities is not None else []}
 
 
 def roots(root, depth):
@@ -178,8 +240,14 @@ def inspect_checkout(record, primary, base, agent_rows):
     return row
 
 
-def scan(root, depth=2, sort='backlog'):
+def scan(root, depth=2, sort='backlog', priorities=None):
     started = time.monotonic()
+    if isinstance(priorities, str):
+        priorities = [priorities]
+    priority_filter = []
+    if priorities:
+        priority_filter = sorted({normalize_priority(value) for value in priorities},
+                                 key=lambda value: (-priority_rank(value), value))
     agent_rows, denied = processes(root, machine=True)
     projects, errors, seen, groups = [], [], set(), []
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -209,22 +277,34 @@ def scan(root, depth=2, sort='backlog'):
                 if row['path'] == str(primary) or row['unfinished']:
                     tickets, files, failures = planfile(Path(row['path']))
                     items.extend(tickets); sources.extend(files); ticket_errors.extend(failures)
-            summary = summarize_tickets(items)
+            summary = summarize_tickets(items, priority_filter)
             summary['available'] = bool(sources)
-            summary['complete'] = bool(sources) and not ticket_errors and not summary['unknown_statuses'] and not summary['conflicting_statuses']
+            summary['complete'] = (bool(sources) and not ticket_errors and
+                                   not summary['unknown_statuses'] and
+                                   not summary['conflicting_statuses'] and
+                                   not summary['priority_conflicts'])
             project = {'path': str(primary), 'checkouts': rows, 'planfile': summary,
                        'planfile_sources': sources, 'errors': ticket_errors,
+                       'priority_filter': priority_filter,
                        'unfinished_checkouts': sum(r['unfinished'] for r in rows),
                        'changed_files': sum(r['changed_files'] for r in rows),
                        'comparison_base': base, 'remote_freshness': 'not fetched'}
             projects.append(project)
-    key = ((lambda p: (p['changed_files'], p['unfinished_checkouts'])) if sort == 'changes' else
-           (lambda p: (p['planfile']['remaining'], p['unfinished_checkouts'], p['changed_files'])))
-    projects.sort(key=key, reverse=True)
-    return {'schema': 'monag.resume/v1', 'root': str(root),
+    if sort == 'changes':
+        projects.sort(key=lambda p: (-p['changed_files'], -p['unfinished_checkouts'],
+                                     -p['planfile']['remaining'], p['path']))
+    elif sort == 'priority':
+        projects.sort(key=lambda p: (-p['planfile'].get('highest_priority_rank', -1),
+                                     -p['planfile']['remaining'],
+                                     -p['unfinished_checkouts'], -p['changed_files'], p['path']))
+    else:
+        projects.sort(key=lambda p: (-p['planfile']['remaining'], -p['unfinished_checkouts'],
+                                     -p['changed_files'], p['path']))
+    return {'schema': 'monag.resume/v1', 'root': str(root), 'sort': sort,
             'observed_at': datetime.now(timezone.utc).isoformat(),
             'duration_seconds': round(time.monotonic() - started, 2),
             'projects': projects, 'project_count': len(projects),
+            'priority_filter': priority_filter,
             'unfinished_projects': sum(any(r['changed_files'] or r['ahead'] for r in p['checkouts']) for p in projects),
             'projects_needing_review': sum(bool(p['unfinished_checkouts']) for p in projects),
             'errors': errors, 'inaccessible_processes': denied,
@@ -239,12 +319,26 @@ def markdown(data, limit=12, all_projects=False):
              f"**{data['unfinished_projects']}**; do sprawdzenia (także brak danych): "
              f"**{data['projects_needing_review']}**; skan: {data['duration_seconds']} s.", '',
              'Brak procesu po restarcie nie zwalnia lease. Lista jest wskazówką do kontroli, nie zgodą na przejęcie.', '',
-             '## Projekty / ranking backlogu', '']
+             '## Projekty / ' + {'priority': 'ranking priorytetów',
+                                'changes': 'ranking zmian'}.get(data.get('sort', 'backlog'), 'ranking backlogu'), '']
+    priority_filter = data.get('priority_filter', [])
+    if priority_filter:
+        lines.insert(5, 'Filtr priorytetów Planfile: **' + ', '.join(priority_filter) + '** (pozostałe tickety pominięte).')
     selected = [p for p in data['projects'] if all_projects or p['unfinished_checkouts'] or p['planfile']['remaining']]
-    lines.append(table(['Projekt', 'Worktree do sprawdzenia', 'Zmiany', 'Planfile pozostało', 'Konflikty statusów'],
+    lines.append(table(['Projekt', 'Worktree do sprawdzenia', 'Zmiany', 'Planfile pozostało',
+                        'Najwyższy priorytet', 'Konflikty statusów', 'Konflikty priorytetów'],
                        [[p['path'], p['unfinished_checkouts'], p['changed_files'],
                          (str(p['planfile']['remaining']) + ('' if p['planfile']['complete'] else ' (niepełne)')) if p['planfile']['available'] else 'brak danych',
-                         p['planfile']['conflicting_statuses']] for p in selected[:limit]]))
+                         p['planfile'].get('highest_priority', 'unknown'),
+                         p['planfile']['conflicting_statuses'],
+                         p['planfile'].get('priority_conflicts', 0)] for p in selected[:limit]]))
+    ticket_rows = [[p['path'], ticket['id'], ticket['priority'], ticket['status'], ticket['title']]
+                   for p in selected[:limit]
+                   for ticket in p['planfile'].get('remaining_tickets', [])]
+    lines.extend(['', '## Otwarte tickety Planfile', '',
+                  table(['Projekt', 'Ticket', 'Priorytet', 'Status', 'Tytuł'], ticket_rows[:limit])])
+    if len(ticket_rows) > limit:
+        lines.append(f'{len(ticket_rows) - limit} dodatkowych ticketów; użyj `--json`, aby zobaczyć wszystkie.\n')
     rows = [(p, r) for p in selected[:limit] for r in p['checkouts'] if r['unfinished']]
     lines.extend(['', '## Checkouty do wznowienia po kontroli', '',
                   table(['Katalog', 'Ticket', 'Etap', 'Złożoność', 'Stan', 'Lease'],
@@ -258,6 +352,9 @@ def markdown(data, limit=12, all_projects=False):
     lines.extend(['', f'Błędy odczytu: {len(failures)}. Projekty pokazane: {min(limit, len(selected))}/{len(selected)}.',
                   '', 'Złożoność XS/S/M/L pochodzi z intent; unknown oznacza brak deklaracji. '
                   'Etap opisuje Git, nie procent ukończenia. Planfile: bieżący sprint/backlog; '
-                  'brak danych nie oznacza zera ticketów. Dane GitHub wymagają osobnej weryfikacji.',
-                  '', 'Pełne dane i błędy: `monag --json resume`. Ranking zmian: `monag resume --sort changes`.'])
+                  'brak danych nie oznacza zera ticketów. Priorytet Planfile: critical > high > medium > normal > low; '
+                  'unknown oznacza brak lub nieznaną wartość. Klasyfikacja Wellmanifest P0–P3 nie jest mapowana. '
+                  'Dane GitHub wymagają osobnej weryfikacji.',
+                  '', 'Pełne dane i błędy: `monag --json resume`. '
+                  'Ranking priorytetów: `monag resume --sort priority`; ranking zmian: `monag resume --sort changes`.'])
     return '\n'.join(lines) + '\n'
