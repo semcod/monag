@@ -207,6 +207,10 @@ def main(argv=None):
                                help='size each candidate with subactor/ticket-radar when installed '
                                     '(complexity, score, time estimate, split recommendation); '
                                     'a missing/failing radar leaves a candidate unsized, never guessed')
+    export_parser.add_argument('--hygiene', action='store_true',
+                               help="add a candidate per repository where semcod/taskill's read-only "
+                                    "'status' (never 'run') reports it would update README/CHANGELOG/"
+                                    "TODO; a missing/failing taskill checks nothing, never assumes clean")
     panel = sub.add_parser('panel', help='serve a local-only HTTP dashboard (agents, repositories, '
                                          'Planfile backlog, on-demand audit/catalog); Ctrl-C to stop')
     panel.add_argument('--port', type=int, default=8090)
@@ -323,7 +327,7 @@ def main(argv=None):
             if output_format != 'json' and sys.stderr.isatty():
                 print('MONAG: building a candidate-work staging list (audit + catalog + resume); '
                      'nothing is created or queued.', file=sys.stderr, flush=True)
-            data = export.scan(root, args.depth, args.issue_limit, args.radar)
+            data = export.scan(root, args.depth, args.issue_limit, args.radar, args.hygiene)
             if output_format == 'json':
                 print(json.dumps(data, ensure_ascii=True))
             else:

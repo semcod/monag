@@ -22,6 +22,12 @@ external, deterministic `subactor/ticket-radar` tool (complexity/score/time
 estimate/split recommendation) when it is installed on PATH -- monag still
 works identically without it; a missing or failing ticket-radar leaves
 ``radar: None`` on the candidate, never a guessed size.
+
+With ``--hygiene``, a ``taskill-doc-drift`` candidate is added for every
+repository where `semcod/taskill`'s own read-only ``status`` command
+(never ``run``: monag never asks an external tool to write) reports it
+would update README/CHANGELOG/TODO -- carrying taskill's own reasons
+(pending commits, changed docs) as evidence.
 """
 from datetime import datetime, timezone
 import json
@@ -30,9 +36,11 @@ import subprocess
 import time
 
 from . import audit, catalog, resume
+from .monitor import command
 
 SCHEMA = 'monag.export/v1'
 RADAR_BIN = 'ticket-radar'
+TASKILL_BIN = 'taskill'
 
 
 def audit_candidates(audit_data):
@@ -140,12 +148,56 @@ def radar_assess(candidate, repository_root, timeout=20):
     }, None
 
 
-def scan(root, depth=2, issue_limit=200, radar=False):
+def taskill_available():
+    return shutil.which(TASKILL_BIN) is not None
+
+
+def taskill_candidates(catalog_data, timeout=20):
+    """One taskill-doc-drift candidate per repository taskill's own read-only
+    `status` says it would update -- never `run`; monag does not ask any
+    external tool to write. A missing binary or a per-repository failure is
+    reported as an explicit error, never silently treated as "nothing to do".
+    """
+    candidates, errors = [], []
+    for repository in catalog_data['repositories']:
+        out, error = command([TASKILL_BIN, 'status', repository['path'], '--format', 'json'],
+                             timeout=timeout)
+        if error:
+            errors.append(f"{repository['path']}: {error}")
+            continue
+        try:
+            status = json.loads(out)
+        except ValueError:
+            errors.append(f"{repository['path']}: {TASKILL_BIN}: invalid output")
+            continue
+        if not status.get('would_run'):
+            continue
+        label = repository['repo'] or repository['path']
+        reasons = status.get('reasons') or []
+        candidates.append({
+            'origin': 'taskill-doc-drift',
+            'repo': repository['repo'], 'path': repository['path'],
+            'title': f"{label}: documentation drift ({len(reasons)} reason(s))",
+            'priority': 'unknown',
+            'url': None,
+            'evidence': '; '.join(str(r) for r in reasons) or 'taskill status reports would_run=true.',
+        })
+    return candidates, errors
+
+
+def scan(root, depth=2, issue_limit=200, radar=False, hygiene=False):
     started = time.monotonic()
     audit_data = audit.scan(root, depth, issue_limit)
     catalog_data = catalog.scan(root, depth)
     resume_data = resume.scan(root, depth)
     candidates = audit_candidates(audit_data) + catalog_candidates(catalog_data)
+    hygiene_errors = []
+    if hygiene:
+        if taskill_available():
+            found, hygiene_errors = taskill_candidates(catalog_data)
+            candidates += found
+        else:
+            hygiene_errors.append(f'{TASKILL_BIN} not found on PATH; doc-hygiene not checked')
     radar_errors = []
     if radar:
         if radar_available():
@@ -164,6 +216,7 @@ def scan(root, depth=2, issue_limit=200, radar=False):
         'candidates': candidates, 'candidate_count': len(candidates),
         'existing_open_tickets': context, 'existing_open_ticket_count': len(context),
         'radar_requested': radar, 'radar_errors': radar_errors,
+        'hygiene_requested': hygiene, 'hygiene_errors': hygiene_errors,
         'sources': {'audit': {'repository_count': audit_data['repository_count'],
                               'errors': len(audit_data['errors'])},
                    'catalog': {'repository_count': catalog_data['repository_count']},
@@ -201,6 +254,9 @@ def markdown(data, limit=40):
     if data['radar_errors']:
         lines.extend(['', f"Radar unavailable for {len(data['radar_errors'])} candidate(s) "
                      "(shown as 'unsized', never guessed); see `--json` for details."])
+    if data['hygiene_errors']:
+        lines.extend(['', f"Doc-hygiene not checked for {len(data['hygiene_errors'])} repositor"
+                     "y/ies (taskill unavailable or failed); see `--json` for details."])
     context = data['existing_open_tickets'][:limit]
     lines.extend(['', '## Existing open Planfile tickets (context, not candidates)', '',
                  table(['Path', 'Ticket', 'Priority', 'Status', 'Title'],

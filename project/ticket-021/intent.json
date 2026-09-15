@@ -1,0 +1,87 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-021",
+  "summary": "Add semcod/taskill doc-hygiene candidates to export",
+  "workstream": "application",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P2",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-021/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/**",
+    "tests/**"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [
+    "ticket-006",
+    "ticket-020"
+  ],
+  "conflictsWith": [],
+  "integrationTicket": "ticket-001",
+  "delivery": {
+    "acceptedBaseSha": "67f75f3b8944818a819a0607d5ac51536e2bd211",
+    "targetBranch": "main",
+    "outcome": "Add `monag export --hygiene`: a taskill-doc-drift candidate for every repository where semcod/taskill's own read-only `status` command (never `run` -- monag never asks an external tool to write) reports it would update README/CHANGELOG/TODO, carrying taskill's own reasons as evidence. A missing binary or a per-repository failure is an explicit recorded error, never silently treated as clean.",
+    "nonGoals": [
+      "monag never invokes `taskill run`; only the read-only `status` subcommand.",
+      "monag does not vendor, install, or require taskill; it is an optional external tool.",
+      "No write access to README/CHANGELOG/TODO of any scanned repository."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 40,
+    "budgets": {
+      "maxImplementationFiles": 3,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 1,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Add taskill_available()/taskill_candidates() to src/monag/export.py, reusing monitor.command() (no stdin needed, unlike ticket-radar). Wire a new --hygiene flag on the export subcommand; no new runtime dependency since taskill is invoked as an external binary, not imported.",
+      "components": [
+        {
+          "name": "cli",
+          "paths": [
+            "src/monag/**"
+          ]
+        },
+        {
+          "name": "tests",
+          "paths": [
+            "tests/**"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "monag export --hygiene flag"
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the application slice through protected review."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python -m unittest discover -s tests -v"
+        ],
+        "evidence": "Hygiene candidate generation (available/missing/clean/dirty) and CLI wiring regression suite passes."
+      }
+    ]
+  }
+}
