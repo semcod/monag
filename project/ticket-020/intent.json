@@ -1,0 +1,86 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-020",
+  "summary": "Size export candidates with subactor/ticket-radar when installed",
+  "workstream": "application",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P2",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-020/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/**",
+    "tests/**"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [
+    "ticket-006"
+  ],
+  "conflictsWith": [],
+  "integrationTicket": "ticket-001",
+  "delivery": {
+    "acceptedBaseSha": "8b401227ec7b7b7afe981dca8de05944119659a3",
+    "targetBranch": "main",
+    "outcome": "Add `monag export --radar`: when subactor/ticket-radar is installed on PATH, size each candidate (complexity, score, time estimate, split recommendation) via its deterministic JSON stdin/stdout interface. A missing binary or a per-candidate failure leaves that candidate unsized (radar: null) with an explicit error, never a guessed size. Off by default -- monag's behavior is unchanged unless --radar is passed.",
+    "nonGoals": [
+      "monag does not vendor, install, or require ticket-radar; it is an optional external tool.",
+      "No change to what counts as a candidate (audit/catalog logic untouched) -- only sizing is added.",
+      "No write access to ticket-radar's own output (SVG/PNG visualizations) beyond the compact JSON fields already useful in a text report."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 45,
+    "budgets": {
+      "maxImplementationFiles": 4,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 1,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Add radar_available()/run_radar()/radar_assess() to src/monag/export.py; run_radar() is a small, directly mockable subprocess boundary (monitor.command() has no stdin support, needed here). Wire a new --radar flag on the export subcommand; no new runtime dependency since ticket-radar is invoked as an external binary, not imported.",
+      "components": [
+        {
+          "name": "cli",
+          "paths": [
+            "src/monag/**"
+          ]
+        },
+        {
+          "name": "tests",
+          "paths": [
+            "tests/**"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "monag export --radar flag"
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the application slice through protected review."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python -m unittest discover -s tests -v"
+        ],
+        "evidence": "Radar enrichment (available/missing/per-candidate-failure) and CLI wiring regression suite passes."
+      }
+    ]
+  }
+}

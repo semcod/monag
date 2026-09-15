@@ -203,6 +203,10 @@ def main(argv=None):
                                                    'for human review; creates, imports or claims nothing')
     export_parser.add_argument('--issue-limit', type=int, default=200,
                                help='GitHub issues fetched per repository via gh (default: 200)')
+    export_parser.add_argument('--radar', action='store_true',
+                               help='size each candidate with subactor/ticket-radar when installed '
+                                    '(complexity, score, time estimate, split recommendation); '
+                                    'a missing/failing radar leaves a candidate unsized, never guessed')
     panel = sub.add_parser('panel', help='serve a local-only HTTP dashboard (agents, repositories, '
                                          'Planfile backlog, on-demand audit/catalog); Ctrl-C to stop')
     panel.add_argument('--port', type=int, default=8090)
@@ -319,7 +323,7 @@ def main(argv=None):
             if output_format != 'json' and sys.stderr.isatty():
                 print('MONAG: building a candidate-work staging list (audit + catalog + resume); '
                      'nothing is created or queued.', file=sys.stderr, flush=True)
-            data = export.scan(root, args.depth, args.issue_limit)
+            data = export.scan(root, args.depth, args.issue_limit, args.radar)
             if output_format == 'json':
                 print(json.dumps(data, ensure_ascii=True))
             else:
