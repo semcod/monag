@@ -1,0 +1,87 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-002",
+  "summary": "Restore Monag CLI and resume inventory from preserved delivery",
+  "workstream": "application",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-002/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/**",
+    "tests/**"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [
+    "ticket-001"
+  ],
+  "conflictsWith": [],
+  "integrationTicket": "ticket-001",
+  "delivery": {
+    "acceptedBaseSha": "04228b366f42ddca24e9e66cc0bb07cc0c12f2c9",
+    "targetBranch": "main",
+    "outcome": "Restore preserved Monag interactive CLI, process observations and read-only project resume inventory with regression tests.",
+    "nonGoals": [
+      "No registry publication, dependency metadata or governance migration in this application slice.",
+      "No attribution of an unknown process task as confirmed agent work."
+    ],
+    "complexity": "L",
+    "estimatedMinutes": 90,
+    "budgets": {
+      "maxImplementationFiles": 15,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 3,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Recover preserved application modules and test their public behavior; keep package metadata and publication in integration.",
+      "components": [
+        {
+          "name": "cli",
+          "paths": [
+            "src/monag/**"
+          ]
+        },
+        {
+          "name": "tests",
+          "paths": [
+            "tests/**"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "interactive monag",
+        "resume inventory",
+        "JSON and Markdown reporting"
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the application slice through protected review."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python -m unittest discover -s tests -v"
+        ],
+        "evidence": "CLI, process mapping, history, Markdown and resume regression suite passes."
+      }
+    ]
+  }
+}

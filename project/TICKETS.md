@@ -1,5 +1,8 @@
 # Tickets
 
-| Ticket | Status | Workstream | Result |
-| --- | --- | --- | --- |
-| [ticket-001](ticket-001/README.md) | IN_PROGRESS | integration | [PR #1](https://github.com/semcod/monag/pull/1) |
+<!-- AUTO:TICKET_INDEX:START -->
+| Ticket ID | Spec | Preprompt | Human input | Agent plans | Agent logs | Changelog |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **ticket-001** | [`README.md`](./ticket-001/README.md) | - | - | - | - | - |
+| **ticket-002** | [`README.md`](./ticket-002/README.md) | - | - | - | - | - |
+<!-- AUTO:TICKET_INDEX:END -->
