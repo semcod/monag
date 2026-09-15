@@ -18,24 +18,37 @@ class Output(StringIO):
 
 
 class StartupTests(unittest.TestCase):
-    def test_bare_command_refreshes_and_shows_screen_before_scanning(self):
+    def test_bare_command_opens_shell_and_shows_dashboard(self):
         stream = Output(True)
         with tempfile.TemporaryDirectory() as folder:
             base = Path(folder)
             (base / 'github').mkdir()
-            def scan(*args):
-                self.assertIn('\x1b[?1049h', stream.getvalue())
-                return sample()
             with patch('monag.cli.Path.home', return_value=base), \
                  patch('sys.stdout', stream), patch.dict('os.environ', {'TERM': 'xterm'}), \
-                 patch('monag.cli.snapshot', side_effect=scan) as snapshots, \
+                 patch('monag.cli.snapshot', return_value=sample()) as snapshots, \
                  patch('monag.cli.history.record', return_value=[]) as records, \
-                 patch('monag.cli.time.sleep', side_effect=[None, KeyboardInterrupt]) as sleep:
-                self.assertEqual(main([]), 130)
+                 patch('builtins.input', return_value='quit'):
+                self.assertEqual(main([]), 0)
+            self.assertEqual(snapshots.call_count, 1)
+            self.assertEqual(records.call_count, 1)
+            self.assertIn('MONAG shell', stream.getvalue())
+            self.assertIn('Agent activity', stream.getvalue())
+            self.assertIn('MONAG shell zakończony', stream.getvalue())
+
+    def test_shell_dispatches_reports_until_exit(self):
+        stream = Output(True)
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            (base / 'github').mkdir()
+            with patch('monag.cli.Path.home', return_value=base), \
+                 patch('sys.stdout', stream), patch.dict('os.environ', {'TERM': 'xterm'}), \
+                 patch('monag.cli.snapshot', return_value=sample()) as snapshots, \
+                 patch('monag.cli.history.record', return_value=[]), \
+                 patch('builtins.input', side_effect=['help', 'status', 'quit']):
+                self.assertEqual(main(['shell']), 0)
             self.assertEqual(snapshots.call_count, 2)
-            self.assertEqual(records.call_count, 2)
-            sleep.assert_called_with(5)
-            self.assertIn('\x1b[?1049l', stream.getvalue())
+            self.assertNotIn('Nieznane', stream.getvalue())
+            self.assertIn('pokaż worktree', stream.getvalue())
 
     def test_explicit_status_exports_and_pipes_remain_one_shot(self):
         for argv, terminal in [(['status'], True), (['--json'], True),

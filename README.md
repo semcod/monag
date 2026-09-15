@@ -19,7 +19,11 @@ monag run --task "Fix issue #42" --issue 42 -- claude
 ./project.sh --help
 ```
 
-Running `monag` in a terminal starts interactive watch immediately. Exit with Ctrl-C.
+Running `monag` in a terminal opens the interactive shell and immediately prints
+the agent dashboard plus the restart/backlog inventory. Use `refresh` to repeat
+both reports, `resume` for worktrees and Planfile tickets, `audit` for the
+Planfile/GitHub comparison, and `quit` or Ctrl-D to exit. `monag watch` remains
+available for an always-refreshing dashboard; Ctrl-C exits it.
 Use `monag status` for one snapshot. Pipes, `--json`, and `--markdown` default
 to one snapshot unless `watch` is explicit.
 
@@ -30,6 +34,17 @@ Custom agents: `--agent LABEL=EXECUTABLE` or `run --agent-kind LABEL`.
 Open descriptor paths: `--open-files`. Watch records observations by default;
 use `watch --no-record` to disable recording.
 Put global options before `status`, `watch`, or `run`.
+
+Planfile tickets are stored per sprint. `planfile ticket list` shows only the
+`current` sprint; inspect the backlog explicitly with `planfile ticket list
+--sprint backlog` (or use `monag resume`, which reads every local sprint and
+legacy keyed records). To reconcile local tickets with GitHub, run the
+read-only preview first:
+
+```sh
+planfile sync github --dry-run --direction both
+planfile sync github --direction both
+```
 
 [Usage, interpretation and limitations](docs/information/usage.md) ·
 [Documentation](docs/README.md)
