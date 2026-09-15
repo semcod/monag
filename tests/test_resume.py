@@ -74,6 +74,54 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual([row['id'] for row in summary['remaining_tickets']], ['HIGH', 'LOW', 'MISSING'])
         self.assertEqual(summary['priority_counts']['unknown'], 1)
 
+    def test_github_import_fields_and_incomplete_evidence_are_explicit(self):
+        sprint = self.repo / '.planfile/sprints'
+        sprint.mkdir(parents=True)
+        (sprint / 'current.yaml').write_text(
+            'sprint:\n  tickets:\n'
+            '    GITHUB-16:\n'
+            '      id: GITHUB-16\n'
+            '      name: Imported defect\n'
+            '      status: open\n'
+            '      priority: high\n'
+            '      labels: [bug, importer]\n'
+            '      backend: github\n'
+            '      external_id: "16"\n'
+            '      sync:\n        github:\n          id: "16"\n'
+            '    GITHUB-17:\n'
+            '      name: Incomplete import\n'
+            '      status: open\n'
+            '      labels: [bug]\n')
+
+        items, _, errors = resume.planfile(self.repo)
+        imported = next(item for item in items if item['id'] == 'GITHUB-16')
+        incomplete = next(item for item in items if item['id'] == 'GITHUB-17')
+        self.assertEqual(imported['priority'], 'high')
+        self.assertEqual(imported['labels'], ['bug', 'importer'])
+        self.assertEqual(imported['github'], '16')
+        self.assertEqual(incomplete['labels'], ['bug'])
+        self.assertEqual(incomplete['import_evidence'], [
+            'missing inline id', 'missing priority', 'missing sync.github mapping'])
+        self.assertTrue(any('GITHUB-17: missing inline id' in error for error in errors))
+        self.assertTrue(any('GITHUB-17: missing priority' in error for error in errors))
+        self.assertTrue(any('GITHUB-17: missing sync.github mapping' in error for error in errors))
+
+    def test_github_import_read_is_idempotent(self):
+        sprint = self.repo / '.planfile/sprints'
+        sprint.mkdir(parents=True)
+        source = sprint / 'current.yaml'
+        source.write_text(
+            'sprint:\n  tickets:\n    GITHUB-16:\n'
+            '      id: GITHUB-16\n      status: open\n'
+            '      priority: high\n      labels: [bug]\n'
+            '      external_id: "16"\n      backend: github\n'
+            '      sync:\n        github:\n          id: "16"\n')
+        before = source.read_bytes()
+        first = resume.planfile(self.repo)
+        second = resume.planfile(self.repo)
+        self.assertEqual(first, second)
+        self.assertEqual(source.read_bytes(), before)
+
     def test_priority_conflict_and_filter_remain_explicit(self):
         items = [
             {'id': 'A', 'status': 'open', 'priority': 'low'},
