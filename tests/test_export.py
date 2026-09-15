@@ -167,6 +167,50 @@ class ExportTests(unittest.TestCase):
         self.assertIn('unsized', text)
         self.assertIn('Radar unavailable for', text)
 
+    def fake_taskill(self, responses):
+        def fake(args, cwd=None, timeout=8):
+            if args[:2] == ['taskill', 'status']:
+                path = args[2]
+                return responses.get(path, ('{"would_run": false, "reasons": []}', None))
+            return real_command(args, cwd=cwd, timeout=timeout)
+        return fake
+
+    def test_hygiene_defaults_off(self):
+        repo = self.make_repo('org/demo')
+        data = export.scan(repo)
+        self.assertFalse(data['hygiene_requested'])
+        self.assertEqual(data['hygiene_errors'], [])
+        self.assertEqual([c for c in data['candidates'] if c['origin'] == 'taskill-doc-drift'], [])
+
+    def test_hygiene_adds_candidate_when_taskill_would_run(self):
+        repo = self.make_repo('org/demo', remote='git@github.com:org/demo.git')
+        status = json.dumps({'would_run': True, 'reasons': ['50 new commit(s)', 'README.md touched']})
+        with patch('monag.export.taskill_available', return_value=True), \
+             patch('monag.export.command', side_effect=self.fake_taskill({str(repo): (status, None)})):
+            data = export.scan(repo, hygiene=True)
+        self.assertTrue(data['hygiene_requested'])
+        self.assertEqual(data['hygiene_errors'], [])
+        found = next(c for c in data['candidates'] if c['origin'] == 'taskill-doc-drift')
+        self.assertIn('50 new commit(s)', found['evidence'])
+        self.assertIn('README.md touched', found['evidence'])
+        self.assertEqual(found['priority'], 'unknown')
+
+    def test_hygiene_skips_repo_when_taskill_says_clean(self):
+        repo = self.make_repo('org/demo', remote='git@github.com:org/demo.git')
+        status = json.dumps({'would_run': False, 'reasons': []})
+        with patch('monag.export.taskill_available', return_value=True), \
+             patch('monag.export.command', side_effect=self.fake_taskill({str(repo): (status, None)})):
+            data = export.scan(repo, hygiene=True)
+        self.assertEqual([c for c in data['candidates'] if c['origin'] == 'taskill-doc-drift'], [])
+
+    def test_hygiene_missing_binary_records_error_not_silent(self):
+        repo = self.make_repo('org/demo', remote='git@github.com:org/demo.git')
+        with patch('monag.export.taskill_available', return_value=False):
+            data = export.scan(repo, hygiene=True)
+        self.assertEqual(len(data['hygiene_errors']), 1)
+        self.assertIn('not found on PATH', data['hygiene_errors'][0])
+        self.assertEqual([c for c in data['candidates'] if c['origin'] == 'taskill-doc-drift'], [])
+
     def test_markdown_renders_without_crashing_and_states_nothing_is_created(self):
         repo = self.make_repo('org/demo')
         data = export.scan(repo)
