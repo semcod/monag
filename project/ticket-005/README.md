@@ -1,4 +1,4 @@
-# ticket-005 — Local project catalog report
+# ticket-005 — Local project catalog and HTTP dashboard
 
 - **ID**: ticket-005
 - **Owner**: unresolved:human
@@ -32,6 +32,19 @@ the project already ships in its own checkout.
 - [x] AC-04: Regression tests cover pyproject.toml/package.json/README
       fallback order, blockquote/badge/heading skipping in README parsing,
       entry-point extraction, and an undeclared-description repository.
+- [x] AC-05: `monag panel` serves a local-only HTTP dashboard (default
+      `127.0.0.1:8090`) over the existing agent/repository snapshot and
+      Planfile backlog (background-refreshed), plus the `audit`/`catalog`
+      reports computed lazily and cached on first request. No new data
+      source, no authentication, binds to localhost by default.
+
+**Known operational note:** on this host, TCP port 8090 is already bound by
+an existing nginx service serving `taskand-glm53`'s own live-context page
+(`index.html`, title "taskand · kontekst i stan live"). `monag panel`
+defaults to 8090 per the request but will fail to bind there until that
+conflict is resolved (stop the other service, or start the panel with
+`--port <free-port>`). Not resolved here — needs an owner decision about
+which service actually owns 8090.
 
 ## Tracking boundary
 

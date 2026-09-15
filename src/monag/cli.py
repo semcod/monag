@@ -175,6 +175,13 @@ def main(argv=None):
                               help='GitHub issues fetched per repository via gh (default: 200)')
     sub.add_parser('catalog', help='read-only, local-only catalog of what each repository under --root '
                                    'declares itself to be (description, stack, entry points)')
+    panel = sub.add_parser('panel', help='serve a local-only HTTP dashboard (agents, repositories, '
+                                         'Planfile backlog, on-demand audit/catalog); Ctrl-C to stop')
+    panel.add_argument('--port', type=int, default=8090)
+    panel.add_argument('--bind', default='127.0.0.1',
+                       help='listen address (default: localhost only; widen only if you mean to)')
+    panel.add_argument('--panel-interval', dest='panel_interval', type=float, default=30,
+                       help='background refresh seconds for the live snapshot/resume view (default: 30)')
     timeline = sub.add_parser('history', help='read local recorded observations')
     timeline.add_argument('--kind')
     timeline.add_argument('--search')
@@ -200,6 +207,8 @@ def main(argv=None):
         parser.error('interval must be between 0.2 and 86400 seconds')
     if args.mode == 'audit' and args.issue_limit < 1:
         parser.error('issue-limit must be >= 1')
+    if args.mode == 'panel' and not (1 <= args.port <= 65535 and 1 <= args.panel_interval < 86400):
+        parser.error('port must be 1-65535 and panel-interval must be >= 1 second')
     stack = ExitStack()
     try:
         output_format = args.output
@@ -271,6 +280,13 @@ def main(argv=None):
                 print(json.dumps(data, ensure_ascii=True))
             else:
                 display_report(catalog.markdown(data, args.limit))
+            return 0
+        if args.mode == 'panel':
+            from . import panel
+            print(f'MONAG: panel serving http://{args.bind}:{args.port}/ (Ctrl-C to stop).',
+                 file=sys.stderr, flush=True)
+            panel.serve(root, args.state_dir, args.depth, args.bind, args.port, args.panel_interval,
+                       registry, args.github, args.machine, args.all_users, args.open_files)
             return 0
         cache = {}
         if console is not None and args.mode == 'watch' and sys.stdout.isatty():
