@@ -7,8 +7,9 @@ sync index (`.planfile/sync/github.state.yaml`). When `--root` is a workspace
 of several repositories (not itself a checkout, e.g. the default `~/github`),
 the same audit runs for every discovered repository with a GitHub remote.
 
-`gh` failures, a missing remote, or a repository without a local Planfile are
-all reported as explicit unknowns, never silently treated as "zero".
+Confirmed GitHub forks are ignored because their Issues are not part of the
+canonical repository's coverage. A failed fork-metadata lookup is reported as
+an explicit unknown and never silently treated as "zero".
 """
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -48,6 +49,25 @@ def repo_remote(path):
     return github_repo(remote) if remote else None
 
 
+def github_repo_is_fork(repo):
+    """Return GitHub's fork flag before making any Issue request.
+
+    ``None`` means the repository metadata could not be trusted. Callers must
+    then leave Issue coverage unknown rather than querying an unclassified
+    repository.
+    """
+    out, error = command(['gh', 'repo', 'view', repo, '--json', 'isFork'], timeout=20)
+    if error:
+        return None, [f'{repo}: {error}']
+    try:
+        data = json.loads(out)
+        if not isinstance(data, dict) or not isinstance(data.get('isFork'), bool):
+            raise ValueError('expected a boolean isFork field')
+        return data['isFork'], []
+    except (ValueError, TypeError):
+        return None, [f'{repo}: invalid gh repository metadata JSON']
+
+
 def github_issues(repo, limit=200):
     """All GitHub Issues (open and closed) for a repository, via `gh`."""
     out, error = command(['gh', 'issue', 'list', '--repo', repo, '--state', 'all',
@@ -67,10 +87,24 @@ def github_issues(repo, limit=200):
 def audit_repo(path, issue_limit=200):
     """One repository's coverage report; never raises, errors are data."""
     path = Path(path)
+    repo = repo_remote(path)
+    is_fork, metadata_errors = (None, []) if repo is None else github_repo_is_fork(repo)
+    if is_fork is True:
+        return {
+            'path': str(path), 'repo': repo, 'is_fork': True,
+            'ignored': True, 'ignored_reason': 'github-fork',
+            'planfile_available': False, 'planfile_sources': [], 'planfile_errors': [],
+            'tickets': [], 'ticket_count': 0, 'mapped_ticket_count': 0,
+            'sync_index_source': None, 'sync_index_error': None,
+            'github_fetched': False, 'github_errors': [], 'github_issue_count': None,
+            'github_open': None, 'github_closed': None,
+            'untracked_issues': [], 'orphan_tickets': [], 'sync_drift': [],
+        }
+
     tickets, planfile_sources, planfile_errors = read_planfile(path)
     index, index_source, index_error = sync_index(path)
-    repo = repo_remote(path)
-    issues, github_errors = (None, []) if repo is None else github_issues(repo, issue_limit)
+    issues, github_errors = ((None, metadata_errors) if repo is not None and is_fork is None
+                             else ((None, []) if repo is None else github_issues(repo, issue_limit)))
     fetched = repo is not None and not github_errors
     issues = issues or []
     issue_by_number = {str(item['number']): item for item in issues
@@ -87,7 +121,8 @@ def audit_repo(path, issue_limit=200):
                   for ticket_id, issue_id in sorted(mapped.items()) if index.get(ticket_id) != issue_id]
                  if index_source is not None else [])
     return {
-        'path': str(path), 'repo': repo,
+        'path': str(path), 'repo': repo, 'is_fork': False if repo is not None and is_fork is False else None,
+        'ignored': False, 'ignored_reason': None,
         'planfile_available': bool(planfile_sources),
         'planfile_sources': planfile_sources, 'planfile_errors': planfile_errors,
         'tickets': tickets, 'ticket_count': len(tickets), 'mapped_ticket_count': len(mapped),
@@ -126,7 +161,9 @@ def scan(root, depth=2, issue_limit=200):
     started = time.monotonic()
     mode, paths, errors = targets(root, depth)
     with ThreadPoolExecutor(max_workers=8) as pool:
-        repositories = list(pool.map(lambda p: audit_repo(p, issue_limit), paths))
+        reports = list(pool.map(lambda p: audit_repo(p, issue_limit), paths))
+    ignored_forks = [r for r in reports if r.get('ignored_reason') == 'github-fork']
+    repositories = [r for r in reports if not r.get('ignored')]
     repositories.sort(key=lambda r: (-len(r['untracked_issues']), -len(r['sync_drift']),
                                      -len(r['orphan_tickets']), r['path']))
     return {
@@ -134,6 +171,8 @@ def scan(root, depth=2, issue_limit=200):
         'observed_at': datetime.now(timezone.utc).isoformat(),
         'duration_seconds': round(time.monotonic() - started, 2),
         'repositories': repositories, 'repository_count': len(repositories),
+        'ignored_fork_count': len(ignored_forks),
+        'ignored_forks': [{'path': r['path'], 'repo': r['repo']} for r in ignored_forks],
         'repositories_with_github': sum(1 for r in repositories if r['repo']),
         'repositories_with_planfile': sum(1 for r in repositories if r['planfile_available']),
         'total_github_issues': sum(r['github_issue_count'] or 0 for r in repositories),
@@ -154,7 +193,8 @@ def markdown(data, limit=12):
              f"Mode: **{data['mode']}** · repositories: **{data['repository_count']}** "
              f"({data['repositories_with_github']} with a GitHub remote, "
              f"{data['repositories_with_planfile']} with a local Planfile) · scan: "
-             f"{data['duration_seconds']} s.", '',
+             f"{data['duration_seconds']} s. · ignored GitHub forks: "
+             f"**{data['ignored_fork_count']}**", '',
              f"GitHub issues observed: **{data['total_github_issues']}** · "
              f"Planfile tickets: **{data['total_planfile_tickets']}** · "
              f"issues with no Planfile ticket: **{data['total_untracked_issues']}** · "
