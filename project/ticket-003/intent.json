@@ -1,0 +1,107 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-003",
+  "summary": "Reconcile repository-local Planfile delivery with target-owned ticket activity and integration ownership",
+  "workstream": "integration",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P1",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    ".governance/manifest.json",
+    ".governance/ticket-activity.override.json",
+    ".planfile/**",
+    "project/ticket-003/**",
+    "TODO.md",
+    "project/TICKETS.md"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [
+    "ticket-001"
+  ],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "049d16b35b24a7eab49ecc4df7114533f232527d",
+    "targetBranch": "main",
+    "outcome": "Deliver the tracked Planfile store with a canonical ticket carrier, target-owned missing-receipt policy, and explicit integration ownership for the Planfile governance contract.",
+    "nonGoals": [
+      "No application code, runtime behavior, or application tests are changed.",
+      "No terminal receipt is fabricated and no ticket status projection is edited.",
+      "No remote branch, pull request, merge, tag, or release is performed by the repository commit itself."
+    ],
+    "complexity": "M",
+    "estimatedMinutes": 45,
+    "budgets": {
+      "maxImplementationFiles": 9,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Keep Planfile data non-operational, resolve missing terminal receipts through the supported target-owned git-ancestry override, and place both contracts under the integration workstream.",
+      "components": [
+        {
+          "name": "planfile-governance",
+          "paths": [
+            ".planfile/**",
+            ".governance/manifest.json",
+            ".governance/ticket-activity.override.json"
+          ]
+        },
+        {
+          "name": "ticket-carrier",
+          "paths": [
+            "project/ticket-003/**",
+            "project/TICKETS.md"
+          ]
+        }
+      ],
+      "responsibilityChanges": true,
+      "interfaceChanges": [],
+      "dataChanges": [
+        "Adds the target-owned ticket activity policy override.",
+        "Declares integration ownership for the repository-local Planfile contract.",
+        "Adds the canonical ticket-003 intent and execution handoff carrier."
+      ],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert this ticket branch; preserve the prior remote PR head as the recorded backup ref until the protected controller completes publication."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "test -f .planfile/sync/github.state.yaml",
+          "python3 -m json.tool .governance/ticket-activity.override.json"
+        ],
+        "evidence": "The Planfile mapping and strict target-owned policy are present and parseable."
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "./project/governance-check.sh --base <accepted-base> --head HEAD --actor ci"
+        ],
+        "evidence": "The managed governance gate accepts one active ticket and explicit integration ownership."
+      },
+      {
+        "criterion": "AC-03",
+        "commands": [
+          "python3 -m unittest discover -s tests -p 'test_*.py'"
+        ],
+        "evidence": "The repository test suite remains green without application changes."
+      }
+    ]
+  }
+}

@@ -1,0 +1,7 @@
+integrations:
+  github:
+    repo: semcod/monag
+    default_labels:
+      - planfile
+      - managed
+      - wellmanifest
