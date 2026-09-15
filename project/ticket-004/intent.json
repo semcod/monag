@@ -1,0 +1,85 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-004",
+  "summary": "Add a Planfile/GitHub Issues coverage audit report",
+  "workstream": "application",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-004/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/**",
+    "tests/**"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [
+    "ticket-001"
+  ],
+  "conflictsWith": [],
+  "integrationTicket": "ticket-001",
+  "delivery": {
+    "acceptedBaseSha": "f871a61eb65646ea85aea2bf84f6f49aa7b3b289",
+    "targetBranch": "main",
+    "outcome": "Add a `monag audit` subcommand that reports how well a repository's local Planfile tickets are covered by, and in sync with, its GitHub Issues -- for one repository, or across every repository under --root when run outside a specific repository.",
+    "nonGoals": [
+      "No write access to GitHub Issues or the local Planfile store; report only.",
+      "No changes to .planfile/** content; that is unrelated, separately tracked ticket-003 (semcod/monag#6)."
+    ],
+    "complexity": "M",
+    "estimatedMinutes": 60,
+    "budgets": {
+      "maxImplementationFiles": 6,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 1,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Add src/monag/audit.py reusing monitor.command()/github_repo() and resume.py's repository discovery; wire a new `monag audit` subcommand and JSON/Markdown reporting. Extend resume.planfile() to read every named sprint file and expose each ticket's own GitHub mapping.",
+      "components": [
+        {
+          "name": "cli",
+          "paths": [
+            "src/monag/**"
+          ]
+        },
+        {
+          "name": "tests",
+          "paths": [
+            "tests/**"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "monag audit subcommand"
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the application slice through protected review."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python -m unittest discover -s tests -v"
+        ],
+        "evidence": "Audit module, resume.py extension, and CLI wiring regression suite passes."
+      }
+    ]
+  }
+}
