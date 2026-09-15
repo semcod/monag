@@ -98,6 +98,8 @@
           "models/**",
           "proto/**",
           "src/monag/**",
+          "project.sh",
+          "project.bat",
           "tests/**",
           "Makefile",
           "MANIFEST.in",
@@ -218,7 +220,7 @@
   ],
   "standard": {
     "id": "wellmanifest/new-project",
-    "version": "0.20.30"
+    "version": "0.20.31"
   },
   "ticket": {
     "activeStatuses": [

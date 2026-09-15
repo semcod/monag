@@ -10,7 +10,7 @@ Deliver a Python CLI for Linux agent processes, checkout concurrency, changed
 files, recent commits, optional GitHub issues/PRs, and explicit task reporting.
 Preserve protected publication gates and distinguish observations from attribution.
 
-This slice is the delivery bootstrap: adopt `wellmanifest/new-project` 0.20.30
+This slice is the delivery bootstrap: adopt `wellmanifest/new-project` 0.20.31
 as one verified installation together with the repository-owned files it
 requires (governance manifest, required checks, ticket allocation, `VERSION`,
 `CHANGELOG.md`, `README.md`, `pyproject.toml`) and a checkout-scoped

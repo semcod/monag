@@ -16,6 +16,7 @@ monag --root ~/github --json status
 monag history --search ticket-001
 monag doctor
 monag run --task "Fix issue #42" --issue 42 -- claude
+./project.sh --help
 ```
 
 Running `monag` in a terminal starts interactive watch immediately. Exit with Ctrl-C.
@@ -32,3 +33,7 @@ Put global options before `status`, `watch`, or `run`.
 
 [Usage, interpretation and limitations](docs/information/usage.md) ·
 [Documentation](docs/README.md)
+
+Governance checks are available through `./project.sh` on Linux/macOS and
+`project.bat` on Windows; both entry points execute the repository's pinned
+governance validator before optional analysis tooling.
