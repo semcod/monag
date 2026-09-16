@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 license = "MIT"
 authors = [{name = "semcod"}]
 classifiers = ["Environment :: Console", "Operating System :: POSIX :: Linux", "Programming Language :: Python :: 3"]
-dependencies = ["rich>=14,<15"]
+dependencies = ["rich>=14,<16", "pyyaml>=6,<7"]
 
 [project.optional-dependencies]
 dev = ["build>=1,<2", "twine>=6,<7", "setuptools>=77.0.3"]
