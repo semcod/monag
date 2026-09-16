@@ -2,4 +2,1133 @@ sprint:
   id: backlog
   name: Backlog
   status: active
-  tickets: {}
+  tickets:
+    GITHUB-1:
+      assignee: null
+      backend: github
+      description: 'Adopt Wellmanifest governance and checkout-scoped Goal configuration
+        before delivering Monag application code in dependent ticket-002. This bootstrap
+        does not contain the runnable CLI and keeps registry publishing disabled.
+
+
+        Reconciled with main 04228b3; current head 944b895. Goal -a ran the actual
+        governance command and pushed this candidate. GitHub governance / remote lifecycle
+        and governance / enforce passed. OneDev profile and canary remain in subactor/onedev-agent#358;
+        Validator profile is deployed and recognizes Monag.
+
+
+        The former application tree and uncommitted continuation are preserved in
+        a Git bundle and recovered in local ticket/002-cli-resume (55 application
+        tests passed). This PR replaces the earlier combined delivery; no application
+        release is claimed.
+
+        '
+      external_id: '1'
+      integration:
+      - github
+      labels: []
+      metadata: {}
+      name: Bootstrap Monag governance and checkout-scoped Goal delivery
+      status: closed
+      sync:
+        github:
+          id: '1'
+          key: semcod/monag#1
+          url: https://github.com/semcod/monag/pull/1
+    GITHUB-10:
+      assignee: null
+      backend: github
+      description: "## Summary\n- Adds `monag catalog`: for one repository (`--root`
+        is a checkout) or every repository under `--root`, reports what each project
+        declares itself to be — description (from `pyproject.toml`/`package.json`/README
+        first paragraph), detected stack, declared entry points, docs/tests/changelog
+        presence, and last commit.\n- Purely local, deterministic extraction: **no
+        network calls, no LLM-generated description**. A repository with no declared
+        description is reported as `null`/unknown, never guessed or invented.\n- Explicitly
+        out of scope, by design: no browser/password-manager/session credential access
+        of any kind, no write access to any scanned repository.\n- Reuses `audit.py`'s
+        repository-discovery (`targets()`), so single-repo vs. workspace mode detection
+        matches `audit`/`resume` exactly.\n\n## Test plan\n- [x] `PYTHONPATH=src python3
+        -m unittest discover -s tests -v` — 75/75 pass\n- [x] `./project/governance-check.sh
+        --base origin/main --head HEAD` — GOV-PASS\n- [x] Manually verified `monag
+        catalog` against real repositories (`~/github/semcod/taskand/*`)\n\n\U0001F916
+        Generated with [Claude Code](https://claude.com/claude-code)"
+      external_id: '10'
+      integration:
+      - github
+      labels: []
+      metadata: {}
+      name: 'feat(ticket-005): add local project catalog report'
+      status: closed
+      sync:
+        github:
+          id: '10'
+          key: semcod/monag#10
+          url: https://github.com/semcod/monag/pull/10
+    GITHUB-11:
+      assignee: null
+      backend: github
+      description: "## Summary\n- Adds `monag export`: merges `audit`'s untracked
+        (open) GitHub issues, `catalog`'s undescribed repositories, and `resume`'s
+        existing open Planfile backlog into one reviewable JSON/Markdown staging list
+        — so a reviewer doesn't have to run three subcommands by hand and cross-reference
+        them.\n- **Not** a queue or an integration with `koru`/`planfile`: `koru --ticket-sources`
+        only consumes its own `koru scan --apply` output or the Planfile execution
+        queue directly, there's no generic external-JSON hook. This produces a clean,
+        Planfile-shaped list for a human (or a separately authorized import step)
+        to act on. `monag` creates, imports, queues or claims nothing itself.\n- A
+        closed untracked issue is excluded from candidates (already resolved, not
+        work); a repository with a real declared description is excluded too. Priority
+        is only ever passed through from a source, never invented.\n\n## Test plan\n-
+        [x] `PYTHONPATH=src python3 -m unittest discover -s tests -v` — 89/89 pass\n-
+        [x] `./project/governance-check.sh --base origin/main --head HEAD` — GOV-PASS\n-
+        [x] Manually verified `monag export` against `semcod/taskand-glm53`\n\n\U0001F916
+        Generated with [Claude Code](https://claude.com/claude-code)"
+      external_id: '11'
+      integration:
+      - github
+      labels: []
+      metadata: {}
+      name: 'feat(ticket-006): add candidate-work export report'
+      status: closed
+      sync:
+        github:
+          id: '11'
+          key: semcod/monag#11
+          url: https://github.com/semcod/monag/pull/11
+    GITHUB-12:
+      assignee: null
+      backend: github
+      description: '## Summary
+
+        - adopt wellmanifest/new-project 0.20.31 through Goal
+
+        - bind the immutable upgrade 46aae350f5121874556bf9813fb9bf35854d3647..2b016654cff1a1ccef2c0d6126a9c2550ae6b37a
+
+        - declare generated project launchers and preserve the integration ownership
+        contract
+
+
+        ## Validation
+
+        - ./project/governance-check.sh --base origin/main --head HEAD --actor agent
+
+        - ./scripts/install-agent-hosts.sh --check
+
+        - /home/tom/miniconda3/bin/python -m pytest -q (84 passed, 4 subtests)
+
+        - goal -a --dry-run --no-publish
+
+
+        Ticket: ticket-001
+
+
+        Publication remains subject to the protected exact-head Validator and required
+        OneDev checks.'
+      external_id: '12'
+      integration:
+      - github
+      labels: []
+      metadata: {}
+      name: 'fix(ticket-001): repair governance adoption bootstrap'
+      status: closed
+      sync:
+        github:
+          id: '12'
+          key: semcod/monag#12
+          url: https://github.com/semcod/monag/pull/12
+    GITHUB-13:
+      assignee: null
+      backend: github
+      description: '## Goal
+
+        Publish the already-built Monag 0.3.0 package to PyPI from an exact, clean
+        `origin/main` checkout.
+
+
+        ## Acceptance criteria
+
+        - Build and package validation pass.
+
+        - `goal -a` runs in `publish-only` mode with an explicit pre-bumped 0.3.0
+        target.
+
+        - Twine upload succeeds using the configured PyPI credentials.
+
+        - PyPI exposes the `monag` 0.3.0 release.
+
+        '
+      external_id: '13'
+      integration:
+      - github
+      labels: []
+      metadata: {}
+      name: Publish Monag 0.3.0 to PyPI
+      status: closed
+      sync:
+        github:
+          id: '13'
+          key: semcod/monag#13
+          url: https://github.com/semcod/monag/issues/13
+    GITHUB-14:
+      assignee: null
+      backend: github
+      description: '## Problem
+
+        `planfile ticket list` defaults to the empty `current` sprint, while the repository
+        backlog contains open GitHub-mapped records. Those legacy records lack an
+        inline `id`, so the Planfile model list also drops them. Running `monag` then
+        only exposes the initial scan/live view and gives no task-oriented shell for
+        reviewing the backlog.
+
+
+        ## Scope
+
+        - make Monag resume and shell show all supported local Planfile sprints, including
+        legacy keyed records;
+
+        - add a small interactive shell available as `monag shell` and by default
+        from a TTY;
+
+        - keep non-TTY, JSON, Markdown, and explicit one-shot commands script-friendly;
+
+        - show sync coverage and the exact Planfile/GitHub command needed to reconcile
+        drift.
+
+
+        ## Acceptance criteria
+
+        - [ ] A clean checkout with current, backlog, and named sprint YAML reports
+        open tickets with stable IDs and source sprint.
+
+        - [ ] `monag` in a TTY presents a Markdown dashboard and accepts `help`, `refresh`,
+        `resume`, `audit`, `catalog`, `status`, and `quit`/`exit`.
+
+        - [ ] `monag shell` behaves the same; EOF/Ctrl-C exits cleanly.
+
+        - [ ] Non-TTY `monag`, `monag --json status`, and existing subcommands remain
+        one-shot.
+
+        - [ ] Tests cover legacy keyed records and shell command dispatch.
+
+        '
+      external_id: '14'
+      integration:
+      - github
+      labels:
+      - planfile
+      metadata: {}
+      name: Interactive shell and visible Planfile backlog
+      status: closed
+      sync:
+        github:
+          id: '14'
+          key: semcod/monag#14
+          url: https://github.com/semcod/monag/issues/14
+    GITHUB-15:
+      assignee: null
+      backend: github
+      description: '## Problem
+
+        A bare `monag` invocation only showed the initial scan/live view, while Planfile
+        backlog work was easy to miss. The terminal also had no command loop for moving
+        between status, restart, audit, catalog and history reports.
+
+
+        ## Change
+
+        - bare `monag` in a TTY and explicit `monag shell` now show the Markdown dashboard
+        and restart/backlog report, then accept `help`, `refresh`, `status`, `resume`,
+        `audit`, `catalog`, `history`, `quit` and `exit`;
+
+        - explicit `monag watch`, one-shot commands, pipes and JSON/Markdown exports
+        retain their existing behavior;
+
+        - README documents the shell and the distinction between the current Planfile
+        sprint and backlog;
+
+        - ticket-014 intent and tracking metadata are included for governed continuation.
+
+
+        ## Validation
+
+        - `PYTHONPATH=src python -m unittest discover -s tests -q` (90 passed)
+
+        - `./project/governance-check.sh --base origin/main --head HEAD` (`GOV-PASS`)
+
+        - interactive TTY smoke test: clean exit, dashboard shown, no traceback
+
+
+        Fixes #14
+
+        '
+      external_id: '15'
+      integration:
+      - github
+      labels: []
+      metadata: {}
+      name: 'feat: add interactive Monag shell for restart reports'
+      status: closed
+      sync:
+        github:
+          id: '15'
+          key: semcod/monag#15
+          url: https://github.com/semcod/monag/pull/15
+    GITHUB-16:
+      assignee: null
+      backend: github
+      description: '<!-- planfile:deduplication-key=PLF-003 -->
+
+        Importer GitHub w planfile 0.1.124 zapisuje rekordy pod kluczem GITHUB-* bez
+        pola id oraz nie przenosi priorytetu. planfile ticket list pomija takie wpisy,
+        a monag musi zgłaszać niepełność. Acceptance: każdy import ma inline id, zachowany
+        priority/labels, mapowanie sync.github oraz test idempotentnego importu.
+
+
+        ---
+
+
+        **Strategy Metadata:**
+
+        - planfile_id: PLF-003
+
+        '
+      external_id: '16'
+      integration:
+      - github
+      labels:
+      - priority-high
+      - planfile
+      - managed
+      metadata:
+        deduplication_key: PLF-003
+      name: 'Naprawić importer GitHub: zachować id i priorytet w rekordzie Planfile'
+      status: closed
+      sync:
+        github:
+          id: '16'
+          key: semcod/monag#16
+          url: https://github.com/semcod/monag/issues/16
+    GITHUB-17:
+      assignee: null
+      backend: github
+      description: '## Summary
+
+        - detect GitHub `isFork` metadata before requesting Issues
+
+        - exclude confirmed forks from audit aggregates while exposing `ignored_forks`
+
+        - keep metadata failures explicit and covered by tests
+
+
+        ## Validation
+
+        - `./project/governance-check.sh --base 6cfdd5b1687865b8afa49fd7f234a12d63fab6c9
+        --head HEAD --actor ci`
+
+        - `PYTHONPATH=src python3 -m unittest discover -s tests -p ''test_*.py''`
+        (92 tests)\n- wheel build succeeded\n\nPublication must use OneDev local verification
+        and the independent Validator for exact HEAD `ee16e97`.'
+      external_id: '17'
+      integration:
+      - github
+      labels: []
+      metadata: {}
+      name: 'fix(audit): ignore GitHub fork repositories'
+      status: closed
+      sync:
+        github:
+          id: '17'
+          key: semcod/monag#17
+          url: https://github.com/semcod/monag/pull/17
+    GITHUB-18:
+      assignee: null
+      backend: github
+      description: "## Summary\n- `goal doctor` flagged `PY013`: `strategies.python.publish`
+        in `goal.yaml` used `python -m twine upload --non-interactive dist/monag-{version}*`
+        instead of the pattern `goal` expects, `twine upload --skip-existing dist/monag-{version}*`.
+        Fixed.\n- Publishing stays disabled (`publish_enabled: false`, `publishing.enabled:
+        false`) — this only corrects the command for whenever it's turned on later.\n-
+        Note: running `goal doctor` to verify also re-expands `goal.yaml` to its full
+        canonical template — that's `goal`'s own `advanced.auto_update_config: true`
+        behavior on every doctor/`-a` run, not a deliberate rewrite here. Reviewed
+        the expanded file for secrets: none present, only `token_env` variable names
+        and credential-detection regexes.\n\n## Test plan\n- [x] `goal doctor` — was
+        1 error (`PY013`), now \"No issues found\"\n- [x] `./project/governance-check.sh
+        --base origin/main --head HEAD` — GOV-PASS\n\n\U0001F916 Generated with [Claude
+        Code](https://claude.com/claude-code)"
+      external_id: '18'
+      integration:
+      - github
+      labels: []
+      metadata: {}
+      name: 'fix(ticket-017): correct goal.yaml publish command pattern'
+      status: closed
+      sync:
+        github:
+          id: '18'
+          key: semcod/monag#18
+          url: https://github.com/semcod/monag/pull/18
+    GITHUB-19:
+      assignee: null
+      backend: github
+      description: '<!-- planfile:deduplication-key=PLF-003 -->
+
+
+        ## Summary
+
+        - preserve imported Planfile labels, priority and GitHub mapping in Monag
+        resume data
+
+        - report missing inline id, priority and sync.github evidence without dropping
+        the ticket
+
+        - prove deterministic, read-only re-reading
+
+
+        Ticket: ticket-016
+
+        Closes #16
+
+
+        ## Validation
+
+        - PYTHONPATH=src python -m unittest discover -s tests -p ''test_*.py'' -q
+        (92 passed)
+
+        - ./project/governance-check.sh --actor agent (GOV-PASS)'
+      external_id: '19'
+      integration:
+      - github
+      labels: []
+      metadata:
+        deduplication_key: PLF-003
+      name: 'fix: preserve GitHub import id and priority evidence'
+      status: closed
+      sync:
+        github:
+          id: '19'
+          key: semcod/monag#19
+          url: https://github.com/semcod/monag/pull/19
+    GITHUB-2:
+      assignee: null
+      backend: github
+      description: '<!-- planfile:deduplication-key=monag-standards-handoff-2026-09-15-semcod-monag
+        -->
+
+        ## Cel
+
+        Wznowienie pracy 15 września 2026 po audycie Monag i standardów.
+
+
+        ## Stan zastany — obserwacja 2026-09-14
+
+        Main f46db31 jest czysty i nie zawiera implementacji. Kod 0.3.0: .worktrees/ticket-001--agent-monitor,
+        HEAD c7e17ebef8621588f213f20d298d6f84d1ec803b, PR #1. 110 plików adopcji staged;
+        new-project 0.20.30. 39 testów PASS, pip check PASS. Pomiar 14.09 22:13: 23
+        procesy (15 Codex, 7 Claude, 1 Cursor), zadania nieznane; 1099 procesów niedostępnych.
+
+
+        ## Następne kroki
+
+        Zachować staged zmiany i istniejącą gałąź. Rozwiązać pierwszą adopcję bez
+        fałszowania historycznej intencji ani wyłączenia hooków. Powiązać z profilami
+        OneDev/Validator. Naprawić konfigurację Goal na przyjmowanym main (obecnie
+        type=[] i ścieżki do worktree). Rozdzielić proces uruchomiony od aktywnie
+        pracującego; jawnie raportować nieznane zadania i pokrycie.
+
+
+        ## Kryteria ukończenia
+
+        Testy i paczka przechodzą; chroniony PR scalony; wydanie PyPI potwierdzone
+        niezależnym odczytem. monag w terminalu uruchamia watch, zakres całej maszyny
+        i ograniczenia są czytelne. Goal uruchomiony w primary wyjaśnia istniejące
+        worktree zamiast sugerować zakończoną dostawę.
+
+
+        ## Źródło
+
+        https://github.com/subactor/docs/pull/197
+
+        https://github.com/subactor/docs/pull/194
+
+
+        Zadanie utworzone lub uzupełnione przez backend GitHub pakietu Planfile na
+        jawną prośbę użytkownika. Issue przechowuje backlog; przed implementacją przydzielić
+        lub wznowić lokalny ticket, intencję i lease zgodnie z polityką repozytorium.
+
+
+        ---
+
+
+        **Strategy Metadata:**
+
+        - deduplication_key: monag-standards-handoff-2026-09-15-semcod-monag
+
+        - resume_date: 2026-09-15
+
+        - scope: monag-standards-audit
+
+
+
+        ## Powiązane zadania odblokowujące
+
+        - OneDev: https://github.com/subactor/onedev-agent/issues/358
+
+        - Validator: https://github.com/subactor/validator-agent/issues/502
+
+        - Pierwsza adopcja: https://github.com/wellmanifest/new-project/issues/362
+
+        - Goal i inventory: https://github.com/semcod/goal/issues/162
+
+        - Mapa całej kontynuacji: https://github.com/subactor/docs/issues/199
+
+
+        <!-- monag-publication-progress-20260915 -->
+
+        ## Postęp 2026-09-15: profil i zgodność zależności
+
+
+        - Źródłowy profil Validatora: https://github.com/subactor/validator-agent/pull/506
+        (draft), HEAD dd5f3470cf1d125205dec9ff45884e8fbdfdd8f0. Wymaga onedev/local-verify
+        i obu checków governance; scheduled_scan=false; brak wycofanych checków. 1158
+        testów PASS. Profil nie został wdrożony.
+
+        - Rzeczywisty executor OneDev ma Rich 15.0.0, PyYAML 6.0.3, build 1.5.0, setuptools
+        80.9.0. Monag deklaruje rich>=14,<15, co nadal wymaga uzgodnienia przed canary.
+
+        - Izolowana próba kompatybilności Monag z Rich 15.0.0/PyYAML 6.0.3: 55 testów
+        PASS, fingerprint src/tests niezmienny przez próbę. To wynik testów, nie zmiana
+        metadanych zależności ani dowód pełnego canary executora.
+
+        - Kolejny krok: uzgodnić właściciela równoległych zmian Monag, rozszerzyć
+        zakres Rich po review/testach albo przygotować izolowane zależności CI; następnie
+        profil OneDev i canary. Zachować staged adopcję; pozostałe bariery governance
+        nadal obowiązują.
+
+
+
+        <!-- monag-state-audit-20260915-v2 -->
+
+        ## Ponowna weryfikacja 2026-09-15
+
+
+        PR #1 nadal otwarty na c7e17ebef8621588f213f20d298d6f84d1ec803b. Profil Validatora
+        scalony w subactor/validator-agent#506, ale bieżący preflight nadal PUBLICATION_PROFILE_MISSING.
+        Lokalne resume i adopcja pozostają niezintegrowane. Wydzielone części nadrzędnego
+        zadania:
+
+        - https://github.com/semcod/monag/issues/3 — Uzgodnić zależności Monag z executorem
+        CI i sprawdzić instalację wheel
+
+        - https://github.com/semcod/monag/issues/4 — Rozszerzyć monag resume o backlog
+        Planfile i GitHub z jawną kompletnością
+
+        '
+      external_id: '2'
+      integration:
+      - github
+      labels:
+      - priority-high
+      - planfile
+      - managed
+      metadata:
+        deduplication_key: monag-standards-handoff-2026-09-15-semcod-monag
+      name: '[Kontynuacja 2026-09-15] Dokończyć publikację monag i pełniejszą obserwację
+        agentów'
+      status: open
+      sync:
+        github:
+          id: '2'
+          key: semcod/monag#2
+          url: https://github.com/semcod/monag/issues/2
+    GITHUB-20:
+      assignee: null
+      backend: github
+      description: "## Summary\n- Adds `monag export --radar`: when `subactor/ticket-radar`
+        is installed on PATH, sizes each candidate (complexity, score, time estimate,
+        split recommendation) via its deterministic JSON stdin/stdout interface (`ticket-radar
+        --repository-root <path> -`).\n- A missing binary or a per-candidate failure
+        leaves that candidate unsized (`radar: null`) with an explicit recorded error
+        in `radar_errors` — never a guessed size.\n- Off by default: `monag export`
+        without `--radar` behaves exactly as before (no new required dependency; ticket-radar
+        is invoked as an external binary, not imported).\n- First concrete Tier-2
+        integration from the `subactor/*`/`semcod/*`/`autogrammar/*` package survey
+        — a metric-based signal for prioritizing candidates instead of a guess, per
+        the request to make autonomous decisions grounded in these packages' own metrics.\n\n##
+        Test plan\n- [x] `PYTHONPATH=src python3 -m unittest discover -s tests -v`
+        — 100/100 pass\n- [x] `./project/governance-check.sh --base origin/main --head
+        HEAD` — GOV-PASS\n- [x] Manually verified `monag export --radar` against `semcod/taskand-glm53`
+        with the real `ticket-radar` binary\n\n\U0001F916 Generated with [Claude Code](https://claude.com/claude-code)"
+      external_id: '20'
+      integration:
+      - github
+      labels: []
+      metadata: {}
+      name: 'feat(ticket-020): size export candidates with subactor/ticket-radar'
+      status: closed
+      sync:
+        github:
+          id: '20'
+          key: semcod/monag#20
+          url: https://github.com/semcod/monag/pull/20
+    GITHUB-21:
+      assignee: null
+      backend: github
+      description: "## Summary\n- Adds `monag export --hygiene`: a `taskill-doc-drift`
+        candidate for every repository where `semcod/taskill`'s own read-only `status`
+        command (never `run` — monag never asks an external tool to write) reports
+        it would update README/CHANGELOG/TODO, carrying taskill's own reasons (pending
+        commits, changed docs) as evidence.\n- A missing `taskill` binary or a per-repository
+        failure is an explicit recorded error in `hygiene_errors`, never silently
+        treated as \"nothing to do\".\n- Second concrete Tier-2/3 integration from
+        the `subactor/*`/`semcod/*`/`autogrammar/*` package survey, alongside `--radar`
+        (ticket-020). Both flags compose: hygiene-derived candidates also get sized
+        by `--radar` when both are passed.\n\n## Test plan\n- [x] `PYTHONPATH=src
+        python3 -m unittest discover -s tests -v` — 104/104 pass\n- [x] `./project/governance-check.sh
+        --base origin/main --head HEAD` — GOV-PASS\n- [x] Manually verified `monag
+        export --hygiene` against `semcod/taskand-glm53` with the real `taskill` binary\n\n\U0001F916
+        Generated with [Claude Code](https://claude.com/claude-code)"
+      external_id: '21'
+      integration:
+      - github
+      labels: []
+      metadata: {}
+      name: 'feat(ticket-021): add taskill doc-hygiene candidates to export'
+      status: closed
+      sync:
+        github:
+          id: '21'
+          key: semcod/monag#21
+          url: https://github.com/semcod/monag/pull/21
+    GITHUB-22:
+      assignee: null
+      backend: github
+      description: "## Summary\n- Adds `monag quality`: a read-only `semcod/regix`
+        quality gate (`regix gates --format json`) for exactly one repository.\n-
+        `regix gates` runs coverage across the whole test suite plus several static-analysis
+        backends and costs roughly a minute per repository (measured ~8-78s depending
+        on regix's own cache warmth). Scanning a workspace of many repositories the
+        way `catalog`/`audit`/`export` do would take tens of minutes, so `monag quality`
+        **refuses workspace mode outright** (`--root` must be a Git checkout) instead
+        of silently taking that long.\n- Its own subcommand, not a flag on `export`/`catalog`:
+        the cost/scope model is fundamentally different from `--radar`/`--hygiene`
+        (both fast, deterministic, bulk-scannable).\n- Only `regix gates` is ever
+        invoked — no write/fix command. Exit code `2` unavailable, `1` gates fail,
+        `0` gates pass (for scripting).\n- Third Tier-2/3 integration from the `subactor/*`/`semcod/*`/`autogrammar/*`
+        package survey (after `--radar` in ticket-020 and `--hygiene` in ticket-021).\n\n##
+        Test plan\n- [x] `PYTHONPATH=src python3 -m unittest discover -s tests -v`
+        — 110/110 pass (all mocked; no test takes the real ~minute)\n- [x] `./project/governance-check.sh
+        --base origin/main --head HEAD` — GOV-PASS\n- [x] Manually verified `monag
+        quality` against a real repo with the real `regix` binary (exit code 1, violations
+        reported correctly) and workspace-mode refusal (exit code 2)\n\n\U0001F916
+        Generated with [Claude Code](https://claude.com/claude-code)"
+      external_id: '22'
+      integration:
+      - github
+      labels: []
+      metadata: {}
+      name: 'feat(ticket-022): add single-repository semcod/regix quality gate'
+      status: closed
+      sync:
+        github:
+          id: '22'
+          key: semcod/monag#22
+          url: https://github.com/semcod/monag/pull/22
+    GITHUB-23:
+      assignee: null
+      backend: github
+      description: "## Summary\n- Adds `/api/export.json` to `monag panel` and a matching
+        \"Candidate work\" dashboard section, so the candidate-work list (`audit-untracked-issue`,
+        `catalog-undescribed`, `taskill-doc-drift`) is visible in the live panel —
+        completing the \"proactive, at-a-glance\" dashboard originally requested,
+        now that `export` (ticket-006/020/021) exists to show.\n- Lazily computed
+        and TTL-cached, mirroring the existing `/api/audit.json`/`/api/catalog.json`
+        pattern exactly.\n- Served without `--radar`/`--hygiene`: both shell out per
+        candidate/repository and would make the panel's on-demand refresh slow. Use
+        `monag export --radar --hygiene` directly for the enriched report.\n\n## Test
+        plan\n- [x] `PYTHONPATH=src python3 -m unittest discover -s tests -v` — 111/111
+        pass\n- [x] `./project/governance-check.sh --base origin/main --head HEAD`
+        — GOV-PASS\n- [x] Manually verified `monag panel` against `semcod/taskand-glm53`;
+        `/api/export.json` returns 3 candidates\n\n\U0001F916 Generated with [Claude
+        Code](https://claude.com/claude-code)"
+      external_id: '23'
+      integration:
+      - github
+      labels: []
+      metadata: {}
+      name: 'feat(ticket-023): serve candidate-work export from monag panel'
+      status: closed
+      sync:
+        github:
+          id: '23'
+          key: semcod/monag#23
+          url: https://github.com/semcod/monag/pull/23
+    GITHUB-24:
+      assignee: null
+      backend: github
+      description: "## Problem\n\n`src/monag/audit.py` imports `yaml`, but `pyyaml`
+        was never declared in\n`pyproject.toml`. A clean `pip install monag` produced
+        a **broken command**:\n\n```\n  File \".../site-packages/monag/audit.py\",
+        line 20, in <module>\n    import yaml\nModuleNotFoundError: No module named
+        'yaml'\n```\n\n`monag audit`, `resume`, `export` and `panel` all hit it. No
+        test could\ncatch it, because every development environment already had PyYAML
+        present.\n\nThe same pass closes the other half of #3: `rich` was pinned `>=14,<15`,\nexcluding
+        rich 15, which the CI executor environment resolves.\n\n## Change\n\nPackaging
+        metadata only — no source or behaviour change:\n\n```diff\n-dependencies =
+        [\"rich>=14,<15\"]\n+dependencies = [\"rich>=14,<16\", \"pyyaml>=6,<7\"]\n```\n\n##
+        Evidence\n\n- Pre-fix dependency set (`--no-deps` + `rich>=14,<15`) reproduces
+        the\n  `ModuleNotFoundError` above.\n- Post-fix: wheel built, installed into
+        a clean virtualenv\n  (`rich==15.0.0`, `PyYAML==6.0.3`), `monag --help` works,
+        and the full\n  suite passes **against the installed package**: `Ran 111 tests
+        ... OK`.\n- `project/governance-check.sh`: GOV-PASS (0 errors, 0 warnings).\n\nCloses
+        #3.\n\n\U0001F916 Generated with [Claude Code](https://claude.com/claude-code)"
+      external_id: '24'
+      integration:
+      - github
+      labels: []
+      metadata: {}
+      name: 'fix(ticket-024): declare PyYAML and accept Rich 15 in packaging metadata'
+      status: closed
+      sync:
+        github:
+          id: '24'
+          key: semcod/monag#24
+          url: https://github.com/semcod/monag/pull/24
+    GITHUB-25:
+      assignee: null
+      backend: github
+      description: '## Problem
+
+
+        Opublikowana na PyPI wersja 0.3.0 jest niesprawna: deklaruje `rich<15,>=14`
+        i **nie deklaruje `pyyaml`**, choć `src/monag/audit.py` go importuje. Odtworzone
+        z żywego PyPI:
+
+
+        ```
+
+        $ pip install monag==0.3.0      # monag==0.3.0, rich==14.3.4
+
+        $ monag audit
+
+        ModuleNotFoundError: No module named ''yaml''
+
+        ```
+
+
+        Dotyczy `audit`, `resume`, `export` i `panel` — czyli większości komend —
+        dla każdego, kto instaluje paczkę z PyPI. Szczegóły w #13.
+
+
+        ## Stan
+
+
+        Naprawa metadanych jest na main od #24:
+
+
+        ```diff
+
+        -dependencies = ["rich>=14,<15"]
+
+        +dependencies = ["rich>=14,<16", "pyyaml>=6,<7"]
+
+        ```
+
+
+        Zweryfikowana budową wheela i pełnym przebiegiem testów **przeciw zainstalowanej
+        paczce** w czystym virtualenv (`rich==15.0.0`, `PyYAML==6.0.3`): 111/111 PASS.
+        Wersja w repo jest spójna (`VERSION`, `pyproject.toml`, `src/monag/__init__.py`
+        = 0.3.0).
+
+
+        PyPI nie pozwala nadpisać wydanej wersji, więc naprawa dociera do użytkowników
+        wyłącznie przez nowe wydanie.
+
+
+        ## Zakres
+
+
+        - [ ] Bump 0.3.0 → 0.3.1 w `VERSION`, `pyproject.toml`, `src/monag/__init__.py`
+        (ścieżka versioning z `goal.yaml`).
+
+        - [ ] Wpis w CHANGELOG.
+
+        - [ ] `goal -a` w trybie `publish-only` z jawnym celem 0.3.1; `publishing.enabled`
+        i `publish_enabled` są dziś `false` w `goal.yaml` — wymagają świadomego odblokowania
+        przez właściciela.
+
+        - [ ] Niezależny odczyt PyPI: `pip install monag==0.3.1` w czystym venv i
+        `monag audit` kończy się bez błędu.
+
+
+        ## Uwaga
+
+
+        Wydanie wymaga poświadczeń PyPI i jest czynnością nieodwracalną — decyzja
+        i wykonanie należą do właściciela repozytorium.'
+      external_id: '25'
+      integration:
+      - github
+      labels: []
+      metadata: {}
+      name: Wydać monag 0.3.1 z naprawionymi metadanymi zależności
+      status: open
+      sync:
+        github:
+          id: '25'
+          key: semcod/monag#25
+          url: https://github.com/semcod/monag/issues/25
+    GITHUB-26:
+      assignee: null
+      backend: github
+      description: "## What\n\n`.github/workflows/planfile-github-sync.yml` was generated
+        by the Planfile\ntooling on 2026-09-15 and left **untracked** in the primary
+        checkout: invisible\nto CI, and the only reason `project/governance-check.sh`
+        reported\n`GOV-TICKET-001` locally on a clean `main`. Committed unchanged.\n\n##
+        Effect once merged\n\nHourly (`17 * * * *`), on `workflow_dispatch`, and on
+        pushes touching\n`.planfile/**`, the job installs `planfile==0.1.126` and
+        runs:\n\n```\nplanfile sync github . --repo $GITHUB_REPOSITORY --managed-only
+        --direction both\n```\n\nwith `issues: write`. In this repository that reconciles
+        the one managed ticket\n`PLF-001` against issue #5. It cannot write back to
+        the repository — the\nreusable workflow grants `contents: read` only.\n\n##
+        Verification\n\n- The pinned reference\n  `semcod/planfile/.github/workflows/planfile-sync-reusable.yml@v0.1.126`\n
+        \ was fetched and read before committing, so the schedule is not a dangling\n
+        \ reference.\n- `project/governance-check.sh`: GOV-PASS (0 errors, 0 warnings).\n\n\U0001F916
+        Generated with [Claude Code](https://claude.com/claude-code)"
+      external_id: '26'
+      integration:
+      - github
+      labels: []
+      metadata: {}
+      name: 'chore(ticket-025): commit the Planfile GitHub sync workflow'
+      status: closed
+      sync:
+        github:
+          id: '26'
+          key: semcod/monag#26
+          url: https://github.com/semcod/monag/pull/26
+    GITHUB-27:
+      assignee: null
+      backend: github
+      description: "## Why\n\nThe artifact published on PyPI as 0.3.0 is broken. Its
+        metadata declares\n`rich<15,>=14` and **no `pyyaml`**, although `monag.audit`
+        imports `yaml`:\n\n```\n$ pip install monag==0.3.0      # monag==0.3.0, rich==14.3.4\n$
+        monag audit\nModuleNotFoundError: No module named 'yaml'\n```\n\n`audit`,
+        `resume`, `export` and `panel` are unusable for anyone who installed\nfrom
+        PyPI. The metadata fix landed in #24, but PyPI cannot replace a released\nversion,
+        so it only reaches users through a new release.\n\n## Change\n\nVersion string
+        and changelog only — no source or behaviour change:\n\n- `VERSION`, `pyproject.toml`,
+        `src/monag/__init__.py` → 0.3.1 (the exact three\n  `versioning.files` targets
+        declared in `goal.yaml`).\n- `CHANGELOG.md` records 0.3.1 and why it exists,
+        and dates 0.3.0.\n\n## Verification\n\n- `python -m build`: sdist + wheel;
+        `twine check` PASSED for both.\n- Clean virtualenv install of the 0.3.1 wheel
+        resolves `rich==15.0.0`,\n  `PyYAML==6.0.3`; the full suite passes **against
+        the installed package**:\n  `Ran 111 tests ... OK`.\n- `project/governance-check.sh`:
+        GOV-PASS (0 errors, 0 warnings).\n\n`goal.yaml` keeps `publishing.enabled`
+        and `publish_enabled` at `false`; the\nupload is run explicitly after merge
+        from a clean `main`, not by flipping the\nrepository's safety flag.\n\nRefs
+        #25.\n\n\U0001F916 Generated with [Claude Code](https://claude.com/claude-code)"
+      external_id: '27'
+      integration:
+      - github
+      labels: []
+      metadata: {}
+      name: 'fix(ticket-026): release 0.3.1 with fixed dependency metadata'
+      status: closed
+      sync:
+        github:
+          id: '27'
+          key: semcod/monag#27
+          url: https://github.com/semcod/monag/pull/27
+    GITHUB-3:
+      assignee: null
+      backend: github
+      description: '<!-- planfile:deduplication-key=monag-rich-ci-20260915 -->
+
+        Zadanie wydzielone z #2; profil i wdrożenie OneDev pozostają w subactor/onedev-agent#358.
+
+
+        Obserwacja 2026-09-15: lokalne pyproject.toml wymaga rich>=14,<15 oraz PyYAML>=6,<7.
+        Poprzedni odczyt executora pokazał Rich 15.0.0; izolowana próba zgodności
+        zakończyła się 55 testami PASS. Nie oznacza to poprawnej instalacji deklarowanego
+        pakietu ani wdrożenia.
+
+
+        Zakres: wybrać i uzasadnić zakres Rich po sprawdzeniu kompatybilności albo
+        izolowane zależności CI. Przed edycją uzgodnić właścicieli zmian ticket-001
+        i granicę adopcji; nie nadpisywać równoległej pracy.
+
+
+        Kryteria odbioru:
+
+        - [ ] Instalacja zbudowanego wheel w czystym środowisku, pip check i testy
+        CLI/Markdown/resume PASS.
+
+        - [ ] Sprawdzone zadeklarowane granice zależności oraz rzeczywiste środowisko
+        CI; receipt wiąże wynik z SHA i artefaktem.
+
+        - [ ] Metadane zależności i wynik chronionego PR przyjęte na main.
+
+
+        Nie obejmuje samodzielnego wdrożenia profili ani publikacji PyPI. Rozmiar:
+        S; priorytet wysoki.
+
+
+        ---
+
+
+        **Strategy Metadata:**
+
+        - deduplication_key: monag-rich-ci-20260915
+
+        - parent_issue: https://github.com/semcod/monag/issues/2
+
+        '
+      external_id: '3'
+      integration:
+      - github
+      labels:
+      - priority-high
+      - planfile
+      - managed
+      metadata:
+        deduplication_key: monag-rich-ci-20260915
+      name: Uzgodnić zależności Monag z executorem CI i sprawdzić instalację wheel
+      status: closed
+      sync:
+        github:
+          id: '3'
+          key: semcod/monag#3
+          url: https://github.com/semcod/monag/issues/3
+    GITHUB-4:
+      assignee: null
+      backend: github
+      description: '<!-- planfile:deduplication-key=monag-resume-backlog-coverage-20260915
+        -->
+
+        Wydzielone z #2. Obecny resume.py czyta cztery lokalizacje YAML, pomijając
+        bazę Planfile i zadania dostępne tylko na GitHub.
+
+
+        Zakres: adapter publicznego interfejsu Planfile oraz opcjonalny odczyt GitHub.
+        Bez migracji baz i bez zapisu podczas skanowania.
+
+
+        Kryteria odbioru:
+
+        - [ ] Deduplikacja YAML/Planfile/GitHub po repo i ID, również między worktrees.
+
+        - [ ] Źródło, czas obserwacji, kompletność i konflikty statusów w tabeli i
+        JSON. Offline/brak dostępu nie oznacza zera ticketów.
+
+        - [ ] Paginacja, limit czasu i brak ujawniania tokenów; lokalny tryb bez wymuszonej
+        sieci.
+
+        - [ ] Regresje: ticket tylko w bazie, tylko na GitHub, duplikat, zamknięty
+        issue, offline, błędny YAML i konflikt statusów.
+
+        - [ ] Pomiar czasu i liczby wywołań na tym samym zbiorze przed/po.
+
+        - [ ] Chroniony PR oraz sprawdzenie zainstalowanego monag resume po restarcie
+        procesu.
+
+
+        Rozmiar M. Przed implementacją ustalić właścicieli lokalnego resume w ticket-001
+        i bezpieczną integrację w #2.
+
+
+        ---
+
+
+        **Strategy Metadata:**
+
+        - deduplication_key: monag-resume-backlog-coverage-20260915
+
+        - parent_issue: https://github.com/semcod/monag/issues/2
+
+        '
+      external_id: '4'
+      integration:
+      - github
+      labels:
+      - priority-high
+      - planfile
+      - managed
+      metadata:
+        deduplication_key: monag-resume-backlog-coverage-20260915
+      name: Rozszerzyć monag resume o backlog Planfile i GitHub z jawną kompletnością
+      status: closed
+      sync:
+        github:
+          id: '4'
+          key: semcod/monag#4
+          url: https://github.com/semcod/monag/issues/4
+    GITHUB-6:
+      assignee: null
+      backend: github
+      description: 'Installs the tracked, non-operational Planfile store for Monag
+        and records `PLF-001` mapped to issue #5. The ticket carries the Wellmanifest
+        baseline adoption work; operational locks, cache projections, and event logs
+        remain excluded.'
+      external_id: '6'
+      integration:
+      - github
+      labels: []
+      metadata: {}
+      name: 'chore: bootstrap repository-local Planfile sync'
+      status: closed
+      sync:
+        github:
+          id: '6'
+          key: semcod/monag#6
+          url: https://github.com/semcod/monag/pull/6
+    GITHUB-7:
+      assignee: null
+      backend: github
+      description: '<!-- planfile:deduplication-key=dev-quality-fleet-readiness-v1:semcod/monag
+        -->
+
+
+        Audit date: 2026-09-15. Scope: this repository only; planning, not authorization
+        to modify source or deploy.
+
+
+        Observed local checkout SHA: `04228b366f42ddca24e9e66cc0bb07cc0c12f2c9`. Local
+        declared adoption status: `no-adoption-evidence`.
+
+
+        Comparison is against observed GitHub default-branch commits and VERSION,
+        not an assertion that every changed commit requires an upgrade.
+
+
+        No declarations means unavailable evidence, not proof that no standard is
+        followed. Select applicable wellmanifest packs; do not install every pack
+        indiscriminately.
+
+
+        Local Planfile was absent at inventory time; initialize its project-local
+        store without replacing existing strategy/configuration files.
+
+
+        ## Acceptance criteria
+
+
+        - [ ] Reconcile actual applicable standard adoptions with deployed/default-branch
+        state; record unknowns and exemptions.
+
+        - [ ] For each differing pin, compare version and relevant artifacts; use
+        the managed adopter in a separate bounded implementation ticket only when
+        needed.
+
+        - [ ] Preserve project overrides, dirty work, historical tasks and stable
+        document links; never edit managed hashes to bypass validation.
+
+        - [ ] Verify local Planfile ID to GitHub issue mapping and retry deduplication
+        without broad bidirectional sync.
+
+        - [ ] Run managed governance and stack checks after any separately authorized
+        adoption; report declared versus protected-CI coverage.
+
+
+        Existing related work (reconcile/reuse scope; do not duplicate implementation):
+
+        - https://github.com/semcod/monag/issues/5
+
+
+        ---
+
+
+        **Strategy Metadata:**
+
+        - deduplication_key: dev-quality-fleet-readiness-v1:semcod/monag
+
+        - planfile_id: PLF-001
+
+        '
+      external_id: '7'
+      integration:
+      - github
+      labels:
+      - planfile
+      - managed
+      metadata:
+        deduplication_key: dev-quality-fleet-readiness-v1:semcod/monag
+      name: '[WELLMANIFEST] Reconcile adopted standards and verify Planfile delivery'
+      status: open
+      sync:
+        github:
+          id: '7'
+          key: semcod/monag#7
+          url: https://github.com/semcod/monag/issues/7
+    GITHUB-8:
+      assignee: null
+      backend: github
+      description: '## Summary
+
+        - preserve and normalize Planfile ticket priorities in resume inventory
+
+        - add deterministic priority ranking and repeatable priority filtering
+
+        - expose priority fields and open-ticket table in Markdown/JSON
+
+        - keep Wellmanifest P0–P3 classification separate
+
+
+        ## Validation
+
+        - `PYTHONPATH=src python -m unittest discover -s tests -v` (59 passed)
+
+        - `PYTHONPATH=src python -m pytest -q` (59 passed, 4 subtests passed)
+
+        - `./project/governance-check.sh --base origin/main --head HEAD --actor agent`
+        (GOV-PASS)
+
+
+        Ticket: ticket-002
+
+        Resolves: #2'
+      external_id: '8'
+      integration:
+      - github
+      labels: []
+      metadata: {}
+      name: 'feat: show Planfile ticket priorities in monag resume'
+      status: closed
+      sync:
+        github:
+          id: '8'
+          key: semcod/monag#8
+          url: https://github.com/semcod/monag/pull/8
+    GITHUB-9:
+      assignee: null
+      backend: github
+      description: "## Summary\n- Adds `monag audit`: for one repository (`--root`
+        is a checkout) it reports how many GitHub Issues have a corresponding Planfile
+        ticket, which issues have none, and whether a ticket's own GitHub mapping
+        agrees with the repository's `.planfile/sync/github.state.yaml` index. When
+        `--root` is a workspace of several repositories, the same audit runs for every
+        discovered repository with a GitHub remote.\n- `resume.planfile()` now reads
+        every `.planfile/sprints/*.yaml` file (not only `current.yaml`/`backlog.yaml`),
+        so tickets kept in a named custom sprint (e.g. an audit sprint) stay visible,
+        and exposes each ticket's own GitHub mapping.\n- Independent of `ticket-003`/#6
+        (Planfile bootstrap): deliberately kept out of that ticket's scope since mixing
+        `.planfile/**` (no owning workstream) with `src/monag/**` (workstream `application`)
+        fails this repo's own `GOV-WORKSTREAM-003` check. See `project/ticket-003/README.md`
+        for that finding.\n\n## Test plan\n- [x] `PYTHONPATH=src python3 -m unittest
+        discover -s tests -v` — 66/66 pass\n- [x] `./project/governance-check.sh --base
+        origin/main --head HEAD` — GOV-PASS\n- [x] Manually verified `monag audit`
+        (single-repo and workspace modes) against real repositories\n\n\U0001F916
+        Generated with [Claude Code](https://claude.com/claude-code)"
+      external_id: '9'
+      integration:
+      - github
+      labels: []
+      metadata: {}
+      name: 'feat(ticket-004): add Planfile/GitHub coverage audit report'
+      status: closed
+      sync:
+        github:
+          id: '9'
+          key: semcod/monag#9
+          url: https://github.com/semcod/monag/pull/9

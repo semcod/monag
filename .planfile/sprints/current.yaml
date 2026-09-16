@@ -5,21 +5,24 @@ sprint:
   tickets:
     PLF-001:
       acceptance_criteria: []
+      assignee: null
       backend: github
       blocked_by: []
       blocks: []
       children: []
       contract_version: planfile.ticket/v1
       created_at: '2026-09-15T07:26:05.700623Z'
-      description: 'Monag had no repository-local .planfile. Running the CLI in its
-        root resolved a parent store and displayed unrelated STARTER tickets, so the
-        repository must be initialized explicitly before ticket operations. Adopt
-        the current Wellmanifest/new-project and wellmanifest/docs revisions through
-        their governed upgrade and protected-canary procedures. Acceptance: (1) all
-        Planfile commands in Monag use its own store; (2) GitHub synchronization is
-        idempotent and records the issue mapping; (3) adoption pins are exact immutable
-        revisions with a local protected validation receipt; (4) no generated operational
-        lock/cache files are committed.'
+      description: '<!-- planfile:deduplication-key=PLF-001 -->
+
+        Monag had no repository-local .planfile. Running the CLI in its root resolved
+        a parent store and displayed unrelated STARTER tickets, so the repository
+        must be initialized explicitly before ticket operations. Adopt the current
+        Wellmanifest/new-project and wellmanifest/docs revisions through their governed
+        upgrade and protected-canary procedures. Acceptance: (1) all Planfile commands
+        in Monag use its own store; (2) GitHub synchronization is idempotent and records
+        the issue mapping; (3) adoption pins are exact immutable revisions with a
+        local protected validation receipt; (4) no generated operational lock/cache
+        files are committed.'
       dsl: SODL/1 id=evt_789aae1ef91346d9ed7d8103 event_hash=1fe81e3e17b5870cd6e4bd510eb29495095b7d92331d9980bc80732c1e37912c
         timestamp=2026-09-15T07%3A26%3A05.700623%2B00%3A00 kind=task source=planfile.ticket
         ticket_id=PLF-001 actor=session-audit oql=ticket.create uri=planfile%3A%2F%2Ftickets%2FPLF-001%2Fcommand%2Fcreate
@@ -37,10 +40,15 @@ sprint:
       integration:
       - github
       labels:
+      - priority-high
+      - planfile
+      - managed
       - governance
       - reproducibility
       - planfile-bootstrap
       - 'priority: high'
+      metadata:
+        deduplication_key: PLF-001
       name: Bootstrap repo-local Planfile and adopt current Wellmanifest baseline
       outputs:
         artifacts: []
