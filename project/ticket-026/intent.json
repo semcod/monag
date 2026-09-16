@@ -1,0 +1,88 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-026",
+  "summary": "Release monag 0.3.1 with fixed dependency metadata",
+  "workstream": "integration",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "regression"
+  },
+  "allowedPaths": [
+    "project/ticket-026/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "CHANGELOG.md",
+    "VERSION",
+    "pyproject.toml",
+    "src/monag/**"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "d413ecfdfc2bd31f06871eb43f3c8656ed68f817",
+    "targetBranch": "main",
+    "outcome": "Bump 0.3.0 -> 0.3.1 across the three versioning.files targets and record the release in CHANGELOG, so the dependency-metadata fix from ticket-024 (pyyaml>=6,<7, rich>=14,<16) reaches users. PyPI does not allow replacing a released version, and the published 0.3.0 ships metadata that makes `monag audit`/`resume`/`export`/`panel` crash with ModuleNotFoundError: No module named 'yaml' after a clean install.",
+    "nonGoals": [
+      "No source or behaviour change relative to 0.3.0; only the version string and changelog move.",
+      "No dependency declaration changes -- those landed in ticket-024 and are merely being released here.",
+      "goal.yaml keeps publishing.enabled/publish_enabled false; the upload is run explicitly, not by flipping the repository's safety flag."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 20,
+    "budgets": {
+      "maxImplementationFiles": 4,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Edit the version string in VERSION, pyproject.toml and src/monag/__init__.py (the exact set goal.yaml declares under versioning.files), add a CHANGELOG entry stating why 0.3.1 exists, then build and verify the wheel against a clean virtualenv before uploading.",
+      "components": [
+        {
+          "name": "release",
+          "paths": [
+            "VERSION",
+            "pyproject.toml",
+            "CHANGELOG.md",
+            "src/monag/__init__.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the release slice through protected review; a published PyPI version cannot be replaced, only superseded."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-03",
+        "commands": [
+          "python -m build --wheel",
+          "python -m unittest discover -s tests -t tests"
+        ],
+        "evidence": "The 0.3.1 wheel installs into a clean virtualenv and the full suite passes against the installed package."
+      },
+      {
+        "criterion": "AC-04",
+        "commands": [
+          "pip install monag==0.3.1",
+          "monag audit"
+        ],
+        "evidence": "Independent read of PyPI shows 0.3.1 with pyyaml in requires_dist and the command runs without the import error."
+      }
+    ]
+  }
+}
