@@ -1,0 +1,81 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-024",
+  "summary": "Declare PyYAML and widen the Rich range so a clean wheel install works",
+  "workstream": "integration",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "regression"
+  },
+  "allowedPaths": [
+    "project/ticket-024/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "pyproject.toml"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [
+    "ticket-001"
+  ],
+  "conflictsWith": [],
+  "integrationTicket": "ticket-001",
+  "delivery": {
+    "acceptedBaseSha": "129d0c2fd669d7d5d73a702372dadc9be35d8f85",
+    "targetBranch": "main",
+    "outcome": "Fix the packaging metadata so `pip install monag` yields a working command. src/monag/audit.py imports yaml, but pyyaml was never declared, so a clean wheel install crashed with ModuleNotFoundError: No module named 'yaml' on `monag audit`/`resume`/`export`/`panel`. Also widen rich to >=14,<16: the pin excluded rich 15, which is what the CI executor environment resolves, while the suite passes against it.",
+    "nonGoals": [
+      "No source or behaviour change -- this is packaging metadata only.",
+      "Does not publish 0.3.0 to PyPI (GitHub #13, still gated by publish_enabled: false).",
+      "Complexity is declared M only because the delivery policy's M profile is the smallest class permitting two runtime-dependency declarations; the diff itself is two lines of packaging metadata."
+    ],
+    "complexity": "M",
+    "estimatedMinutes": 15,
+    "budgets": {
+      "maxImplementationFiles": 1,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 2
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Declare the already-imported pyyaml as a runtime dependency (>=6,<7) and relax rich from >=14,<15 to >=14,<16, verified by building the wheel and running the full suite against it in a clean virtualenv with rich 15.0.0 and PyYAML 6.0.3 installed.",
+      "components": [
+        {
+          "name": "packaging",
+          "paths": [
+            "pyproject.toml"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the packaging slice through protected review."
+    },
+    "runtimeDependencies": [
+      "pyyaml>=6,<7",
+      "rich>=14,<16"
+    ],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python -m build --wheel",
+          "python -m unittest discover -s tests -t tests"
+        ],
+        "evidence": "Wheel installed into a clean virtualenv (rich 15.0.0, PyYAML 6.0.3) runs `monag --help` and passes 111/111 tests against the installed package, while the pre-fix dependency set reproduces ModuleNotFoundError: No module named 'yaml'."
+      }
+    ]
+  }
+}
