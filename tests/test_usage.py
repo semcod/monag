@@ -157,12 +157,13 @@ class UsageTests(unittest.TestCase):
         self.assertIn('## Agents', document)
         self.assertIn('## Account usage', document)
         self.assertIn('## Provider accounts', document)
-        self.assertIn('| Provider | Account | Remaining | Renewal |', document)
+        self.assertIn('| Provider | Account | Remaining | Balance | Renewal |', document)
         self.assertIn('monag open N[t|b|d|o|p]', document)
         text = usage.render(data)
         self.assertIn('MONAG USAGE', text)
         self.assertIn('PROVIDERS', text)
         self.assertIn('ACCOUNT', text)
+        self.assertIn('BALANCE', text)
         self.assertIn('ACCOUNTS', text)
         self.assertIn('github', text)
 
@@ -179,6 +180,20 @@ class UsageTests(unittest.TestCase):
         self.assertIn('team@example.com', text)
         doc = usage.markdown(data)
         self.assertIn('team@example\\.com', doc)
+
+    def test_ledger_explicit_balance(self):
+        proc = self.fake_proc()
+        cwd = self.root / 'workspace'
+        cwd.mkdir()
+        state = self.root / 'state'
+        self.ledger(state, balance='$10.50')
+        data = usage.scan(cwd, proc=proc, ledgers=[str(state)])
+        self.assertEqual(len(data['ledgers']), 1)
+        self.assertEqual(data['ledgers'][0]['balance'], '$10.50')
+        text = usage.render(data)
+        self.assertIn('$10.50', text)
+        doc = usage.markdown(data)
+        self.assertIn('$10\\.50', doc)
 
     def test_detect_provider_account_from_home(self):
         fake_home = self.root / 'fakehome'
