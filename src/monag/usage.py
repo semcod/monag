@@ -15,6 +15,12 @@ from .presentation import clean, table
 
 LEDGER_GLOB = 'api-budget-*.json'
 LEDGER_SCHEMA = 'subactor.api-budget-state/v1'
+# Agent kind → credential provider namespace used by detect_provider_account.
+KIND_PROVIDER = {
+    'agy': 'agy', 'agy2': 'agy', 'agy-coding-agent': 'agy',
+    'claude': 'claude', 'claude-agent-acp': 'claude',
+    'codex': 'codex', 'cursor-agent': 'cursor', 'gemini': 'gemini',
+}
 DOCKER_MARKER = 'MONAG-FILE:'
 # Depth-1 data roots inside a container; keeps the exec bounded and read-only.
 DOCKER_GLOBS = '/app/data/*/api-budget-*.json /app/api-budget-*.json'
@@ -201,6 +207,26 @@ def default_ledgers(enabled=True, ignore_env=False):
     return discovered
 
 
+def agent_accounts(agents, ledgers, home=None):
+    """Attach a best-effort provider account email to each agent row.
+
+    Detection reads the CLI's own credential file once per provider; a ledger's
+    observed account is the fallback when detection finds nothing.
+    """
+    ledger_account = {}
+    for row in ledgers:
+        if row.get('account'):
+            ledger_account.setdefault(row['provider'], row['account'])
+    detected = {}
+    for agent in agents:
+        provider = KIND_PROVIDER.get(agent.get('kind'), agent.get('kind'))
+        if provider and provider not in detected:
+            detected[provider] = (detect_provider_account(provider, home=home)
+                                  or ledger_account.get(provider))
+        if provider and detected[provider]:
+            agent['account'] = detected[provider]
+
+
 def scan(root, registry=None, machine=False, all_users=False, ledgers=(), proc=Path('/proc'), home=None):
     """One usage observation: agent tree resources plus declared ledger sources."""
     started = time.monotonic()
@@ -219,6 +245,7 @@ def scan(root, registry=None, machine=False, all_users=False, ledgers=(), proc=P
         rows, err = read_ledgers(source, home=home)
         ledger_rows += rows
         errors += err
+    agent_accounts(agents, ledger_rows, home=home)
     return {'root': str(root), 'observed_at': datetime.now(timezone.utc).isoformat(),
             'agents': agents, 'agent_count': len(agents), 'ledgers': ledger_rows,
             'errors': errors, 'inaccessible_processes': denied,
@@ -261,8 +288,9 @@ def markdown(data, limit=12):
     parts = ['# MONAG · Usage\n',
              f"{clean(data['observed_at'][:19])} · {clean(data['root'])}\n",
              '## Agents\n',
-             table(['#', 'PID', 'Agent', 'State', 'CPU total', 'Memory', 'Uptime', 'Children', 'Directory', 'Task'],
-                   ([i + 1, a['pid'], a['kind'], a['state'], f"{a.get('cpu_seconds_tree') or 0:.0f}s",
+             table(['#', 'PID', 'Agent', 'Account', 'State', 'CPU total', 'Memory', 'Uptime', 'Children', 'Directory', 'Task'],
+                   ([i + 1, a['pid'], a['kind'], a.get('account') or '—', a['state'],
+                     f"{a.get('cpu_seconds_tree') or 0:.0f}s",
                      human_bytes(a.get('rss_bytes')), human_duration(a.get('uptime_seconds')),
                      a['children'], a['cwd'], a.get('task', '—')]
                     for i, a in enumerate(data['agents'][:limit])))]
@@ -295,9 +323,10 @@ def markdown(data, limit=12):
 def render(data, limit=12):
     lines = [f"MONAG USAGE | {data['agent_count']} agents | {len(data['ledgers'])} ledgers | {data['observed_at'][:19]}",
              f"{data['root']} | scan {data['duration_seconds']}s", '',
-             'AGENTS   #   PID       KIND           STATE  CPU TOTAL    MEMORY     UPTIME   CHILDREN  DIRECTORY']
+             'AGENTS   #   PID       KIND           ACCOUNT                        STATE  CPU TOTAL    MEMORY     UPTIME   CHILDREN  DIRECTORY']
     for index, agent in enumerate(data['agents'][:limit]):
-        lines.append(f"  {index + 1:<3} {agent['pid']:<9} {agent['kind']:<14} {agent['state']:<6} "
+        account = (agent.get('account') or '—')[:28]
+        lines.append(f"  {index + 1:<3} {agent['pid']:<9} {agent['kind']:<14} {account:<30} {agent['state']:<6} "
                      f"{(agent.get('cpu_seconds_tree') or 0):>8.0f}s {human_bytes(agent.get('rss_bytes')):>10} "
                      f"{human_duration(agent.get('uptime_seconds')):>9} {agent['children']:>8}  {agent['cwd']}")
         task = agent.get('task')

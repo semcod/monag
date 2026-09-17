@@ -210,6 +210,33 @@ class UsageTests(unittest.TestCase):
         }))
         self.assertEqual(usage.detect_provider_account('claude', home=fake_home), 'user@claude.ai')
 
+    def test_agents_table_shows_account_email(self):
+        proc = self.fake_proc()
+        cwd = self.root / 'workspace'
+        cwd.mkdir()
+        self.fake_process(proc, 20, 1, ['/x/claude'], cwd)
+        fake_home = self.root / 'fakehome'
+        fake_home.mkdir()
+        (fake_home / '.claude.json').write_text(json.dumps({
+            'oauthAccount': {'emailAddress': 'user@claude.ai'}
+        }))
+        data = usage.scan(cwd, proc=proc, ledgers=[], home=fake_home)
+        self.assertEqual(data['agents'][0]['account'], 'user@claude.ai')
+        self.assertIn('user@claude.ai', usage.render(data))
+        self.assertIn('Account', usage.markdown(data))
+
+    def test_agent_account_falls_back_to_ledger(self):
+        proc = self.fake_proc()
+        cwd = self.root / 'workspace'
+        cwd.mkdir()
+        self.fake_process(proc, 20, 1, ['/x/claude'], cwd)
+        state = self.root / 'state'
+        self.ledger(state, provider='claude', account='team@example.com')
+        empty_home = self.root / 'emptyhome'
+        empty_home.mkdir()
+        data = usage.scan(cwd, proc=proc, ledgers=[str(state)], home=empty_home)
+        self.assertEqual(data['agents'][0].get('account'), 'team@example.com')
+
     def test_default_ledgers_discovery(self):
         state = self.root / 'ledgers'
         self.ledger(state)
