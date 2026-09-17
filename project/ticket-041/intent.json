@@ -1,0 +1,25 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-041",
+  "summary": "open hint in default usage view",
+  "workstream": "application",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P3",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-041/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/usage.py",
+    "tests/test_usage.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}

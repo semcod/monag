@@ -264,6 +264,8 @@ def markdown(data, limit=12):
                     for i, a in enumerate(data['agents'][:limit])))]
     if len(data['agents']) > limit:
         parts.append(f"{len(data['agents']) - limit} additional agents; increase --limit.\n")
+    if data['agents']:
+        parts.append('*open a row: `monag open N[t|b|d|o|p]` (pid:NNNN also works)*\n')
     parts += ['## Account usage\n',
               table(['Provider', 'Account', 'Remaining', 'Reset', 'Last decision', 'Observed', 'Source'],
                     ([r['provider'], r.get('account') or '—',
