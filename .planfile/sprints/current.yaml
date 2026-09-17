@@ -63,3 +63,75 @@ sprint:
           key: semcod/monag#5
           url: https://github.com/semcod/monag/issues/5
       updated_at: '2026-09-15T07:32:16.963442+00:00'
+    PLF-002:
+      acceptance_criteria: []
+      blocked_by: []
+      blocks: []
+      children: []
+      contract_version: planfile.ticket/v1
+      created_at: '2026-09-17T12:36:27.099522Z'
+      description: 'monag resume publishes per-checkout and per-fleet refactoring
+        statistics: publication_state (dirty | unmerged_by_ancestry | merged_by_ancestry
+        | no_remote | no_base), remote_identity, base_ref_age_seconds, lease_age_seconds/lease_stale,
+        and per project fleet_metrics with checkouts, distinct_branches, duplicate_clone_checkouts,
+        publication_states, stale_lease_claims, base_ref_age_seconds_max and refactoring_notes.
+
+
+        Delivered by governance ticket-030, merged as semcod/monag#32 (merge ae5dac3d).
+
+
+        Why the distinctions exist: a manual fleet audit on 2026-09-17 reported 142
+        unpublished branches across 1534 checkouts; the real number was 8. Three traps,
+        each inflating the same direction - a stale base ref (142->125 after fetch),
+        parallel clones of one repository counted repeatedly (125->38), and squash/rebase
+        merges keeping delivered branches off base ancestry forever (38->8, settled
+        only by a pull-request lookup). Each trap has a pinning test in tests/test_fleet.py.
+
+
+        Open follow-up, NOT delivered: semcod/monag has no .koru/policy.yaml nor koru.yaml
+        and no workstream in .governance/manifest.json owns those paths, so the Koru
+        fleet cannot cover this repository and its queue cannot pick monag work up.
+        Adding that ownership plus the policy file is its own ticket.
+
+
+        Do not attempt ''planfile sync github'' for this ticket: the import direction
+        was reverted in semcod/monag#29 for mirroring pull requests as issues, and
+        the export direction is defective as reported in semcod/planfile#126 (it reported
+        ''Created: PLF-003 -> 19'' while creating no issue and mapping the ticket
+        onto a pull request).'
+      dsl: SODL/1 id=evt_73226656d4e6801864845f63 event_hash=fda89b9f382ef7bb4e226cc3768d1dcd06ecc70de0bfabff7a3121bd86e8b191
+        timestamp=2026-09-17T12%3A36%3A27.099522%2B00%3A00 kind=task source=planfile.ticket
+        ticket_id=PLF-002 actor=human oql=ticket.create uri=planfile%3A%2F%2Ftickets%2FPLF-002%2Fcommand%2Fcreate
+        mode=apply status=open correlation_id=PLF-002 causation_id=- input_hash=bfbb34c62bbf24769166a6a62bee5f8e6539e495314d19bf52f81d6c9cc00238
+        receipt_ref=- replayable=true data=eyJwYXlsb2FkIjp7ImFjY2VwdGFuY2VfY3JpdGVyaWEiOltdLCJibG9ja2VkX2J5IjpbXSwiYmxvY2tzIjpbXSwiY2hpbGRyZW4iOltdLCJjb250cmFjdF92ZXJzaW9uIjoicGxhbmZpbGUudGlja2V0L3YxIiwiY3JlYXRlZF9hdCI6IjIwMjYtMDktMTdUMTI6MzY6MjcuMDk5NTIyWiIsImRlc2NyaXB0aW9uIjoibW9uYWcgcmVzdW1lIHB1Ymxpc2hlcyBwZXItY2hlY2tvdXQgYW5kIHBlci1mbGVldCByZWZhY3RvcmluZyBzdGF0aXN0aWNzOiBwdWJsaWNhdGlvbl9zdGF0ZSAoZGlydHkgfCB1bm1lcmdlZF9ieV9hbmNlc3RyeSB8IG1lcmdlZF9ieV9hbmNlc3RyeSB8IG5vX3JlbW90ZSB8IG5vX2Jhc2UpLCByZW1vdGVfaWRlbnRpdHksIGJhc2VfcmVmX2FnZV9zZWNvbmRzLCBsZWFzZV9hZ2Vfc2Vjb25kcy9sZWFzZV9zdGFsZSwgYW5kIHBlciBwcm9qZWN0IGZsZWV0X21ldHJpY3Mgd2l0aCBjaGVja291dHMsIGRpc3RpbmN0X2JyYW5jaGVzLCBkdXBsaWNhdGVfY2xvbmVfY2hlY2tvdXRzLCBwdWJsaWNhdGlvbl9zdGF0ZXMsIHN0YWxlX2xlYXNlX2NsYWltcywgYmFzZV9yZWZfYWdlX3NlY29uZHNfbWF4IGFuZCByZWZhY3RvcmluZ19ub3Rlcy5cblxuRGVsaXZlcmVkIGJ5IGdvdmVybmFuY2UgdGlja2V0LTAzMCwgbWVyZ2VkIGFzIHNlbWNvZC9tb25hZyMzMiAobWVyZ2UgYWU1ZGFjM2QpLlxuXG5XaHkgdGhlIGRpc3RpbmN0aW9ucyBleGlzdDogYSBtYW51YWwgZmxlZXQgYXVkaXQgb24gMjAyNi0wOS0xNyByZXBvcnRlZCAxNDIgdW5wdWJsaXNoZWQgYnJhbmNoZXMgYWNyb3NzIDE1MzQgY2hlY2tvdXRzOyB0aGUgcmVhbCBudW1iZXIgd2FzIDguIFRocmVlIHRyYXBzLCBlYWNoIGluZmxhdGluZyB0aGUgc2FtZSBkaXJlY3Rpb24gLSBhIHN0YWxlIGJhc2UgcmVmICgxNDItPjEyNSBhZnRlciBmZXRjaCksIHBhcmFsbGVsIGNsb25lcyBvZiBvbmUgcmVwb3NpdG9yeSBjb3VudGVkIHJlcGVhdGVkbHkgKDEyNS0-MzgpLCBhbmQgc3F1YXNoL3JlYmFzZSBtZXJnZXMga2VlcGluZyBkZWxpdmVyZWQgYnJhbmNoZXMgb2ZmIGJhc2UgYW5jZXN0cnkgZm9yZXZlciAoMzgtPjgsIHNldHRsZWQgb25seSBieSBhIHB1bGwtcmVxdWVzdCBsb29rdXApLiBFYWNoIHRyYXAgaGFzIGEgcGlubmluZyB0ZXN0IGluIHRlc3RzL3Rlc3RfZmxlZXQucHkuXG5cbk9wZW4gZm9sbG93LXVwLCBOT1QgZGVsaXZlcmVkOiBzZW1jb2QvbW9uYWcgaGFzIG5vIC5rb3J1L3BvbGljeS55YW1sIG5vciBrb3J1LnlhbWwgYW5kIG5vIHdvcmtzdHJlYW0gaW4gLmdvdmVybmFuY2UvbWFuaWZlc3QuanNvbiBvd25zIHRob3NlIHBhdGhzLCBzbyB0aGUgS29ydSBmbGVldCBjYW5ub3QgY292ZXIgdGhpcyByZXBvc2l0b3J5IGFuZCBpdHMgcXVldWUgY2Fubm90IHBpY2sgbW9uYWcgd29yayB1cC4gQWRkaW5nIHRoYXQgb3duZXJzaGlwIHBsdXMgdGhlIHBvbGljeSBmaWxlIGlzIGl0cyBvd24gdGlja2V0LlxuXG5EbyBub3QgYXR0ZW1wdCAncGxhbmZpbGUgc3luYyBnaXRodWInIGZvciB0aGlzIHRpY2tldDogdGhlIGltcG9ydCBkaXJlY3Rpb24gd2FzIHJldmVydGVkIGluIHNlbWNvZC9tb25hZyMyOSBmb3IgbWlycm9yaW5nIHB1bGwgcmVxdWVzdHMgYXMgaXNzdWVzLCBhbmQgdGhlIGV4cG9ydCBkaXJlY3Rpb24gaXMgZGVmZWN0aXZlIGFzIHJlcG9ydGVkIGluIHNlbWNvZC9wbGFuZmlsZSMxMjYgKGl0IHJlcG9ydGVkICdDcmVhdGVkOiBQTEYtMDAzIC0-IDE5JyB3aGlsZSBjcmVhdGluZyBubyBpc3N1ZSBhbmQgbWFwcGluZyB0aGUgdGlja2V0IG9udG8gYSBwdWxsIHJlcXVlc3QpLiIsImZpbGVzIjpbXSwiaWQiOiJQTEYtMDAyIiwibGFiZWxzIjpbInBsYW5maWxlIiwibWFuYWdlZCIsIndlbGxtYW5pZmVzdCJdLCJuYW1lIjoiRmxlZXQgcmVmYWN0b3JpbmcgbWV0cmljcyBpbiBtb25hZyByZXN1bWUgKGRlbGl2ZXJlZCBieSB0aWNrZXQtMDMwKSIsInByaW9yaXR5IjoiaGlnaCIsInNvdXJjZSI6eyJjb250ZXh0Ijp7fSwidGltZXN0YW1wIjoiMjAyNi0wOS0xN1QxMjozNjoyNi45ODAwMzdaIiwidG9vbCI6Imh1bWFuIn0sInNwcmludCI6ImN1cnJlbnQiLCJzdGF0dXMiOiJvcGVuIiwic3luYyI6e30sInVwZGF0ZWRfYXQiOiIyMDI2LTA5LTE3VDEyOjM2OjI3LjA5OTUzMFoifX0
+      files: []
+      history:
+      - action: update
+        changes:
+        - outputs
+        source: planfile.store
+        timestamp: '2026-09-17T12:42:37.655631+00:00'
+      id: PLF-002
+      labels:
+      - planfile
+      - managed
+      - wellmanifest
+      name: Fleet refactoring metrics in monag resume (delivered by ticket-030)
+      outputs:
+        artifacts: []
+        notes:
+        - 'Correction: the koru fleet opt-in file is .planfile/.koru/policy.yaml (per
+          ''koru fleet'' command help), not .koru/policy.yaml at the repository root,
+          and it needs no manifest change because .planfile/** is already owned by
+          the integration workstream. monag has .planfile/.koru/ (a queue-runner.lock
+          from 2026-09-16) but no policy.yaml, so ''koru fleet up'' skips it; 66 of
+          88 fleet directories carry that file.'
+      priority: high
+      source:
+        context: {}
+        timestamp: '2026-09-17T12:36:26.980037Z'
+        tool: human
+      sprint: current
+      status: open
+      sync: {}
+      updated_at: '2026-09-17T12:42:37.655597+00:00'
