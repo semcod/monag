@@ -1,0 +1,92 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-031",
+  "summary": "Track the fleet refactoring metrics work in the repository Planfile store",
+  "workstream": "integration",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-031/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    ".planfile/**"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [
+    "ticket-030"
+  ],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "ae5dac3d0c06f44ace01aba502dbd9d3390a5f5e",
+    "targetBranch": "main",
+    "outcome": "The repository Planfile store carries PLF-002 for the fleet refactoring metrics delivered by ticket-030, so the work is visible to a Planfile-driven queue and the two remaining delegation blockers are recorded where a queue reader will find them.",
+    "nonGoals": [
+      "Run planfile sync github in any direction (import reverted in #29; export defective per semcod/planfile#126)",
+      "Add .planfile/.koru/policy.yaml, which koru fleet uses to discover opted-in projects",
+      "Change any source, test or governance artifact"
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 20,
+    "budgets": {
+      "maxImplementationFiles": 3,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Record the ticket in the existing single-YAML Planfile store with no integration mapping. A mapping is deliberately absent: reconciliation acts on every ticket holding one, and the export path currently records mappings onto pull-request numbers, which is what broke every sync run before #29.",
+      "components": [
+        {
+          "name": "planfile-store",
+          "paths": [
+            ".planfile/config.yaml",
+            ".planfile/sprints/current.yaml"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [
+        "PLF-002 added to .planfile/sprints/current.yaml; next_id advances in .planfile/config.yaml"
+      ],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the ticket commit; no external system holds a mapping to PLF-002."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "planfile ticket list -s current --status all --format json"
+        ],
+        "evidence": "PLF-002 present in current sprint: status=open, priority=high, sync={} (no mapping)."
+      },
+      {
+        "criterion": "AC-03",
+        "commands": [
+          "planfile sync github --direction to --dry-run"
+        ],
+        "evidence": "Export dry run reports 'Found 1 tickets for github' and lists only PLF-001, so PLF-002 is never reconciled."
+      },
+      {
+        "criterion": "AC-04",
+        "commands": [
+          "./project/governance-check.sh --base origin/main --head HEAD --actor agent"
+        ],
+        "evidence": "GOV-PASS locally; governance / enforce rejected complexity XS at 20 estimated minutes (XS caps at 10) and was corrected to S."
+      }
+    ]
+  }
+}
