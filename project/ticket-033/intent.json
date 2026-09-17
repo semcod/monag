@@ -1,0 +1,28 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-033",
+  "summary": "Add monag usage command reporting agent and account usage",
+  "workstream": "application",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-033/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/cli.py",
+    "src/monag/monitor.py",
+    "src/monag/presentation.py",
+    "src/monag/usage.py",
+    "tests/test_usage.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}
