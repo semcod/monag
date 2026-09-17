@@ -5,6 +5,7 @@ import re
 ALIASES = {name: name for name in (
     'codex', 'claude', 'aider', 'gemini', 'opencode', 'goose', 'cursor-agent',
     'amp', 'qwen', 'kilo', 'copilot', 'crush', 'openhands', 'continue', 'devin',
+    'agy', 'agy2', 'agy-coding-agent', 'agent', 'tiny-agents',
 )}
 MODULES = {'aider': 'aider', 'aider.main': 'aider', 'openhands': 'openhands'}
 SCOPES = {'@openai/codex': 'codex', '@anthropic-ai/claude-code': 'claude',

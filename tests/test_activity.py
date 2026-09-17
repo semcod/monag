@@ -84,6 +84,14 @@ class ActivityTests(unittest.TestCase):
         # A positional prompt is never interpreted as a helper subcommand.
         self.assertEqual(identify(['claude', 'login']), ('claude', False))
 
+    def test_antigravity_and_wrapper_agent_executables(self):
+        self.assertEqual(identify(['agy']), ('agy', False))
+        self.assertEqual(identify(['/usr/local/bin/agy', '--dangerously-skip-permissions']), ('agy', False))
+        self.assertEqual(identify(['agy-coding-agent', '--print-timeout', '35m']), ('agy-coding-agent', False))
+        self.assertEqual(identify(['agy2']), ('agy2', False))
+        self.assertEqual(identify(['agent']), ('agent', False))
+        self.assertEqual(identify(['tiny-agents', 'run']), ('tiny-agents', False))
+
     def test_rewritten_electron_and_npm_titles_are_split(self):
         self.process(1, 0, ['/opt/devin-desktop/devin-desktop --type=renderer --user-data-dir=/home/u/.config/devin'])
         self.process(2, 0, ['npm exec @agentclientprotocol/claude-agent-acp@0.76.0'])
