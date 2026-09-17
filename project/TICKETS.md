@@ -25,4 +25,6 @@
 | **ticket-029** | [`README.md`](./ticket-029/README.md) | - | - | - | - | - |
 | **ticket-030** | [`README.md`](./ticket-030/README.md) | - | - | - | - | - |
 | **ticket-031** | [`README.md`](./ticket-031/README.md) | - | - | - | - | - |
+| **ticket-032** | [`README.md`](./ticket-032/README.md) | - | - | - | - | - |
+| **ticket-033** | [`README.md`](./ticket-033/README.md) | - | - | - | - | - |
 <!-- AUTO:TICKET_INDEX:END -->
