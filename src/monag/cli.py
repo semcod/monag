@@ -23,7 +23,7 @@ SHELL_COMMANDS = {
     'refresh': 'odśwież status i backlog Planfile',
     'status': 'pokaż jeden snapshot agentów i checkoutów',
     'usage': 'pokaż tabelę zużycia agentów i kont',
-    'open': 'otwórz wiersz `usage` w terminalu (open N lub open pid:NNNN)',
+    'open': 'otwórz wiersz `usage` (open N, open 4t/4b/4d/4o/4p lub open pid:NNNN)',
     'resume': 'pokaż worktree, lease i otwarte tickety Planfile',
     'audit': 'porównaj lokalne tickety Planfile z GitHub Issues',
     'catalog': 'pokaż lokalny katalog projektów',
@@ -193,9 +193,13 @@ def main(argv=None):
                               help='api-budget ledger source; repeatable: a state file, a directory '
                                    'of api-budget-*.json, docker:CONTAINER or docker:auto '
                                    '(coordinator containers on this host)')
-    open_parser = sub.add_parser('open', help='open one numbered `usage` row in a terminal '
-                                            '(or its web/desktop UI with --browser)')
-    open_parser.add_argument('target', help='row number from `usage`, or pid:NNNN')
+    open_parser = sub.add_parser('open', help='open one numbered `usage` row; append an action '
+                                            'letter (t/b/d/o/p) or use --browser')
+    open_parser.add_argument('target', help='row number from `usage`, or pid:NNNN; an action '
+                                            'letter may be appended (4t, 4b, 4d, 4o, 4p)')
+    open_parser.add_argument('action', nargs='?',
+                             help='action letter or name: t terminal, b/w browser, '
+                                  'd desktop, o/f files, p print')
     open_parser.add_argument('--browser', action='store_true',
                              help='use the web/desktop UI route instead of a terminal')
     open_parser.add_argument('--print', dest='print_only', action='store_true',
@@ -328,6 +332,7 @@ def main(argv=None):
             data = usage.scan(root, registry=registry, machine=args.machine,
                               all_users=args.all_users)
             ok, message = opener.open_target(data['agents'], args.target,
+                                             action=args.action,
                                              browser=args.browser,
                                              dry_run=args.print_only)
             print(message, flush=True)
@@ -492,7 +497,8 @@ def main(argv=None):
                     parts = command_line.split(maxsplit=1)
                     target = parts[1].strip() if len(parts) > 1 else ''
                     if not target:
-                        print('Użycie: open N  (numer wiersza z `usage`) lub open pid:NNNN', flush=True)
+                        print('Użycie: open N[litera]  — 4t terminal, 4b przeglądarka, '
+                              '4d desktop, 4o pliki, 4p podgląd; lub open pid:NNNN', flush=True)
                         continue
                     opened = usage.scan(root, registry=registry, machine=args.machine,
                                         all_users=args.all_users)

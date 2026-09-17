@@ -26,6 +26,40 @@ class PickTest(unittest.TestCase):
         self.assertIsNone(opener.pick(self.agents, 'pid:999')[0])
 
 
+class ParseTargetTest(unittest.TestCase):
+    def test_bare_number_and_pid(self):
+        self.assertEqual(opener.parse_target('4'), ('4', None))
+        self.assertEqual(opener.parse_target('pid:22'), ('pid:22', None))
+
+    def test_appended_and_separate_letters(self):
+        self.assertEqual(opener.parse_target('4t'), ('4', 't'))
+        self.assertEqual(opener.parse_target('4 t'), ('4', 't'))
+        self.assertEqual(opener.parse_target('pid:22b'), ('pid:22', 'b'))
+        self.assertEqual(opener.parse_target('4 browser'), ('4', 'browser'))
+
+    def test_unparseable_reference_passes_through(self):
+        self.assertEqual(opener.parse_target('bogus'), ('bogus', None))
+
+
+class ResolveActionTest(unittest.TestCase):
+    def test_letters_and_names(self):
+        self.assertEqual(opener.resolve_action('t')[0], 'terminal')
+        self.assertEqual(opener.resolve_action('b')[0], 'browser')
+        self.assertEqual(opener.resolve_action('w')[0], 'browser')
+        self.assertEqual(opener.resolve_action('d')[0], 'desktop')
+        self.assertEqual(opener.resolve_action('o')[0], 'files')
+        self.assertEqual(opener.resolve_action('f')[0], 'files')
+        self.assertEqual(opener.resolve_action('p')[0], 'print')
+        self.assertEqual(opener.resolve_action('browser')[0], 'browser')
+
+    def test_defaults_and_unknown(self):
+        self.assertEqual(opener.resolve_action(None)[0], 'terminal')
+        self.assertEqual(opener.resolve_action(None, browser=True)[0], 'browser')
+        action, problem = opener.resolve_action('x')
+        self.assertIsNone(action)
+        self.assertIn('unknown action', problem)
+
+
 class RecipeTest(unittest.TestCase):
     def test_terminal_recipes(self):
         self.assertEqual(opener.recipe(agent(kind='agy'))[0], ['agy', '--continue'])
@@ -36,11 +70,16 @@ class RecipeTest(unittest.TestCase):
 
     def test_desktop_and_browser_routes(self):
         self.assertEqual(opener.recipe(agent(kind='devin'))[0], ['devin', 'desktop'])
-        self.assertEqual(opener.recipe(agent(kind='opencode'), browser=True)[0],
+        self.assertEqual(opener.recipe(agent(kind='devin'), action='desktop')[0],
+                         ['devin', 'desktop'])
+        self.assertEqual(opener.recipe(agent(kind='opencode'), action='browser')[0],
                          ['opencode', 'web'])
-        argv, problem = opener.recipe(agent(kind='agy'), browser=True)
+        argv, problem = opener.recipe(agent(kind='agy'), action='browser')
         self.assertIsNone(argv)
         self.assertIn('no browser route', problem)
+        argv, problem = opener.recipe(agent(kind='agy'), action='desktop')
+        self.assertIsNone(argv)
+        self.assertIn('no desktop route', problem)
 
     def test_acp_adapter_is_never_respawned(self):
         argv, problem = opener.recipe(agent(kind='claude-agent-acp',
@@ -64,10 +103,20 @@ class OpenAgentTest(unittest.TestCase):
         self.assertEqual(message, 'cd /work/repo && exec agy --continue')
 
     def test_dry_run_browser_prints_plain_command(self):
-        ok, message = opener.open_agent(agent(kind='opencode'), browser=True,
+        ok, message = opener.open_agent(agent(kind='opencode'), action='browser',
                                         dry_run=True)
         self.assertTrue(ok)
         self.assertEqual(message, 'cd /work/repo && opencode web')
+
+    def test_files_action_opens_directory(self):
+        calls = []
+        ok, message = opener.open_agent(agent(), action='files',
+                                        spawn=lambda *a, **k: calls.append((a, k)))
+        self.assertTrue(ok)
+        self.assertEqual(calls[0][0][0], ['xdg-open', '/work/repo'])
+        ok, message = opener.open_agent(agent(), action='files', dry_run=True)
+        self.assertTrue(ok)
+        self.assertEqual(message, 'xdg-open /work/repo')
 
     def test_missing_cwd_blocks_launch(self):
         ok, message = opener.open_agent(agent(cwd=None))
@@ -105,12 +154,30 @@ class OpenAgentTest(unittest.TestCase):
         self.assertEqual(calls[0][1]['cwd'], '/work/repo')
 
     def test_open_target_composes_pick_and_open(self):
-        agents = [agent(11), agent(22, 'claude')]
+        agents = [agent(11), agent(22, 'claude'), agent(33, 'opencode')]
         ok, message = opener.open_target(agents, '2', dry_run=True)
         self.assertTrue(ok)
         self.assertIn('claude --continue', message)
         ok, message = opener.open_target(agents, '9')
         self.assertFalse(ok)
+
+    def test_open_target_action_letters(self):
+        agents = [agent(11), agent(22, 'claude'), agent(33, 'opencode')]
+        ok, message = opener.open_target(agents, '3b', dry_run=True)
+        self.assertTrue(ok)
+        self.assertIn('opencode web', message)
+        ok, message = opener.open_target(agents, '2', action='p')
+        self.assertTrue(ok)
+        self.assertIn('cd /work/repo', message)
+        ok, message = opener.open_target(agents, 'pid:22t', dry_run=True)
+        self.assertTrue(ok)
+        self.assertIn('claude --continue', message)
+        ok, message = opener.open_target(agents, '1x')
+        self.assertFalse(ok)
+        self.assertIn('unknown action', message)
+        ok, message = opener.open_target(agents, '1t', action='b')
+        self.assertFalse(ok)
+        self.assertIn('given twice', message)
 
 
 if __name__ == '__main__':

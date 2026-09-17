@@ -216,7 +216,7 @@ def render(data, limit=12):
     if len(data['agents']) > limit:
         lines.append(f"  … {len(data['agents']) - limit} more agents; increase --limit")
     if data['agents']:
-        lines.append('  open a row: monag open N  (pid:NNNN or --browser also work)')
+        lines.append('  open a row: monag open N[t|b|d|o|p]  (pid:NNNN also works)')
     if data['ledgers']:
         lines += ['', 'ACCOUNTS PROVIDER     REMAINING  RESET              LAST DECISION                   SOURCE']
         for row in data['ledgers']:

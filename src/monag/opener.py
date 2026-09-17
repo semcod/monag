@@ -1,10 +1,14 @@
 """Open an observed agent session in a terminal or browser.
 
 Selection is by the numbered row of `monag usage` output or an explicit
-`pid:NNNN`. Spawning a detached terminal or desktop entry is the only effect;
-IDE-managed ACP adapters are reported, never respawned.
+`pid:NNNN`, optionally followed by an action letter: `open 4t` opens a
+terminal (default), `4b`/`4w` a browser route, `4d` the desktop UI,
+`4o`/`4f` the working directory in the file manager and `4p` prints the
+command without spawning. IDE-managed ACP adapters are reported, never
+respawned.
 """
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -29,6 +33,12 @@ DESKTOP = {'devin': ['devin', 'desktop']}
 # Browser routes spawn a local web UI and let it open the browser itself.
 BROWSER = {'opencode': ['opencode', 'web']}
 
+ACTION_LETTERS = {
+    't': 'terminal', 'b': 'browser', 'w': 'browser',
+    'd': 'desktop', 'o': 'files', 'f': 'files', 'p': 'print',
+}
+ACTIONS = {'terminal', 'browser', 'desktop', 'files', 'print'}
+
 
 def _wrapped(script):
     return ['sh', '-c', script]
@@ -48,6 +58,30 @@ LAUNCHERS = {
     'x-terminal-emulator': lambda s: ['x-terminal-emulator', '-e', *_wrapped(s)],
 }
 ORDER = tuple(LAUNCHERS)
+
+
+def parse_target(text):
+    """'4', '4t', '4 t', 'pid:2330450b' → (reference, action_letter|None)."""
+    parts = str(text).split()
+    ref = parts[0] if parts else ''
+    letter = ''.join(parts[1:]).lower() or None
+    match = re.fullmatch(r'(pid:\d+|\d+)([a-zA-Z])?', ref)
+    if match:
+        ref = match.group(1)
+        letter = letter or (match.group(2).lower() if match.group(2) else None)
+    return ref, letter
+
+
+def resolve_action(letter_or_name, browser=False):
+    """Map an action letter or name to a canonical action, or an error."""
+    if not letter_or_name:
+        return ('browser' if browser else 'terminal'), None
+    value = str(letter_or_name).lower()
+    action = ACTION_LETTERS.get(value, value)
+    if action not in ACTIONS:
+        return None, (f'unknown action {letter_or_name!r}; use '
+                      't terminal, b/w browser, d desktop, o/f files or p print')
+    return action, None
 
 
 def pick(agents, target):
@@ -72,14 +106,21 @@ def pick(agents, target):
     return None, f'no row {index}; `usage` lists {len(agents)} agents'
 
 
-def recipe(agent, browser=False):
+def recipe(agent, action='terminal', browser=False):
+    if browser:
+        action = 'browser'
     """Launch argv for one agent row, or (None, reason) when it cannot open."""
     kind = agent.get('kind') or ''
-    if browser:
+    if action == 'browser':
         argv = BROWSER.get(kind) or DESKTOP.get(kind)
         if argv:
             return argv, None
         return None, f'no browser route known for {kind or "this agent"}'
+    if action == 'desktop':
+        argv = DESKTOP.get(kind)
+        if argv:
+            return argv, None
+        return None, f'no desktop route known for {kind or "this agent"}'
     if ACP.fullmatch(kind):
         return None, (f'{kind} is an IDE-managed ACP adapter; '
                       'open the session in its IDE')
@@ -105,20 +146,32 @@ def terminal_argv(script, env=None):
     return None
 
 
-def open_agent(agent, browser=False, dry_run=False, env=None, spawn=subprocess.Popen):
+def _spawn(spawn, argv, cwd):
+    spawn(argv, cwd=cwd, start_new_session=True,
+          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def open_agent(agent, action='terminal', browser=False, dry_run=False, env=None, spawn=subprocess.Popen):
+    if browser:
+        action = 'browser'
     """Open one agent row; returns (ok, message)."""
-    argv, problem = recipe(agent, browser=browser)
-    if argv is None:
-        return False, problem
     cwd = agent.get('cwd')
+    label = f"{agent.get('kind') or 'agent'} pid {agent['pid']}"
     if not cwd:
         return False, f"pid {agent['pid']}: working directory is unavailable"
-    label = f"{agent['kind']} pid {agent['pid']}"
-    if browser or argv in DESKTOP.values():
+    if action == 'files':
+        argv = ['xdg-open', cwd]
+        if dry_run:
+            return True, ' '.join(map(shlex.quote, argv))
+        _spawn(spawn, argv, cwd)
+        return True, f'opened file manager for {label}: {cwd}'
+    argv, problem = recipe(agent, action)
+    if argv is None:
+        return False, problem
+    if action in {'browser', 'desktop'} or argv in DESKTOP.values():
         if dry_run:
             return True, f"cd {shlex.quote(cwd)} && {' '.join(map(shlex.quote, argv))}"
-        spawn(argv, cwd=cwd, start_new_session=True,
-              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _spawn(spawn, argv, cwd)
         return True, f'opened {label}: {" ".join(argv)} in {cwd}'
     script = 'cd %s && exec %s' % (shlex.quote(cwd), ' '.join(map(shlex.quote, argv)))
     if dry_run:
@@ -131,8 +184,17 @@ def open_agent(agent, browser=False, dry_run=False, env=None, spawn=subprocess.P
     return True, f'opened {label} in a terminal: {argv[0]} in {cwd}'
 
 
-def open_target(agents, target, browser=False, dry_run=False, env=None, spawn=subprocess.Popen):
-    agent, problem = pick(agents, target)
+def open_target(agents, target, action=None, browser=False, dry_run=False,
+                env=None, spawn=subprocess.Popen):
+    ref, letter = parse_target(target)
+    if action and letter:
+        return False, 'action given twice; use either `open N t` or `open Nt`'
+    action, problem = resolve_action(action or letter, browser=browser)
+    if action is None:
+        return False, problem
+    if action == 'print':
+        action, dry_run = 'terminal', True
+    agent, problem = pick(agents, ref)
     if agent is None:
         return False, problem
-    return open_agent(agent, browser=browser, dry_run=dry_run, env=env, spawn=spawn)
+    return open_agent(agent, action=action, dry_run=dry_run, env=env, spawn=spawn)
