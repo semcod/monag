@@ -1,0 +1,104 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-030",
+  "summary": "Report fleet refactoring metrics: publication truth, duplicate clones and lease age",
+  "workstream": "application",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P2",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-030/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/fleet.py",
+    "src/monag/resume.py",
+    "tests/test_fleet.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "f808047fd873482cfec92b3247230336205fe0e0",
+    "targetBranch": "main",
+    "outcome": "monag resume reports per-project and per-checkout fleet refactoring metrics: a publication state that separates dirty work, an ancestry-only delta, a clone with no origin and a missing base; clone identity so parallel clones of one repository are not counted twice; the age of the comparison base so a stale ref is visible; and lease claim age so a dead claim is distinguishable from live work.",
+    "nonGoals": [
+      "Query GitHub or any network service to settle publication state",
+      "Fetch, mutate refs, take over a lease or resume any worktree",
+      "Change the existing resume schema fields or their meaning",
+      "Import GitHub issues into Planfile (reverted deliberately in PR #29)",
+      "Track the Planfile store in this ticket: .planfile/** belongs to the integration workstream"
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 90,
+    "budgets": {
+      "maxImplementationFiles": 4,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 1,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Add a `monag.fleet` module holding the classification and aggregation, and enrich existing `inspect_checkout` rows plus each project with its output. The metrics are additive keys, computed from observations resume already makes, so no new subprocess class and no network access is introduced.",
+      "components": [
+        {
+          "name": "fleet-refactoring-metrics",
+          "paths": [
+            "src/monag/fleet.py",
+            "src/monag/resume.py",
+            "tests/test_fleet.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "monag.resume scan() projects gain an additive `fleet_metrics` object (schema monag.fleet-metrics/v1); checkout rows gain `remote_identity`, `base_ref_age_seconds`, `lease_age_seconds`, `lease_stale` and `publication_state`"
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the ticket commit; the added keys are additive, so any reader ignoring them is unaffected."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "PYTHONPATH=src python3 -m pytest -o addopts='' -q tests/test_fleet.py"
+        ],
+        "evidence": "17 passed; each of the three overcount traps has a pinning test."
+      },
+      {
+        "criterion": "AC-03",
+        "commands": [
+          "PYTHONPATH=src python3 -m pytest -o addopts='' -q tests/"
+        ],
+        "evidence": "128 passed; no regression in the existing suite."
+      },
+      {
+        "criterion": "AC-04",
+        "commands": [
+          "PYTHONPATH=src python3 -c \"from monag.resume import scan; scan(Path('<workspace-root>'), depth=2)\""
+        ],
+        "evidence": "69 projects, 141 checkouts, 136 distinct branches, 4 duplicate-clone checkouts, 11 stale lease claims; publication states dirty=81 unmerged_by_ancestry=10 merged_by_ancestry=49 no_remote=1."
+      },
+      {
+        "criterion": "AC-05",
+        "commands": [
+          "./project/governance-check.sh --base origin/main --head HEAD --actor agent"
+        ],
+        "evidence": "Pending."
+      }
+    ]
+  }
+}

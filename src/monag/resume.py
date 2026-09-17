@@ -9,6 +9,7 @@ import time
 
 import yaml
 
+from . import fleet
 from .monitor import command, inside, processes
 from .presentation import table
 
@@ -263,6 +264,12 @@ def inspect_checkout(record, primary, base, agent_rows):
             row['lease_status'] = str(json.loads(lease.read_text()).get('status', 'unknown'))
         except (OSError, ValueError, AttributeError):
             row['errors'].append('invalid lease')
+    # Fleet refactoring metrics: clone identity, base freshness and lease age are
+    # what keep an aggregate from counting delivered work as pending.
+    row['remote_identity'] = fleet.remote_identity(path)
+    row['base_ref_age_seconds'] = fleet.base_ref_age_seconds(path, base)
+    row['lease_age_seconds'], row['lease_stale'] = fleet.lease_age(lease, row['lease_status'])
+    row['publication_state'] = fleet.publication_state(row)
     ticket = re.search(r'ticket[-/](\d+)', record.get('branch', ''))
     row.update(ticket=None, complexity='unknown', complexity_source='none')
     if ticket:
@@ -339,7 +346,8 @@ def scan(root, depth=2, sort='backlog', priorities=None):
                        'priority_filter': priority_filter,
                        'unfinished_checkouts': sum(r['unfinished'] for r in rows),
                        'changed_files': sum(r['changed_files'] for r in rows),
-                       'comparison_base': base, 'remote_freshness': 'not fetched'}
+                       'comparison_base': base, 'remote_freshness': 'not fetched',
+                       'fleet_metrics': fleet.metrics(rows)}
             projects.append(project)
     if sort == 'changes':
         projects.sort(key=lambda p: (-p['changed_files'], -p['unfinished_checkouts'],
