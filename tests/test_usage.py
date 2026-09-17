@@ -158,6 +158,7 @@ class UsageTests(unittest.TestCase):
         self.assertIn('## Account usage', document)
         self.assertIn('## Provider accounts', document)
         self.assertIn('| Provider | Account | Remaining | Renewal |', document)
+        self.assertIn('monag open N[t|b|d|o|p]', document)
         text = usage.render(data)
         self.assertIn('MONAG USAGE', text)
         self.assertIn('PROVIDERS', text)
