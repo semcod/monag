@@ -23,6 +23,7 @@ SHELL_COMMANDS = {
     'refresh': 'odśwież status i backlog Planfile',
     'status': 'pokaż jeden snapshot agentów i checkoutów',
     'usage': 'pokaż tabelę zużycia agentów i kont',
+    'open': 'otwórz wiersz `usage` w terminalu (open N lub open pid:NNNN)',
     'resume': 'pokaż worktree, lease i otwarte tickety Planfile',
     'audit': 'porównaj lokalne tickety Planfile z GitHub Issues',
     'catalog': 'pokaż lokalny katalog projektów',
@@ -192,6 +193,13 @@ def main(argv=None):
                               help='api-budget ledger source; repeatable: a state file, a directory '
                                    'of api-budget-*.json, docker:CONTAINER or docker:auto '
                                    '(coordinator containers on this host)')
+    open_parser = sub.add_parser('open', help='open one numbered `usage` row in a terminal '
+                                            '(or its web/desktop UI with --browser)')
+    open_parser.add_argument('target', help='row number from `usage`, or pid:NNNN')
+    open_parser.add_argument('--browser', action='store_true',
+                             help='use the web/desktop UI route instead of a terminal')
+    open_parser.add_argument('--print', dest='print_only', action='store_true',
+                             help='print the launch command without spawning anything')
     resume_parser = sub.add_parser('resume', help='read-only restart inventory of worktrees and local Planfile backlog')
     resume_parser.add_argument('--sort', choices=['backlog', 'priority', 'changes'], default='backlog',
                                help='project ranking (priority uses highest remaining Planfile priority)')
@@ -315,6 +323,15 @@ def main(argv=None):
             else:
                 print(usage.render(data, args.limit))
             return 0
+        if args.mode == 'open':
+            from . import opener, usage
+            data = usage.scan(root, registry=registry, machine=args.machine,
+                              all_users=args.all_users)
+            ok, message = opener.open_target(data['agents'], args.target,
+                                             browser=args.browser,
+                                             dry_run=args.print_only)
+            print(message, flush=True)
+            return 0 if ok else 2
         if args.mode == 'resume':
             from . import resume
             if output_format != 'json' and sys.stderr.isatty():
@@ -469,6 +486,17 @@ def main(argv=None):
                     continue
                 if command_name not in SHELL_COMMANDS:
                     print(f'Nieznane polecenie: {command_name}. Wpisz help.', flush=True)
+                    continue
+                if command_name == 'open':
+                    from . import opener, usage
+                    parts = command_line.split(maxsplit=1)
+                    target = parts[1].strip() if len(parts) > 1 else ''
+                    if not target:
+                        print('Użycie: open N  (numer wiersza z `usage`) lub open pid:NNNN', flush=True)
+                        continue
+                    opened = usage.scan(root, registry=registry, machine=args.machine,
+                                        all_users=args.all_users)
+                    print(opener.open_target(opened['agents'], target)[1], flush=True)
                     continue
                 show_report(command_name)
         if console is not None and args.mode == 'watch' and sys.stdout.isatty():
