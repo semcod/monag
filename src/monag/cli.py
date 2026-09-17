@@ -169,7 +169,7 @@ def main(argv=None):
     parser.add_argument('--state-dir', type=Path, default=Path(os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state'))) / 'monag')
     parser.add_argument('--depth', type=int, default=2, help='repository discovery depth (default: owner/repo)')
     parser.add_argument('--hours', type=float, default=24)
-    parser.add_argument('--limit', type=int, default=12, help='rows per section; JSON includes all observed rows')
+    parser.add_argument('--limit', type=int, default=30, help='rows per section; JSON includes all observed rows')
     parser.add_argument('--github', action='store_true', help='read issues/PRs through authenticated gh; cache for 120s')
     parser.add_argument('--machine', action='store_true', help='include agent processes outside --root')
     parser.add_argument('--all-users', action='store_true', help='include accessible processes of other users')
