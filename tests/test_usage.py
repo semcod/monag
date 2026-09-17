@@ -157,12 +157,42 @@ class UsageTests(unittest.TestCase):
         self.assertIn('## Agents', document)
         self.assertIn('## Account usage', document)
         self.assertIn('## Provider accounts', document)
-        self.assertIn('| Provider | Remaining | Renewal |', document)
+        self.assertIn('| Provider | Account | Remaining | Renewal |', document)
         text = usage.render(data)
         self.assertIn('MONAG USAGE', text)
         self.assertIn('PROVIDERS', text)
+        self.assertIn('ACCOUNT', text)
         self.assertIn('ACCOUNTS', text)
         self.assertIn('github', text)
+
+    def test_ledger_explicit_account(self):
+        proc = self.fake_proc()
+        cwd = self.root / 'workspace'
+        cwd.mkdir()
+        state = self.root / 'state'
+        self.ledger(state, account='team@example.com')
+        data = usage.scan(cwd, proc=proc, ledgers=[str(state)])
+        self.assertEqual(len(data['ledgers']), 1)
+        self.assertEqual(data['ledgers'][0]['account'], 'team@example.com')
+        text = usage.render(data)
+        self.assertIn('team@example.com', text)
+        doc = usage.markdown(data)
+        self.assertIn('team@example\\.com', doc)
+
+    def test_detect_provider_account_from_home(self):
+        fake_home = self.root / 'fakehome'
+        fake_home.mkdir()
+        # Fake .gemini/google_accounts.json
+        gemini_dir = fake_home / '.gemini'
+        gemini_dir.mkdir()
+        (gemini_dir / 'google_accounts.json').write_text(json.dumps({'active': 'user@google.com'}))
+        self.assertEqual(usage.detect_provider_account('agy', home=fake_home), 'user@google.com')
+
+        # Fake .claude.json
+        (fake_home / '.claude.json').write_text(json.dumps({
+            'oauthAccount': {'emailAddress': 'user@claude.ai'}
+        }))
+        self.assertEqual(usage.detect_provider_account('claude', home=fake_home), 'user@claude.ai')
 
     def test_default_ledgers_discovery(self):
         state = self.root / 'ledgers'

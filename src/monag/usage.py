@@ -3,6 +3,7 @@
 Nothing here writes, reads prompts or environment variables, or guesses state;
 every row cites the exact observation source.
 """
+import base64
 from datetime import datetime, timezone
 import json
 import os
@@ -17,6 +18,54 @@ LEDGER_SCHEMA = 'subactor.api-budget-state/v1'
 DOCKER_MARKER = 'MONAG-FILE:'
 # Depth-1 data roots inside a container; keeps the exec bounded and read-only.
 DOCKER_GLOBS = '/app/data/*/api-budget-*.json /app/api-budget-*.json'
+
+
+def detect_provider_account(provider, home=None):
+    """Best-effort discovery of logged-in account email for known CLI providers."""
+    base = Path(home).expanduser() if home else Path.home()
+    try:
+        if provider in ('codex', 'openai'):
+            codex_auth = base / '.codex' / 'auth.json'
+            if codex_auth.is_file():
+                data = json.loads(codex_auth.read_text())
+                id_token = data.get('tokens', {}).get('id_token')
+                if id_token and '.' in id_token:
+                    payload = id_token.split('.')[1]
+                    payload += '=' * (-len(payload) % 4)
+                    claims = json.loads(base64.b64decode(payload).decode('utf-8', errors='ignore'))
+                    if claims.get('email'):
+                        return claims['email']
+        elif provider in ('claude', 'anthropic'):
+            claude_json = base / '.claude.json'
+            if claude_json.is_file():
+                data = json.loads(claude_json.read_text())
+                email = data.get('oauthAccount', {}).get('emailAddress')
+                if email:
+                    return email
+                org = data.get('organizationName') or ''
+                if '@' in org:
+                    return org.split("'s")[0].strip()
+        elif provider in ('agy', 'gemini', 'google'):
+            gacc = base / '.gemini' / 'google_accounts.json'
+            if gacc.is_file():
+                data = json.loads(gacc.read_text())
+                if data.get('active'):
+                    return data['active']
+        elif provider == 'cursor':
+            cursor_dir = base / '.config' / 'Cursor' / 'User' / 'globalStorage'
+            cursor_db = cursor_dir / 'state.vscdb'
+            if cursor_db.is_file():
+                import sqlite3
+                con = sqlite3.connect(str(cursor_db))
+                cur = con.cursor()
+                cur.execute("SELECT value FROM ItemTable WHERE key = 'cursorAuth/cachedEmail' LIMIT 1;")
+                row = cur.fetchone()
+                con.close()
+                if row and row[0]:
+                    return row[0]
+    except Exception:
+        pass
+    return None
 
 
 def resident_bytes(pid, proc=Path('/proc')):
@@ -46,7 +95,7 @@ def uptime_seconds(row, proc, now=None):
     return round((now or time.time()) - boot - int(row['start']) / os.sysconf('SC_CLK_TCK'))
 
 
-def ledger_record(source, path, text):
+def ledger_record(source, path, text, home=None):
     """Normalize one api-budget state document; malformed input is an error row."""
     try:
         row = json.loads(text)
@@ -55,7 +104,12 @@ def ledger_record(source, path, text):
     if not isinstance(row, dict) or row.get('schema') != LEDGER_SCHEMA:
         return None, f'{source}: {path}: not a {LEDGER_SCHEMA} document'
     reset_at = row.get('reset_at')
-    return {'provider': row.get('provider', 'unknown'),
+    provider = row.get('provider', 'unknown')
+    account = row.get('account') or row.get('email')
+    if not account:
+        account = detect_provider_account(provider, home=home)
+    return {'provider': provider,
+            'account': str(account) if account is not None else None,
             'remaining': row.get('remaining') if isinstance(row.get('remaining'), (int, float)) else None,
             'reset_at': reset_at if isinstance(reset_at, (int, float)) else None,
             'reset_in_seconds': (round(reset_at - time.time())
@@ -93,7 +147,7 @@ def _docker_auto():
     return [name.strip() for name in out.splitlines() if 'coordinator' in name], []
 
 
-def read_ledgers(source):
+def read_ledgers(source, home=None):
     """One --ledger source: a file, a directory of ledgers, or docker:NAME|auto."""
     rows, errors = [], []
     if source.startswith('docker:'):
@@ -105,7 +159,7 @@ def read_ledgers(source):
             documents, err = _docker_ledgers(name)
             errors += err
             for path, text in documents:
-                row, problem = ledger_record(f'docker:{name}', path, text)
+                row, problem = ledger_record(f'docker:{name}', path, text, home=home)
                 (rows.append(row) if row else errors.append(problem))
         return rows, errors
     path = Path(source).expanduser()
@@ -118,7 +172,7 @@ def read_ledgers(source):
         except OSError as e:
             errors.append(f'{file}: {type(e).__name__}')
             continue
-        row, problem = ledger_record(source, str(file), text)
+        row, problem = ledger_record(source, str(file), text, home=home)
         (rows.append(row) if row else errors.append(problem))
     return rows, errors
 
@@ -143,7 +197,7 @@ def default_ledgers(enabled=True, ignore_env=False):
     return discovered
 
 
-def scan(root, registry=None, machine=False, all_users=False, ledgers=(), proc=Path('/proc')):
+def scan(root, registry=None, machine=False, all_users=False, ledgers=(), proc=Path('/proc'), home=None):
     """One usage observation: agent tree resources plus declared ledger sources."""
     started = time.monotonic()
     agents, denied = processes(root, proc=proc, registry=registry,
@@ -158,7 +212,7 @@ def scan(root, registry=None, machine=False, all_users=False, ledgers=(), proc=P
     sources = list(ledgers) if ledgers else default_ledgers(enabled=(proc == Path('/proc')))
     ledger_rows, errors = [], []
     for source in sources:
-        rows, err = read_ledgers(source)
+        rows, err = read_ledgers(source, home=home)
         ledger_rows += rows
         errors += err
     return {'root': str(root), 'observed_at': datetime.now(timezone.utc).isoformat(),
@@ -211,14 +265,16 @@ def markdown(data, limit=12):
     if len(data['agents']) > limit:
         parts.append(f"{len(data['agents']) - limit} additional agents; increase --limit.\n")
     parts += ['## Account usage\n',
-              table(['Provider', 'Remaining', 'Reset', 'Last decision', 'Observed', 'Source'],
-                    ([r['provider'], '—' if r['remaining'] is None else int(r['remaining']),
+              table(['Provider', 'Account', 'Remaining', 'Reset', 'Last decision', 'Observed', 'Source'],
+                    ([r['provider'], r.get('account') or '—',
+                      '—' if r['remaining'] is None else int(r['remaining']),
                       reset_cell(r), r.get('last_decision') or '—',
                       (r.get('observed_at') or '—')[:19], r['source']] for r in data['ledgers']))]
     if data['ledgers']:
         parts += ['\n## Provider accounts\n',
-                  table(['Provider', 'Remaining', 'Renewal'],
-                        ([r['provider'], '—' if r['remaining'] is None else int(r['remaining']),
+                  table(['Provider', 'Account', 'Remaining', 'Renewal'],
+                        ([r['provider'], r.get('account') or '—',
+                          '—' if r['remaining'] is None else int(r['remaining']),
                           reset_cell(r)] for r in data['ledgers']))]
     if not data['ledgers']:
         parts.append('Declare ledgers with `--ledger PATH` or `--ledger docker:NAME` '
@@ -244,14 +300,16 @@ def render(data, limit=12):
     if data['agents']:
         lines.append('  open a row: monag open N[t|b|d|o|p]  (pid:NNNN also works)')
     if data['ledgers']:
-        lines += ['', 'PROVIDERS   PROVIDER     REMAINING  RENEWAL']
+        lines += ['', 'PROVIDERS   PROVIDER     ACCOUNT                        REMAINING  RENEWAL']
         for row in data['ledgers']:
             remaining = '—' if row['remaining'] is None else str(int(row['remaining']))
-            lines.append(f"  {row['provider']:<11} {remaining:>9}  {reset_cell(row)}")
-        lines += ['', 'ACCOUNTS PROVIDER     REMAINING  RESET              LAST DECISION                   SOURCE']
+            account = row.get('account') or '—'
+            lines.append(f"  {row['provider']:<11} {account:<30} {remaining:>9}  {reset_cell(row)}")
+        lines += ['', 'ACCOUNTS PROVIDER     ACCOUNT                        REMAINING  RESET              LAST DECISION                   SOURCE']
         for row in data['ledgers']:
             remaining = '—' if row['remaining'] is None else str(int(row['remaining']))
-            lines.append(f"  {row['provider']:<11} {remaining:>9} {reset_cell(row):<18} "
+            account = row.get('account') or '—'
+            lines.append(f"  {row['provider']:<11} {account:<30} {remaining:>9} {reset_cell(row):<18} "
                          f"{(row.get('last_decision') or '—'):<31} {row['source']}")
     else:
         lines += ['', 'ACCOUNTS  none observed — declare --ledger PATH or --ledger docker:NAME (docker:auto scans coordinators)']
