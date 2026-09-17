@@ -1,0 +1,29 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-037",
+  "summary": "open agent session from usage list",
+  "workstream": "application",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-037/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/opener.py",
+    "src/monag/usage.py",
+    "src/monag/cli.py",
+    "tests/test_opener.py",
+    "tests/test_usage.py",
+    "tests/test_activity.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}

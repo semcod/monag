@@ -182,10 +182,11 @@ def markdown(data, limit=12):
     parts = ['# MONAG · Usage\n',
              f"{clean(data['observed_at'][:19])} · {clean(data['root'])}\n",
              '## Agents\n',
-             table(['PID', 'Agent', 'State', 'CPU total', 'Memory', 'Uptime', 'Children', 'Directory', 'Task'],
-                   ([a['pid'], a['kind'], a['state'], f"{a.get('cpu_seconds_tree') or 0:.0f}s",
+             table(['#', 'PID', 'Agent', 'State', 'CPU total', 'Memory', 'Uptime', 'Children', 'Directory', 'Task'],
+                   ([i + 1, a['pid'], a['kind'], a['state'], f"{a.get('cpu_seconds_tree') or 0:.0f}s",
                      human_bytes(a.get('rss_bytes')), human_duration(a.get('uptime_seconds')),
-                     a['children'], a['cwd'], a.get('task', '—')] for a in data['agents'][:limit]))]
+                     a['children'], a['cwd'], a.get('task', '—')]
+                    for i, a in enumerate(data['agents'][:limit])))]
     if len(data['agents']) > limit:
         parts.append(f"{len(data['agents']) - limit} additional agents; increase --limit.\n")
     parts += ['## Account usage\n',
@@ -204,9 +205,9 @@ def markdown(data, limit=12):
 def render(data, limit=12):
     lines = [f"MONAG USAGE | {data['agent_count']} agents | {len(data['ledgers'])} ledgers | {data['observed_at'][:19]}",
              f"{data['root']} | scan {data['duration_seconds']}s", '',
-             'AGENTS   PID       KIND           STATE  CPU TOTAL    MEMORY     UPTIME   CHILDREN  DIRECTORY']
-    for agent in data['agents'][:limit]:
-        lines.append(f"  {agent['pid']:<9} {agent['kind']:<14} {agent['state']:<6} "
+             'AGENTS   #   PID       KIND           STATE  CPU TOTAL    MEMORY     UPTIME   CHILDREN  DIRECTORY']
+    for index, agent in enumerate(data['agents'][:limit]):
+        lines.append(f"  {index + 1:<3} {agent['pid']:<9} {agent['kind']:<14} {agent['state']:<6} "
                      f"{(agent.get('cpu_seconds_tree') or 0):>8.0f}s {human_bytes(agent.get('rss_bytes')):>10} "
                      f"{human_duration(agent.get('uptime_seconds')):>9} {agent['children']:>8}  {agent['cwd']}")
         task = agent.get('task')
@@ -214,6 +215,8 @@ def render(data, limit=12):
             lines.append(f"    task: {task}")
     if len(data['agents']) > limit:
         lines.append(f"  … {len(data['agents']) - limit} more agents; increase --limit")
+    if data['agents']:
+        lines.append('  open a row: monag open N  (pid:NNNN or --browser also work)')
     if data['ledgers']:
         lines += ['', 'ACCOUNTS PROVIDER     REMAINING  RESET              LAST DECISION                   SOURCE']
         for row in data['ledgers']:
