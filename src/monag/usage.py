@@ -108,9 +108,13 @@ def ledger_record(source, path, text, home=None):
     account = row.get('account') or row.get('email')
     if not account:
         account = detect_provider_account(provider, home=home)
+    balance = row.get('balance')
+    if balance is None:
+        balance = row.get('balance_text')
     return {'provider': provider,
             'account': str(account) if account is not None else None,
             'remaining': row.get('remaining') if isinstance(row.get('remaining'), (int, float)) else None,
+            'balance': str(balance) if balance is not None else None,
             'reset_at': reset_at if isinstance(reset_at, (int, float)) else None,
             'reset_in_seconds': (round(reset_at - time.time())
                                  if isinstance(reset_at, (int, float)) else None),
@@ -267,16 +271,18 @@ def markdown(data, limit=12):
     if data['agents']:
         parts.append('*open a row: `monag open N[t|b|d|o|p]` (pid:NNNN also works)*\n')
     parts += ['## Account usage\n',
-              table(['Provider', 'Account', 'Remaining', 'Reset', 'Last decision', 'Observed', 'Source'],
+              table(['Provider', 'Account', 'Remaining', 'Balance', 'Reset', 'Last decision', 'Observed', 'Source'],
                     ([r['provider'], r.get('account') or '—',
                       '—' if r['remaining'] is None else int(r['remaining']),
+                      r.get('balance') or '—',
                       reset_cell(r), r.get('last_decision') or '—',
                       (r.get('observed_at') or '—')[:19], r['source']] for r in data['ledgers']))]
     if data['ledgers']:
         parts += ['\n## Provider accounts\n',
-                  table(['Provider', 'Account', 'Remaining', 'Renewal'],
+                  table(['Provider', 'Account', 'Remaining', 'Balance', 'Renewal'],
                         ([r['provider'], r.get('account') or '—',
                           '—' if r['remaining'] is None else int(r['remaining']),
+                          r.get('balance') or '—',
                           reset_cell(r)] for r in data['ledgers']))]
     if not data['ledgers']:
         parts.append('Declare ledgers with `--ledger PATH` or `--ledger docker:NAME` '
@@ -302,16 +308,18 @@ def render(data, limit=12):
     if data['agents']:
         lines.append('  open a row: monag open N[t|b|d|o|p]  (pid:NNNN also works)')
     if data['ledgers']:
-        lines += ['', 'PROVIDERS   PROVIDER     ACCOUNT                        REMAINING  RENEWAL']
+        lines += ['', 'PROVIDERS   PROVIDER     ACCOUNT                        REMAINING  BALANCE       RENEWAL']
         for row in data['ledgers']:
             remaining = '—' if row['remaining'] is None else str(int(row['remaining']))
             account = row.get('account') or '—'
-            lines.append(f"  {row['provider']:<11} {account:<30} {remaining:>9}  {reset_cell(row)}")
-        lines += ['', 'ACCOUNTS PROVIDER     ACCOUNT                        REMAINING  RESET              LAST DECISION                   SOURCE']
+            balance = row.get('balance') or '—'
+            lines.append(f"  {row['provider']:<11} {account:<30} {remaining:>9}  {balance:<12}  {reset_cell(row)}")
+        lines += ['', 'ACCOUNTS PROVIDER     ACCOUNT                        REMAINING  BALANCE       RESET              LAST DECISION                   SOURCE']
         for row in data['ledgers']:
             remaining = '—' if row['remaining'] is None else str(int(row['remaining']))
             account = row.get('account') or '—'
-            lines.append(f"  {row['provider']:<11} {account:<30} {remaining:>9} {reset_cell(row):<18} "
+            balance = row.get('balance') or '—'
+            lines.append(f"  {row['provider']:<11} {account:<30} {remaining:>9}  {balance:<12} {reset_cell(row):<18} "
                          f"{(row.get('last_decision') or '—'):<31} {row['source']}")
     else:
         lines += ['', 'ACCOUNTS  none observed — declare --ledger PATH or --ledger docker:NAME (docker:auto scans coordinators)']
