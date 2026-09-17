@@ -22,6 +22,7 @@ from . import presentation
 SHELL_COMMANDS = {
     'refresh': 'odśwież status i backlog Planfile',
     'status': 'pokaż jeden snapshot agentów i checkoutów',
+    'usage': 'pokaż tabelę zużycia agentów i kont',
     'resume': 'pokaż worktree, lease i otwarte tickety Planfile',
     'audit': 'porównaj lokalne tickety Planfile z GitHub Issues',
     'catalog': 'pokaż lokalny katalog projektów',
@@ -185,6 +186,12 @@ def main(argv=None):
     status = sub.add_parser('status', help='one snapshot and exit')
     status.add_argument('--record', action='store_true', help='save changes to local history')
     sub.add_parser('doctor', help='diagnose dependencies and process visibility')
+    usage_parser = sub.add_parser('usage', help='read-only table of agent process usage '
+                                              'and api-budget account ledgers')
+    usage_parser.add_argument('--ledger', action='append', default=[], metavar='SOURCE',
+                              help='api-budget ledger source; repeatable: a state file, a directory '
+                                   'of api-budget-*.json, docker:CONTAINER or docker:auto '
+                                   '(coordinator containers on this host)')
     resume_parser = sub.add_parser('resume', help='read-only restart inventory of worktrees and local Planfile backlog')
     resume_parser.add_argument('--sort', choices=['backlog', 'priority', 'changes'], default='backlog',
                                help='project ranking (priority uses highest remaining Planfile priority)')
@@ -297,6 +304,17 @@ def main(argv=None):
         root = args.root.expanduser().resolve(strict=True)
         if not root.is_dir():
             parser.error('--root must be a directory')
+        if args.mode == 'usage':
+            from . import usage
+            data = usage.scan(root, registry=registry, machine=args.machine,
+                              all_users=args.all_users, ledgers=args.ledger)
+            if output_format == 'json':
+                print(json.dumps(data, ensure_ascii=True))
+            elif output_format in {'terminal', 'markdown'}:
+                display_report(usage.markdown(data, args.limit))
+            else:
+                print(usage.render(data, args.limit))
+            return 0
         if args.mode == 'resume':
             from . import resume
             if output_format != 'json' and sys.stderr.isatty():
@@ -412,6 +430,17 @@ def main(argv=None):
                         print(json.dumps(data, ensure_ascii=True), flush=True)
                     else:
                         display_report(catalog.markdown(data, args.limit))
+                elif command_name == 'usage':
+                    from . import usage
+                    data = usage.scan(root, registry=registry, machine=args.machine,
+                                      all_users=args.all_users,
+                                      ledgers=getattr(args, 'ledger', []))
+                    if output_format == 'json':
+                        print(json.dumps(data, ensure_ascii=True), flush=True)
+                    elif output_format in {'terminal', 'markdown'}:
+                        display_report(usage.markdown(data, args.limit))
+                    else:
+                        print(usage.render(data, args.limit), flush=True)
                 elif command_name == 'history':
                     data = history.read(args.state_dir, args.limit, None, None, args.hours)
                     if output_format == 'json':
