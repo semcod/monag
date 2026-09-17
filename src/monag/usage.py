@@ -123,6 +123,26 @@ def read_ledgers(source):
     return rows, errors
 
 
+DEFAULT_LEDGER_DIRS = (
+    Path('~/.config/subllm/ledgers'),
+    Path('~/.subllm/ledgers'),
+)
+
+
+def default_ledgers(enabled=True, ignore_env=False):
+    """Discover local ledger paths when available outside test fixtures."""
+    if not enabled:
+        return []
+    if not ignore_env and (os.getenv('MONAG_NO_DEFAULT_LEDGERS') or os.getenv('PYTEST_CURRENT_TEST')):
+        return []
+    discovered = []
+    for d in DEFAULT_LEDGER_DIRS:
+        expanded = Path(d).expanduser()
+        if expanded.is_dir() and any(expanded.glob(LEDGER_GLOB)):
+            discovered.append(str(expanded))
+    return discovered
+
+
 def scan(root, registry=None, machine=False, all_users=False, ledgers=(), proc=Path('/proc')):
     """One usage observation: agent tree resources plus declared ledger sources."""
     started = time.monotonic()
@@ -135,8 +155,9 @@ def scan(root, registry=None, machine=False, all_users=False, ledgers=(), proc=P
         agent['rss_bytes'] = sum(r for r in rss if r is not None) if any(r is not None for r in rss) else None
         agent['uptime_seconds'] = uptime_seconds(agent, proc, now)
     agents.sort(key=lambda a: -(a.get('cpu_seconds_tree') or 0))
+    sources = list(ledgers) if ledgers else default_ledgers(enabled=(proc == Path('/proc')))
     ledger_rows, errors = [], []
-    for source in ledgers:
+    for source in sources:
         rows, err = read_ledgers(source)
         ledger_rows += rows
         errors += err
@@ -194,6 +215,11 @@ def markdown(data, limit=12):
                     ([r['provider'], '—' if r['remaining'] is None else int(r['remaining']),
                       reset_cell(r), r.get('last_decision') or '—',
                       (r.get('observed_at') or '—')[:19], r['source']] for r in data['ledgers']))]
+    if data['ledgers']:
+        parts += ['\n## Provider accounts\n',
+                  table(['Provider', 'Remaining', 'Renewal'],
+                        ([r['provider'], '—' if r['remaining'] is None else int(r['remaining']),
+                          reset_cell(r)] for r in data['ledgers']))]
     if not data['ledgers']:
         parts.append('Declare ledgers with `--ledger PATH` or `--ledger docker:NAME` '
                      '(`docker:auto` scans coordinator containers).\n')
@@ -218,6 +244,10 @@ def render(data, limit=12):
     if data['agents']:
         lines.append('  open a row: monag open N[t|b|d|o|p]  (pid:NNNN also works)')
     if data['ledgers']:
+        lines += ['', 'PROVIDERS   PROVIDER     REMAINING  RENEWAL']
+        for row in data['ledgers']:
+            remaining = '—' if row['remaining'] is None else str(int(row['remaining']))
+            lines.append(f"  {row['provider']:<11} {remaining:>9}  {reset_cell(row)}")
         lines += ['', 'ACCOUNTS PROVIDER     REMAINING  RESET              LAST DECISION                   SOURCE']
         for row in data['ledgers']:
             remaining = '—' if row['remaining'] is None else str(int(row['remaining']))

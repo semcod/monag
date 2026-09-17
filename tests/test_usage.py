@@ -156,11 +156,20 @@ class UsageTests(unittest.TestCase):
         document = usage.markdown(data)
         self.assertIn('## Agents', document)
         self.assertIn('## Account usage', document)
-        self.assertIn('| Provider | Remaining |', document)
+        self.assertIn('## Provider accounts', document)
+        self.assertIn('| Provider | Remaining | Renewal |', document)
         text = usage.render(data)
         self.assertIn('MONAG USAGE', text)
+        self.assertIn('PROVIDERS', text)
         self.assertIn('ACCOUNTS', text)
         self.assertIn('github', text)
+
+    def test_default_ledgers_discovery(self):
+        state = self.root / 'ledgers'
+        self.ledger(state)
+        with patch('monag.usage.DEFAULT_LEDGER_DIRS', (state,)):
+            discovered = usage.default_ledgers(enabled=True, ignore_env=True)
+            self.assertEqual(discovered, [str(state)])
 
 
 if __name__ == '__main__':
