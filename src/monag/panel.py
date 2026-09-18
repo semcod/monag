@@ -232,8 +232,8 @@ def make_handler(state):
                     self._send(json.dumps({'error': 'query required in q or query param'}).encode(),
                               'application/json; charset=utf-8', status=400)
                     return
-                from . import dsl
-                result = dsl.execute(q, state.root, depth=state.depth, registry=state.registry)
+                from . import dsl_llm
+                result = dsl_llm.execute(q, state.root, depth=state.depth, registry=state.registry)
                 self._send(json.dumps(result, ensure_ascii=True).encode(), 'application/json; charset=utf-8')
                 return
             handler = ROUTES.get(parsed.path)
@@ -265,12 +265,12 @@ def make_handler(state):
                     self._send(json.dumps({'error': 'query or nl field required in body'}).encode(),
                               'application/json; charset=utf-8', status=400)
                     return
-                from . import dsl
-                result = dsl.execute(q, state.root, depth=state.depth, registry=state.registry)
+                from . import dsl_llm
+                result = dsl_llm.execute(q, state.root, depth=state.depth, registry=state.registry)
                 self._send(json.dumps(result, ensure_ascii=True).encode(), 'application/json; charset=utf-8')
                 return
             self._send(json.dumps({'error': 'method not allowed'}).encode(),
-                      'application/json; charset=utf-8', status=405)
+                       'application/json; charset=utf-8', status=405)
     return Handler
 
 
