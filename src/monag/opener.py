@@ -113,6 +113,7 @@ def pick(agents, target):
 
 AGY_CONVERSATION = re.compile(r'/conversations/([0-9a-f-]{36})\.db$')
 AGY_KINDS = {'agy', 'agy2', 'agy-coding-agent'}
+CODEX_ROLLOUT = re.compile(r'/sessions/[0-9/]*rollout-[^/]*-([0-9a-f-]{36})\.jsonl$')
 
 
 def _fd_targets(pid, proc='/proc'):
@@ -220,6 +221,12 @@ def session_argv(agent, proc='/proc', home=None):
         return _claude_session(agent, home=home)
     if kind == 'opencode':
         return _opencode_session(agent, home=home)
+    if kind == 'codex':
+        for target in _fd_targets(agent['pid'], proc=proc):
+            match = CODEX_ROLLOUT.search(target or '')
+            if match:
+                return ['codex', 'resume', match.group(1)]
+        return None
     return None
 
 
