@@ -28,6 +28,7 @@ SHELL_COMMANDS = {
     'audit': 'porównaj lokalne tickety Planfile z GitHub Issues',
     'prs': 'sprawdź status Pull Requestów i gałęzi (open/merged)',
     'pr': 'alias dla prs',
+    'merge': 'scal Pull Request (merge N, merge URL lub merge --all)',
     'query': 'zapytanie w języku naturalnym (PL/EN) lub DSL (OBSERVE ...)',
     'catalog': 'pokaż lokalny katalog projektów',
     'history': 'pokaż zapisane obserwacje',
@@ -249,6 +250,27 @@ def main(argv=None):
                             help='query GitHub PRs for all discovered repositories under --root, ignoring recency filter')
     prs_parser.add_argument('--pr-limit', type=int, default=200,
                             help='maximum PRs to fetch per repository via gh (default: 200)')
+    prs_parser.add_argument('--merge', action='store_true',
+                            help='merge open Pull Requests observed in scan')
+    prs_parser.add_argument('--merge-pr', dest='merge_pr', default=None, metavar='TARGET',
+                            help='merge a specific Pull Request (PR number, repo#number, or full GitHub PR URL)')
+    prs_parser.add_argument('--method', choices=['squash', 'merge', 'rebase'], default='squash',
+                            help='merge strategy to apply (default: squash)')
+    prs_parser.add_argument('--bypass', action='store_true', default=True,
+                            help='bypass branch protection rules if permissions allow (default: True)')
+    prs_parser.add_argument('--browser', action='store_true',
+                            help='use Browser CDP instead of gh CLI')
+    merge_parser = sub.add_parser('merge', help='merge a GitHub Pull Request via gh or browser CDP')
+    merge_parser.add_argument('target', nargs='?', default=None,
+                             help='PR number, repo#number, or full GitHub PR URL')
+    merge_parser.add_argument('--all', dest='merge_all', action='store_true',
+                             help='merge all open PRs in active repositories')
+    merge_parser.add_argument('--method', choices=['squash', 'merge', 'rebase'], default='squash',
+                             help='merge strategy (default: squash)')
+    merge_parser.add_argument('--bypass', action='store_true', default=True,
+                             help='bypass rules if permissions allow')
+    merge_parser.add_argument('--browser', action='store_true',
+                             help='use browser CDP')
     sub.add_parser('mcp', help='run Model Context Protocol (MCP) server over stdio for AI agents')
     query_parser = sub.add_parser('query', aliases=['ask'],
                                   help='execute a natural language query or OBSERVE DSL command')
@@ -417,8 +439,71 @@ def main(argv=None):
             else:
                 display_report(audit.markdown(data, args.limit))
             return 0
+        if args.mode == 'merge':
+            from . import prs
+            target = getattr(args, 'target', None)
+            if getattr(args, 'merge_all', False) or (target and target.lower() in ('--all', 'all')):
+                if output_format != 'json' and sys.stderr.isatty():
+                    print('MONAG: merging all open pull requests across active repositories...',
+                          file=sys.stderr, flush=True)
+                data = prs.scan(root, args.depth,
+                                hours=getattr(args, 'hours', 24.0),
+                                state='open',
+                                pr_limit=200,
+                                unpushed_only=False,
+                                all_repos=False)
+                results = prs.merge_open_prs(data.get('open_prs', []),
+                                             method=getattr(args, 'method', 'squash'),
+                                             admin_bypass=getattr(args, 'bypass', True),
+                                             use_browser=getattr(args, 'browser', False))
+                if output_format == 'json':
+                    print(json.dumps({'merged': results}, ensure_ascii=True))
+                else:
+                    display_report(prs.merge_result_markdown(results))
+                return 0
+            if not target:
+                parser.error('target PR number or full URL required (or use --all)')
+            res = prs.merge_pull_request(target, method=getattr(args, 'method', 'squash'),
+                                         admin_bypass=getattr(args, 'bypass', True),
+                                         use_browser=getattr(args, 'browser', False))
+            if output_format == 'json':
+                print(json.dumps(res, ensure_ascii=True))
+            else:
+                display_report(prs.merge_result_markdown([res]))
+            return 0 if res.get('ok') else 1
+
         if args.mode in ('prs', 'pr'):
             from . import prs
+            if getattr(args, 'merge_pr', None):
+                res = prs.merge_pull_request(args.merge_pr,
+                                             method=getattr(args, 'method', 'squash'),
+                                             admin_bypass=getattr(args, 'bypass', True),
+                                             use_browser=getattr(args, 'browser', False))
+                if output_format == 'json':
+                    print(json.dumps(res, ensure_ascii=True))
+                else:
+                    display_report(prs.merge_result_markdown([res]))
+                return 0 if res.get('ok') else 1
+
+            if getattr(args, 'merge', False):
+                if output_format != 'json' and sys.stderr.isatty():
+                    print('MONAG: auditing and merging open pull requests...', file=sys.stderr, flush=True)
+                data = prs.scan(root, args.depth,
+                                hours=getattr(args, 'hours', 24.0),
+                                state='open',
+                                pr_limit=getattr(args, 'pr_limit', 200),
+                                unpushed_only=False,
+                                all_repos=getattr(args, 'all_repos', False))
+                results = prs.merge_open_prs(data.get('open_prs', []),
+                                             method=getattr(args, 'method', 'squash'),
+                                             admin_bypass=getattr(args, 'bypass', True),
+                                             use_browser=getattr(args, 'browser', False))
+                if output_format == 'json':
+                    print(json.dumps({'merged': results}, ensure_ascii=True))
+                else:
+                    display_report(prs.merge_result_markdown(results))
+                return 0
+
             if output_format != 'json' and sys.stderr.isatty():
                 print('MONAG: auditing pull requests and local branches via gh; this can take a while.',
                       file=sys.stderr, flush=True)
@@ -628,6 +713,18 @@ def main(argv=None):
                     else:
                         print(opener.open_interactive(opened['agents'],
                                                       limit=args.limit or None)[1], flush=True)
+                    continue
+                if command_name == 'merge':
+                    from . import prs
+                    parts = command_line.split(maxsplit=1)
+                    target = parts[1].strip() if len(parts) > 1 else ''
+                    if not target or target.lower() in ('all', '--all'):
+                        data = prs.scan(root, args.depth, hours=args.hours, state='open', pr_limit=200)
+                        results = prs.merge_open_prs(data.get('open_prs', []))
+                        display_report(prs.merge_result_markdown(results))
+                    else:
+                        res = prs.merge_pull_request(target)
+                        display_report(prs.merge_result_markdown([res]))
                     continue
                 show_report(command_name)
         if console is not None and args.mode == 'watch' and sys.stdout.isatty():
