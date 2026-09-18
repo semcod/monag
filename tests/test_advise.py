@@ -141,3 +141,24 @@ def test_panel_advise_route(tmp_path):
         advise_fn = panel.ROUTES['/api/advise.json']
         res = advise_fn(state)
         assert res['schema'] == 'monag.advisory/v1'
+
+
+def test_advise_reuse_export_data(tmp_path):
+    cached_candidates = [{'origin': 'test', 'repo': 'autogrammar/intract', 'title': 'Fix schema contract', 'priority': 'high'}]
+    cached_export = {'candidates': cached_candidates}
+
+    with mock.patch('monag.export.scan') as mock_scan, \
+         mock.patch('monag.advise.collect_reflex_patterns', return_value={'available': False}):
+
+        res = advise.advise(tmp_path, export_data=cached_export, limit=5)
+        mock_scan.assert_not_called()
+        assert len(res['recommendations']) == 1
+        assert res['recommendations'][0]['target'] == 'autogrammar/intract'
+        assert any('intract' in g.lower() for g in res['recommendations'][0]['guardrails'])
+
+
+def test_synthesize_guidelines_autogrammar_contract():
+    candidate = {'origin': 'test', 'repo': 'autogrammar/intract', 'title': 'Contract drift', 'description': 'schema mismatch'}
+    guidelines = advise.synthesize_guidelines(candidate, ['contract-schema-drift'])
+    assert any('intract' in g.lower() or 'code2schema' in g.lower() for g in guidelines['guardrails'])
+

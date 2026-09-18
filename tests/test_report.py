@@ -312,5 +312,43 @@ def test_cli_report_dry_run_parses(tmp_path):
             'status': {'agent_count': 0, 'agents': [], 'repositories': []},
         }, 'errors': [],
     }):
-        rc = main(['--root', str(tmp_path), '--plain', 'report', '--dry-run'])
+        rc = main(['--root', str(tmp_path), '--plain', 'report', '--dry-run', '--advisory-limit', '3'])
         assert rc == 0
+
+
+def test_collect_advise_section(tmp_path):
+    mock_export = {'candidates': [{'repo': 'subactor/test', 'title': 'Test task'}]}
+    mock_advise = {'schema': 'monag.advisory/v1', 'recommendations': []}
+
+    with mock.patch('monag.export.scan', return_value=mock_export) as scan_mock, \
+         mock.patch('monag.advise.advise', return_value=mock_advise) as advise_mock:
+
+        data = report.collect(tmp_path, sections=['export', 'advise'], advisory_limit=3)
+
+    assert 'export' in data['sections']
+    assert 'advise' in data['sections']
+    advise_mock.assert_called_once_with(
+        tmp_path, depth=2, issue_limit=200, limit=3,
+        export_data=mock_export, state_dir=None)
+
+
+def test_format_section_advise():
+    data = {
+        'summary': '2 rekomendowane zadania',
+        'recommendations': [
+            {
+                'score': 95,
+                'target': 'subactor/onedev-agent',
+                'title': 'Move pins to config',
+                'matched_risks': ['dependency-drift'],
+                'action': 'Rozpocznij ticket',
+                'guardrails': ['Sprawdź konsumentów downstream'],
+            }
+        ]
+    }
+    rendered = report.format_section_advise(data)
+    assert '2 rekomendowane zadania' in rendered
+    assert 'subactor/onedev-agent' in rendered
+    assert '95' in rendered
+    assert 'Sprawdź konsumentów downstream' in rendered
+

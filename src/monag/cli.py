@@ -299,7 +299,9 @@ def main(argv=None):
                                metavar='ADDR', help='recipient email address; repeatable')
     report_parser.add_argument('--sections', dest='report_sections', default=None,
                                help='comma-separated list of sections to include '
-                                    '(status,prs,audit,resume,export); default: all')
+                                    '(status,prs,audit,resume,export,advise); default: all')
+    report_parser.add_argument('--advisory-limit', dest='advisory_limit', type=int, default=5,
+                               help='number of recommendations to include in the advise section (default: 5)')
     report_parser.add_argument('--smtp-host', dest='smtp_host', default=None,
                                help='SMTP server hostname (env: MONAG_SMTP_HOST, default: localhost)')
     report_parser.add_argument('--smtp-port', dest='smtp_port', type=int, default=None,
@@ -617,12 +619,12 @@ def main(argv=None):
             if getattr(args, 'report_sections', None):
                 sections = [s.strip() for s in args.report_sections.split(',')]
             if output_format != 'json' and sys.stderr.isatty():
-                print('MONAG: collecting workspace report data (status, prs, audit, resume, export)...',
-                     file=sys.stderr, flush=True)
+                print('MONAG: collecting workspace report data (status, prs, audit, resume, export, advise)...',
+                      file=sys.stderr, flush=True)
             data = report.collect(
                 root, args.depth, args.hours, sections, args.github,
                 args.issue_limit, registry, args.machine, args.all_users,
-                args.state_dir)
+                args.state_dir, advisory_limit=getattr(args, 'advisory_limit', 5))
             body = report.markdown(data)
             if getattr(args, 'report_dry_run', False) or not args.report_email:
                 if output_format == 'json':
