@@ -1,0 +1,26 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-051",
+  "summary": "Add monag prs command for unpushed branches and PR audit",
+  "workstream": "application",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-051/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/audit.py",
+    "src/monag/cli.py",
+    "src/monag/prs.py",
+    "tests/test_audit.py",
+    "tests/test_prs.py"
+  ],
+  "forbiddenPaths": ["project/ticket-*/user-*.md"],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}
