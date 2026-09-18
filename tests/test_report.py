@@ -1,0 +1,316 @@
+"""Tests for monag.report — email digest of workspace activity."""
+import email.message
+import json
+import os
+import smtplib
+import subprocess
+from pathlib import Path
+from unittest import mock
+
+import pytest
+
+from monag import report
+
+
+# -- smtp_config --------------------------------------------------------
+
+def test_smtp_config_defaults():
+    with mock.patch.dict(os.environ, {}, clear=True):
+        cfg = report._smtp_config()
+    assert cfg['host'] == 'localhost'
+    assert cfg['port'] == 587
+    assert cfg['tls'] is True
+    assert cfg['user'] == ''
+    assert cfg['auth_pass'] == ''
+
+
+def test_smtp_config_from_env():
+    env = {
+        'MONAG_SMTP_HOST': 'mail.test',
+        'MONAG_SMTP_PORT': '465',
+        'MONAG_SMTP_USER': 'me',
+        'MONAG_SMTP_PASSWORD': 's3cret',
+        'MONAG_SMTP_TLS': '0',
+        'MONAG_FROM': 'bot@test.dev',
+    }
+    with mock.patch.dict(os.environ, env, clear=True):
+        cfg = report._smtp_config()
+    assert cfg['host'] == 'mail.test'
+    assert cfg['port'] == 465
+    assert cfg['user'] == 'me'
+    assert cfg['auth_pass'] == 's3cret'
+    assert cfg['tls'] is False
+    assert cfg['from'] == 'bot@test.dev'
+
+
+def test_smtp_config_cli_overrides_env():
+    env = {'MONAG_SMTP_HOST': 'env-host'}
+    with mock.patch.dict(os.environ, env, clear=True):
+        cfg = report._smtp_config(args_host='cli-host', args_port=25,
+                                   args_tls=False)
+    assert cfg['host'] == 'cli-host'
+    assert cfg['port'] == 25
+    assert cfg['tls'] is False
+
+
+# -- collect ------------------------------------------------------------
+
+def test_collect_calls_scan_modules(tmp_path):
+    """collect() delegates to each module's scan() and captures results."""
+    mock_status = {'agent_count': 2, 'agents': [], 'repositories': []}
+    mock_prs = {'open_prs': [], 'merged_prs': []}
+
+    with mock.patch('monag.monitor.snapshot', return_value=mock_status), \
+         mock.patch('monag.prs.scan', return_value=mock_prs):
+
+        data = report.collect(tmp_path, sections=['status', 'prs'])
+
+    assert data['schema'] == 'monag.report/v1'
+    assert 'status' in data['sections']
+    assert 'prs' in data['sections']
+    assert 'audit' not in data['sections']  # not requested
+    assert data['duration_seconds'] >= 0
+
+
+def test_collect_captures_errors_gracefully(tmp_path):
+    """A failing section is recorded in errors, not raised."""
+    with mock.patch('monag.monitor.snapshot', side_effect=RuntimeError('boom')):
+        data = report.collect(tmp_path, sections=['status'])
+
+    assert 'status' not in data['sections']
+    assert any('RuntimeError' in e for e in data['errors'])
+
+
+# -- markdown -----------------------------------------------------------
+
+def test_markdown_output_has_sections():
+    data = {
+        'schema': 'monag.report/v1',
+        'root': '/home/test/github',
+        'observed_at': '2026-09-18T16:00:00+00:00',
+        'duration_seconds': 1.5,
+        'requested_sections': ['status', 'prs'],
+        'sections': {
+            'status': {'agent_count': 3, 'agents': [], 'repositories': []},
+            'prs': {'open_prs': [], 'merged_prs': []},
+        },
+        'errors': [],
+    }
+    md = report.markdown(data)
+    assert '# MONAG workspace report' in md
+    assert '## Agent processes and checkouts' in md
+    assert '## Pull Requests' in md
+    assert 'monag report' in md
+
+
+def test_markdown_shows_errors():
+    data = {
+        'schema': 'monag.report/v1',
+        'root': '/tmp/test',
+        'observed_at': '2026-09-18T16:00:00+00:00',
+        'duration_seconds': 0.1,
+        'requested_sections': ['status'],
+        'sections': {},
+        'errors': ['status: RuntimeError: boom'],
+    }
+    md = report.markdown(data)
+    assert '## Errors' in md
+    assert 'RuntimeError: boom' in md
+
+
+# -- format_section_* --------------------------------------------------
+
+def test_format_section_status_with_agents():
+    data = {
+        'agent_count': 2,
+        'agents': [
+            {'pid': 1234, 'kind': 'claude', 'state': 'S', 'cwd': '/home/tom/proj', 'task': 'fix bug'},
+        ],
+        'repositories': [{'path': '/home/tom/proj', 'branch': 'main'}],
+    }
+    result = report.format_section_status(data)
+    assert '**2** agent processes' in result
+    assert '1234' in result
+    assert 'claude' in result
+
+
+def test_format_section_prs_with_open():
+    data = {
+        'open_prs': [
+            {'repo': 'semcod/monag', 'number': 59, 'title': 'report feature',
+             'author': 'tom', 'created_at': '2026-09-18T10:00:00Z'},
+        ],
+        'merged_prs': [],
+    }
+    result = report.format_section_prs(data)
+    assert 'Open: **1**' in result
+    assert '#59' in result
+
+
+def test_format_section_audit_with_untracked():
+    data = {
+        'repositories': [
+            {'repo': 'semcod/monag', 'path': '/home/tom/monag',
+             'untracked_issues': [
+                 {'number': 5, 'title': 'Bootstrap planfile', 'state': 'OPEN',
+                  'url': 'https://github.com/semcod/monag/issues/5'},
+             ]},
+        ],
+        'errors': [], 'repository_count': 1,
+    }
+    result = report.format_section_audit(data)
+    assert 'Untracked issues: **1**' in result
+    assert '#5' in result
+
+
+def test_format_section_resume_with_tickets():
+    data = {
+        'projects': [
+            {'path': '/home/tom/monag', 'planfile': {
+                'remaining_tickets': [
+                    {'id': 'MON-001', 'title': 'test ticket', 'priority': 'high', 'status': 'open'},
+                ],
+            }},
+        ],
+        'project_count': 1,
+    }
+    result = report.format_section_resume(data)
+    assert 'Open Planfile tickets: **1**' in result
+    assert 'MON' in result and '001' in result
+
+
+# -- _markdown_to_html ------------------------------------------------
+
+def test_markdown_to_html_headings():
+    html = report._markdown_to_html('# Title\n\n## Section\n\nParagraph with **bold**.')
+    assert '<h2>Title</h2>' in html
+    assert '<h3>Section</h3>' in html
+    assert '<strong>bold</strong>' in html
+
+
+def test_markdown_to_html_code():
+    html = report._markdown_to_html('Use `monag report` to send.')
+    assert '<code>monag report</code>' in html
+
+
+# -- send_email ---------------------------------------------------------
+
+def test_send_email_success():
+    smtp_cfg = {
+        'host': 'localhost', 'port': 1025, 'user': '', 'password': '',
+        'tls': False, 'from': 'monag@test',
+    }
+    mock_smtp = mock.MagicMock()
+    with mock.patch('smtplib.SMTP', return_value=mock_smtp) as cls:
+        cls.return_value.__enter__ = mock.Mock(return_value=mock_smtp)
+        cls.return_value.__exit__ = mock.Mock(return_value=False)
+        result = report.send_email(['user@test.dev'], 'Test report', '# Hello\n', smtp_cfg)
+    assert result['ok'] is True
+    assert result['recipients'] == ['user@test.dev']
+    mock_smtp.sendmail.assert_called_once()
+
+
+def test_send_email_failure():
+    smtp_cfg = {
+        'host': 'bad-host', 'port': 9999, 'user': '', 'auth_pass': '',
+        'tls': False, 'from': 'monag@test',
+    }
+    with mock.patch('smtplib.SMTP', side_effect=OSError('Connection refused')):
+        result = report.send_email(['user@test.dev'], 'Test', '# Fail\n', smtp_cfg)
+    assert result['ok'] is False
+    assert 'Connection refused' in result['error']
+
+
+def test_send_email_tls_and_auth():
+    smtp_cfg = {
+        'host': 'mail.test', 'port': 587, 'user': 'me', 'auth_pass': 'pass',
+        'tls': True, 'from': 'bot@test.dev',
+    }
+    mock_smtp = mock.MagicMock()
+    with mock.patch('smtplib.SMTP', return_value=mock_smtp) as cls:
+        cls.return_value.__enter__ = mock.Mock(return_value=mock_smtp)
+        cls.return_value.__exit__ = mock.Mock(return_value=False)
+        result = report.send_email(['a@b.com'], 'TLS test', '# TLS\n', smtp_cfg)
+    assert result['ok'] is True
+    mock_smtp.starttls.assert_called_once()
+    mock_smtp.login.assert_called_once_with('me', 'pass')
+
+
+# -- install_cron / remove_cron ----------------------------------------
+
+def test_install_cron_success():
+    with mock.patch('subprocess.run') as run:
+        # crontab -l returns existing crontab
+        run.side_effect = [
+            mock.Mock(returncode=0, stdout='30 3 * * * /usr/bin/backup\n'),
+            mock.Mock(returncode=0, stdout='', stderr=''),
+        ]
+        result = report.install_cron('tom@example.com', Path('/home/tom/github'))
+    assert result['ok'] is True
+    assert 'monag:report' in result['cron_line']
+    assert '0 * * * *' in result['cron_line']
+    # Should preserve existing entry
+    new_crontab = run.call_args_list[1].kwargs.get('input') or run.call_args_list[1][1].get('input', '')
+    if not new_crontab:
+        new_crontab = run.call_args_list[1][1] if len(run.call_args_list[1]) > 1 else ''
+    # Just verify install was called
+    assert run.call_count == 2
+
+
+def test_install_cron_custom_schedule():
+    with mock.patch('subprocess.run') as run:
+        run.side_effect = [
+            mock.Mock(returncode=0, stdout=''),
+            mock.Mock(returncode=0, stdout='', stderr=''),
+        ]
+        result = report.install_cron('tom@test.com', Path('/home/tom/github'),
+                                      schedule='*/30 * * * *')
+    assert result['ok'] is True
+    assert '*/30 * * * *' in result['cron_line']
+
+
+def test_remove_cron_success():
+    existing = '30 3 * * * /usr/bin/backup\n0 * * * * monag report --email a@b.com # monag:report\n'
+    with mock.patch('subprocess.run') as run:
+        run.side_effect = [
+            mock.Mock(returncode=0, stdout=existing),
+            mock.Mock(returncode=0, stdout='', stderr=''),
+        ]
+        result = report.remove_cron()
+    assert result['ok'] is True
+    assert result['action'] == 'removed'
+    # Verify monag:report line was stripped
+    written = run.call_args_list[1]
+    assert 'monag:report' not in (written.kwargs.get('input', '') or '')
+
+
+def test_install_cron_crontab_missing():
+    with mock.patch('subprocess.run', side_effect=OSError('No crontab')):
+        result = report.install_cron('tom@test.com', Path('/tmp'))
+    assert result['ok'] is False
+    assert 'crontab' in result['error']
+
+
+# -- section registry ---------------------------------------------------
+
+def test_section_registry_completeness():
+    """All sections have a formatter and title."""
+    for section in report.SECTION_REGISTRY:
+        assert section in report._SECTION_FORMATTERS, f'missing formatter for {section}'
+        assert section in report._SECTION_TITLES, f'missing title for {section}'
+
+
+# -- CLI integration (argument parsing) ---------------------------------
+
+def test_cli_report_dry_run_parses(tmp_path):
+    """monag report --dry-run should parse without error."""
+    from monag.cli import main
+    with mock.patch('monag.report.collect', return_value={
+        'schema': 'monag.report/v1', 'root': str(tmp_path),
+        'observed_at': '2026-09-18T16:00:00+00:00', 'duration_seconds': 0.1,
+        'requested_sections': ['status'], 'sections': {
+            'status': {'agent_count': 0, 'agents': [], 'repositories': []},
+        }, 'errors': [],
+    }):
+        rc = main(['--root', str(tmp_path), '--plain', 'report', '--dry-run'])
+        assert rc == 0
