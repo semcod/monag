@@ -1,4 +1,7 @@
 import io
+import os
+from pathlib import Path
+import tempfile
 import unittest
 
 from monag import opener
@@ -220,6 +223,63 @@ class ChooseTest(unittest.TestCase):
         ok, message = opener.open_interactive([agent(11)], stream=io.StringIO('q'))
         self.assertFalse(ok)
         self.assertIn('no row given', message)
+
+
+class SessionArgvTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def _fd_link(self, pid, name, target):
+        fd_dir = self.root / 'proc' / str(pid) / 'fd'
+        fd_dir.mkdir(parents=True, exist_ok=True)
+        os.symlink(target, fd_dir / name)
+
+    def test_agy_conversation_from_open_file(self):
+        conv = ('/home/u/.gemini/antigravity-cli/conversations/'
+                '6d668bd0-166c-40d7-b0bc-76a10cf5cccd.db')
+        self._fd_link(100, '7', conv)
+        self._fd_link(100, '8', '/dev/null')
+        row = agent(pid=100, kind='agy')
+        self.assertEqual(
+            opener.session_argv(row, proc=self.root / 'proc'),
+            ['agy', '--conversation', '6d668bd0-166c-40d7-b0bc-76a10cf5cccd'])
+        self.assertEqual(
+            opener.recipe(row, proc=self.root / 'proc')[0],
+            ['agy', '--conversation', '6d668bd0-166c-40d7-b0bc-76a10cf5cccd'])
+
+    def test_agy_without_conversation_falls_back(self):
+        self._fd_link(100, '1', '/dev/null')
+        row = agent(pid=100, kind='agy')
+        self.assertIsNone(opener.session_argv(row, proc=self.root / 'proc'))
+        self.assertEqual(opener.recipe(row, proc=self.root / 'proc')[0],
+                         ['agy', '--continue'])
+
+    def test_claude_newest_session_file(self):
+        home = self.root / 'home'
+        project = home / '.claude' / 'projects' / '-work-repo'
+        project.mkdir(parents=True)
+        old = project / 'aaaa-1111.jsonl'
+        new = project / 'bbbb-2222.jsonl'
+        old.write_text('x')
+        new.write_text('x')
+        os.utime(old, (1, 1))
+        row = agent(kind='claude')
+        self.assertEqual(opener.session_argv(row, home=home),
+                         ['claude', '--resume', 'bbbb-2222'])
+
+    def test_claude_without_project_dir_falls_back(self):
+        home = self.root / 'home'
+        home.mkdir()
+        row = agent(kind='claude')
+        self.assertIsNone(opener.session_argv(row, home=home))
+        self.assertEqual(opener.recipe(row, home=home)[0],
+                         ['claude', '--continue'])
+
+    def test_other_kinds_have_no_session_probe(self):
+        self.assertIsNone(opener.session_argv(agent(kind='opencode')))
+        self.assertIsNone(opener.session_argv(agent(kind='devin')))
 
 
 if __name__ == '__main__':

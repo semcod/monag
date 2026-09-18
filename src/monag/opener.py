@@ -10,6 +10,7 @@ never respawned.
 """
 import contextlib
 import os
+from pathlib import Path
 import re
 import select
 import shlex
@@ -110,7 +111,57 @@ def pick(agents, target):
     return None, f'no row {index}; `usage` lists {len(agents)} agents'
 
 
-def recipe(agent, action='terminal', browser=False):
+AGY_CONVERSATION = re.compile(r'/conversations/([0-9a-f-]{36})\.db$')
+AGY_KINDS = {'agy', 'agy2', 'agy-coding-agent'}
+
+
+def _fd_targets(pid, proc='/proc'):
+    """Symlink targets the process holds open; paths only, never file content."""
+    directory = Path(proc) / str(pid) / 'fd'
+    try:
+        entries = os.listdir(directory)
+    except OSError:
+        return
+    for fd in entries:
+        try:
+            yield os.readlink(directory / fd)
+        except OSError:
+            continue
+
+
+def _claude_session(agent, home=None):
+    """Newest session file in the cwd's project dir → `claude --resume <id>`.
+
+    Claude does not hold the .jsonl open, so the freshest file in the project
+    directory is the best-effort match for the running session.
+    """
+    base = Path(home).expanduser() if home else Path.home()
+    slug = agent.get('cwd', '').rstrip('/').replace('/', '-') or '-'
+    try:
+        files = list((base / '.claude' / 'projects' / slug).glob('*.jsonl'))
+        if not files:
+            return None
+        newest = max(files, key=lambda f: f.stat().st_mtime)
+        return ['claude', '--resume', newest.stem]
+    except OSError:
+        return None
+
+
+def session_argv(agent, proc='/proc', home=None):
+    """Exact-session resume argv when the running session can be identified."""
+    kind = agent.get('kind')
+    if kind in AGY_KINDS:
+        for target in _fd_targets(agent['pid'], proc=proc):
+            match = AGY_CONVERSATION.search(target or '')
+            if match:
+                return ['agy', '--conversation', match.group(1)]
+        return None
+    if kind == 'claude':
+        return _claude_session(agent, home=home)
+    return None
+
+
+def recipe(agent, action='terminal', browser=False, proc='/proc', home=None):
     if browser:
         action = 'browser'
     """Launch argv for one agent row, or (None, reason) when it cannot open."""
@@ -128,7 +179,8 @@ def recipe(agent, action='terminal', browser=False):
     if ACP.fullmatch(kind):
         return None, (f'{kind} is an IDE-managed ACP adapter; '
                       'open the session in its IDE')
-    argv = TERMINAL.get(kind) or DESKTOP.get(kind)
+    argv = (session_argv(agent, proc=proc, home=home)
+            or TERMINAL.get(kind) or DESKTOP.get(kind))
     if argv:
         return argv, None
     # Unknown kinds still get a best-effort bare relaunch of a native binary.
@@ -155,7 +207,8 @@ def _spawn(spawn, argv, cwd):
           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def open_agent(agent, action='terminal', browser=False, dry_run=False, env=None, spawn=subprocess.Popen):
+def open_agent(agent, action='terminal', browser=False, dry_run=False, env=None,
+               spawn=subprocess.Popen, proc='/proc', home=None):
     if browser:
         action = 'browser'
     """Open one agent row; returns (ok, message)."""
@@ -169,7 +222,7 @@ def open_agent(agent, action='terminal', browser=False, dry_run=False, env=None,
             return True, ' '.join(map(shlex.quote, argv))
         _spawn(spawn, argv, cwd)
         return True, f'opened file manager for {label}: {cwd}'
-    argv, problem = recipe(agent, action)
+    argv, problem = recipe(agent, action, proc=proc, home=home)
     if argv is None:
         return False, problem
     if action in {'browser', 'desktop'} or argv in DESKTOP.values():
@@ -189,7 +242,7 @@ def open_agent(agent, action='terminal', browser=False, dry_run=False, env=None,
 
 
 def open_target(agents, target, action=None, browser=False, dry_run=False,
-                env=None, spawn=subprocess.Popen):
+                env=None, spawn=subprocess.Popen, proc='/proc', home=None):
     ref, letter = parse_target(target)
     if action and letter:
         return False, 'action given twice; use either `open N t` or `open Nt`'
@@ -201,7 +254,8 @@ def open_target(agents, target, action=None, browser=False, dry_run=False,
     agent, problem = pick(agents, ref)
     if agent is None:
         return False, problem
-    return open_agent(agent, action=action, dry_run=dry_run, env=env, spawn=spawn)
+    return open_agent(agent, action=action, dry_run=dry_run, env=env, spawn=spawn,
+                      proc=proc, home=home)
 
 
 PICKER_HINT = 'arrows/j/k move · t terminal · b browser · d desktop · o files · p print · Enter open · q quit'
@@ -284,7 +338,8 @@ def _cbreak(stream):
 
 
 def open_interactive(agents, limit=None, default_action='terminal', dry_run=False,
-                     env=None, spawn=subprocess.Popen, stream=None, out=None):
+                     env=None, spawn=subprocess.Popen, stream=None, out=None,
+                     proc='/proc', home=None):
     """Cursor-picker entry point for a bare `monag open`."""
     stream = stream or sys.stdin
     if not stream.isatty():
@@ -296,4 +351,5 @@ def open_interactive(agents, limit=None, default_action='terminal', dry_run=Fals
         return False, 'selection cancelled'
     if action == 'print':
         action, dry_run = 'terminal', True
-    return open_agent(agent, action=action, dry_run=dry_run, env=env, spawn=spawn)
+    return open_agent(agent, action=action, dry_run=dry_run, env=env, spawn=spawn,
+                      proc=proc, home=home)
