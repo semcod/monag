@@ -324,6 +324,10 @@ def main(argv=None):
                                help='remove the monag:report crontab entry')
     report_parser.add_argument('--dry-run', dest='report_dry_run', action='store_true',
                                help='generate and print the report without sending email')
+    report_parser.add_argument('--daemon', dest='report_daemon', action='store_true',
+                               help='run continuously in foreground sending reports periodically')
+    report_parser.add_argument('--interval', dest='report_interval', type=float, default=3600,
+                               help='seconds between reports in daemon mode (default: 3600 / 1 hour)')
     report_parser.add_argument('--issue-limit', type=int, default=200,
                                help='GitHub issues fetched per repository (default: 200)')
     advise_parser = sub.add_parser('advise', help='architectural guidance and prioritized next tasks '
@@ -618,6 +622,28 @@ def main(argv=None):
             sections = None
             if getattr(args, 'report_sections', None):
                 sections = [s.strip() for s in args.report_sections.split(',')]
+
+            recipients = list(args.report_email) if args.report_email else []
+            if not recipients:
+                detected = report.detect_user_email()
+                if detected:
+                    recipients = [detected]
+
+            if getattr(args, 'report_daemon', False):
+                interval = getattr(args, 'report_interval', 3600)
+                if not recipients:
+                    print("Error: no recipient email specified or detected from gh/git", file=sys.stderr)
+                    return 1
+                if sys.stderr.isatty():
+                    print(f"MONAG: starting report daemon for {', '.join(recipients)} every {interval}s...",
+                          file=sys.stderr, flush=True)
+                report.run_daemon(
+                    root, recipients, interval=interval, depth=args.depth, hours=args.hours,
+                    sections=sections, github=args.github, issue_limit=args.issue_limit,
+                    registry=registry, machine=args.machine, all_users=args.all_users,
+                    state_dir=args.state_dir, advisory_limit=getattr(args, 'advisory_limit', 5))
+                return 0
+
             if output_format != 'json' and sys.stderr.isatty():
                 print('MONAG: collecting workspace report data (status, prs, audit, resume, export, advise)...',
                       file=sys.stderr, flush=True)
@@ -625,8 +651,8 @@ def main(argv=None):
                 root, args.depth, args.hours, sections, args.github,
                 args.issue_limit, registry, args.machine, args.all_users,
                 args.state_dir, advisory_limit=getattr(args, 'advisory_limit', 5))
-            body = report.markdown(data)
-            if getattr(args, 'report_dry_run', False) or not args.report_email:
+            body = report.markdown(data, recipients=recipients)
+            if getattr(args, 'report_dry_run', False) or not recipients:
                 if output_format == 'json':
                     print(json.dumps(data, ensure_ascii=True))
                 else:
@@ -637,7 +663,7 @@ def main(argv=None):
                 args_user=args.smtp_user, args_pass=args.smtp_pass,
                 args_tls=args.smtp_tls, args_from=args.smtp_from)
             subject = args.report_subject or f'MONAG report — {root.name} — {data["observed_at"][:16]}'
-            result = report.send_email(args.report_email, subject, body, smtp_cfg)
+            result = report.send_email(recipients, subject, body, smtp_cfg)
             if output_format == 'json':
                 print(json.dumps(result, ensure_ascii=True))
             else:
@@ -646,10 +672,10 @@ def main(argv=None):
                           flush=True)
                 else:
                     print(f"Send FAILED: {result['error']}", file=sys.stderr, flush=True)
-            if getattr(args, 'install_cron', False) and args.report_email:
+            if getattr(args, 'install_cron', False) and recipients:
                 schedule_expr = getattr(args, 'report_schedule', None) or '0 * * * *'
                 cron_result = report.install_cron(
-                    args.report_email[0], root, schedule_expr, sections)
+                    recipients[0], root, schedule_expr, sections)
                 if output_format == 'json':
                     print(json.dumps(cron_result, ensure_ascii=True))
                 else:
