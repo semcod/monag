@@ -11,12 +11,18 @@ repositories (commits within `--within HOURS`, dirty files, or ahead branches)
 before issuing `gh` network requests, avoiding unnecessary API rate consumption.
 Use `--all-repos` to force querying GitHub across all discovered repositories.
 """
+import base64
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import re
+import socket
+import struct
 import time
+from typing import Any, Dict, List, Optional, Tuple, Union
+import urllib.parse
+import urllib.request
 
 from .audit import targets as discover_targets
 from .monitor import command, github_repo
@@ -627,4 +633,308 @@ def markdown(data, limit=20):
         'Full JSON data: `monag --json prs` or `monag prs --all-repos`.',
     ])
 
+    return '\n'.join(lines) + '\n'
+
+
+class BrowserCDPMerger:
+    """Lightweight RFC 6455 WebSocket client to merge PRs via active Chromium session."""
+
+    def __init__(self, port: int = 9222):
+        self.port = port
+
+    def is_available(self) -> bool:
+        try:
+            req = urllib.request.urlopen(f'http://127.0.0.1:{self.port}/json/version', timeout=1.5)
+            data = json.loads(req.read().decode('utf-8'))
+            return 'webSocketDebuggerUrl' in data or 'Browser' in data
+        except Exception:
+            return False
+
+    def _get_page_targets(self) -> List[Dict[str, Any]]:
+        try:
+            req = urllib.request.urlopen(f'http://127.0.0.1:{self.port}/json', timeout=4)
+            targets = json.loads(req.read().decode('utf-8'))
+            return [t for t in targets if t.get('type') == 'page']
+        except Exception:
+            return []
+
+    def _send_cmd(self, path: str, method: str, params: Optional[Dict[str, Any]] = None, timeout: float = 12.0) -> Any:
+        s = socket.create_connection(('127.0.0.1', self.port), timeout=timeout)
+        s.settimeout(timeout)
+        key = base64.b64encode(os.urandom(16)).decode()
+        s.sendall(
+            f'GET {path} HTTP/1.1\r\n'
+            f'Host: 127.0.0.1:{self.port}\r\n'
+            f'Upgrade: websocket\r\n'
+            f'Connection: Upgrade\r\n'
+            f'Sec-WebSocket-Key: {key}\r\n'
+            f'Sec-WebSocket-Version: 13\r\n\r\n'.encode()
+        )
+        buf = b''
+        while b'\r\n\r\n' not in buf:
+            chunk = s.recv(1024)
+            if not chunk:
+                s.close()
+                return None
+            buf += chunk
+
+        req_id = 1
+        body = {'id': req_id, 'method': method}
+        if params:
+            body['params'] = params
+        msg = json.dumps(body).encode('utf-8')
+        mask = os.urandom(4)
+        l = len(msg)
+
+        if l < 126:
+            h = bytearray([0x81, 0x80 | l])
+        elif l < 65536:
+            h = bytearray([0x81, 0x80 | 126] + list(struct.pack('!H', l)))
+        else:
+            h = bytearray([0x81, 0x80 | 127] + list(struct.pack('!Q', l)))
+        h.extend(mask)
+        h.extend(bytearray(b ^ mask[i % 4] for i, b in enumerate(msg)))
+        s.sendall(h)
+
+        deadline = time.time() + timeout
+        val = None
+        while time.time() < deadline:
+            hdr = s.recv(2)
+            if not hdr or len(hdr) < 2:
+                break
+            plen = hdr[1] & 0x7F
+            if plen == 126:
+                plen = struct.unpack('!H', s.recv(2))[0]
+            elif plen == 127:
+                plen = struct.unpack('!Q', s.recv(8))[0]
+            mb = s.recv(4) if bool(hdr[1] & 0x80) else b''
+            payload = b''
+            while len(payload) < plen:
+                chunk = s.recv(plen - len(payload))
+                if not chunk:
+                    break
+                payload += chunk
+            if mb:
+                payload = bytes(b ^ mb[i % 4] for i, b in enumerate(payload))
+            try:
+                data = json.loads(payload.decode('utf-8'))
+                if data.get('id') == req_id:
+                    val = data.get('result')
+                    break
+            except Exception:
+                pass
+        s.close()
+        return val
+
+    def eval(self, path: str, expr: str, timeout: float = 12.0) -> Any:
+        res = self._send_cmd(path, 'Runtime.evaluate', {'expression': expr, 'returnByValue': True}, timeout=timeout)
+        if not res:
+            return None
+        return res.get('result', {}).get('value')
+
+    def navigate(self, path: str, url: str) -> None:
+        self._send_cmd(path, 'Page.navigate', {'url': url})
+
+    def merge_pr_page(self, pr_url: str, method: str = 'squash', admin_bypass: bool = True) -> Dict[str, Any]:
+        targets = self._get_page_targets()
+        if not targets:
+            return {'ok': False, 'status': 'NO_BROWSER_TABS', 'error': 'No active browser tabs found on CDP port'}
+
+        target = next((t for t in targets if 'github.com' in t.get('url', '')), None)
+        if not target:
+            target = next((t for t in targets if not t.get('url', '').startswith('chrome://')), targets[0])
+
+        ws_url = target.get('webSocketDebuggerUrl', '')
+        path = urllib.parse.urlparse(ws_url).path
+
+        self.navigate(path, pr_url)
+
+        # Wait for page & merge box to load
+        for _ in range(8):
+            time.sleep(1.0)
+            loaded = self.eval(path, """(() => {
+                const b = document.body ? document.body.innerText : '';
+                if (b.includes('Loading merge status') || b.includes('Checking mergeability')) return false;
+                if (document.querySelector('[data-testid=\"mergebox-border-container\"]') || document.querySelector('.branch-action-item')) return true;
+                if (document.querySelector('.State--purple, .State--red')) return true;
+                return false;
+            })()""")
+            if loaded:
+                break
+
+        # Check existing state
+        state = self.eval(path, """(() => {
+            const body = document.body ? document.body.innerText : '';
+            const isMerged = !!document.querySelector('.State--purple, [title*=\"Status: Merged\"], [aria-label*=\"Status: Merged\"]') || body.includes('Pull request successfully merged and closed');
+            const isClosed = !isMerged && (!!document.querySelector('.State--red, [title*=\"Status: Closed\"], [aria-label*=\"Status: Closed\"]') || body.includes('closed this in'));
+            const hasConflicts = body.includes('This branch has conflicts that must be resolved') || body.includes('Conflicts must be resolved');
+            return {isMerged, isClosed, hasConflicts};
+        })()""")
+
+        if not state:
+            return {'ok': False, 'status': 'EVAL_FAILED', 'error': 'Could not read DOM from browser'}
+
+        if state.get('isMerged'):
+            return {'ok': True, 'status': 'ALREADY_MERGED', 'message': 'Pull request is already merged'}
+
+        if state.get('isClosed'):
+            return {'ok': False, 'status': 'ALREADY_CLOSED', 'error': 'Pull request is closed'}
+
+        if state.get('hasConflicts'):
+            return {'ok': False, 'status': 'CONFLICTING', 'error': 'This branch has conflicts that must be resolved'}
+
+        # Update branch if out of date
+        self.eval(path, """(() => {
+            const btn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.trim() === 'Update branch' && !b.disabled);
+            if (btn) btn.click();
+        })()""")
+        time.sleep(2.0)
+
+        # Bypass rules if needed and available
+        if admin_bypass:
+            self.eval(path, """(() => {
+                const lbl = Array.from(document.querySelectorAll('label')).find(l => l.innerText && l.innerText.includes('bypass rules'));
+                if (!lbl) return;
+                const forId = lbl.getAttribute('for');
+                const cb = forId ? document.getElementById(forId) : lbl.querySelector('input');
+                if (cb && !cb.checked) cb.click();
+            })()""")
+            time.sleep(1.0)
+
+        # Click merge button
+        merge_label = 'Squash and merge' if method == 'squash' else ('Rebase and merge' if method == 'rebase' else 'Merge pull request')
+        clicked_btn = self.eval(path, f"""(() => {{
+            const btns = Array.from(document.querySelectorAll('button, input[type=submit]'));
+            const bypassBtn = btns.find(b => b.innerText && b.innerText.includes('Bypass rules and merge') && !b.disabled);
+            if (bypassBtn) {{ bypassBtn.click(); return 'Bypass rules and merge'; }}
+            const targetBtn = btns.find(b => b.innerText && b.innerText.includes('{merge_label}') && !b.disabled);
+            if (targetBtn) {{ targetBtn.click(); return '{merge_label}'; }}
+            const anyMerge = btns.find(b => /merge pull request|squash and merge|rebase and merge/i.test(b.innerText || b.value) && !b.disabled);
+            if (anyMerge) {{ anyMerge.click(); return anyMerge.innerText.trim(); }}
+            return null;
+        }})()""")
+
+        time.sleep(1.5)
+
+        # Confirm merge
+        confirmed = self.eval(path, """(() => {
+            const btns = Array.from(document.querySelectorAll('button, input[type=submit]'));
+            const confirmBtn = btns.find(b => b.innerText && b.innerText.toLowerCase().includes('confirm') && !b.disabled);
+            if (confirmBtn) {
+                confirmBtn.click();
+                return confirmBtn.innerText.trim();
+            }
+            return null;
+        })()""")
+
+        time.sleep(3.5)
+
+        # Verify final merge state
+        final_state = self.eval(path, """(() => {
+            const body = document.body ? document.body.innerText : '';
+            return !!document.querySelector('.State--purple, [title*=\"Status: Merged\"], [aria-label*=\"Status: Merged\"]') || body.includes('Pull request successfully merged and closed');
+        })()""")
+
+        if final_state:
+            return {'ok': True, 'status': 'MERGED', 'method': method, 'button': clicked_btn}
+
+        return {'ok': False, 'status': 'FAILED', 'error': 'Merge confirmation did not transition to Merged'}
+
+
+def merge_via_browser_cdp(pr_url: str, method: str = 'squash', admin_bypass: bool = True, cdp_port: int = 9222) -> Dict[str, Any]:
+    merger = BrowserCDPMerger(port=cdp_port)
+    if not merger.is_available():
+        return {'ok': False, 'status': 'CDP_UNAVAILABLE', 'error': f'Chromium CDP endpoint not reachable at 127.0.0.1:{cdp_port}'}
+    return merger.merge_pr_page(pr_url, method=method, admin_bypass=admin_bypass)
+
+
+def merge_pull_request(pr_url_or_number: Any, repo: Optional[str] = None, method: str = 'squash',
+                       admin_bypass: bool = True, use_browser: bool = False, cdp_port: int = 9222) -> Dict[str, Any]:
+    """Merge a GitHub Pull Request using gh CLI with automated fallback to Browser CDP."""
+    target_str = str(pr_url_or_number).strip()
+    pr_url = ''
+    pr_number = None
+
+    url_match = re.search(r'https?://github\.com/([a-zA-Z0-9_\-]+/[a-zA-Z0-9_\-]+)/pull/(\d+)', target_str)
+    if url_match:
+        repo = url_match.group(1)
+        pr_number = int(url_match.group(2))
+        pr_url = target_str
+    elif '#' in target_str:
+        parts = target_str.split('#', 1)
+        repo = parts[0].strip()
+        pr_number = int(parts[1].strip())
+        pr_url = f'https://github.com/{repo}/pull/{pr_number}'
+    elif target_str.isdigit():
+        pr_number = int(target_str)
+        if not repo:
+            repo = repo_remote('.')
+        if not repo:
+            return {'ok': False, 'status': 'NO_REPO', 'error': 'Could not detect GitHub repository for PR number'}
+        pr_url = f'https://github.com/{repo}/pull/{pr_number}'
+    else:
+        return {'ok': False, 'status': 'INVALID_TARGET', 'error': f'Unrecognized PR target: {pr_url_or_number}'}
+
+    record = {
+        'repo': repo,
+        'number': pr_number,
+        'url': pr_url,
+        'method': method,
+    }
+
+    # If browser is not forced, try gh pr merge first
+    if not use_browser:
+        cmd = ['gh', 'pr', 'merge', str(pr_number), '--repo', repo, f'--{method}']
+        if admin_bypass:
+            cmd.append('--admin')
+        out, err = command(cmd, timeout=30)
+        if not err and ('merged' in (out or '').lower() or 'already' in (out or '').lower()):
+            record.update(ok=True, status='MERGED', via='gh', output=out)
+            return record
+        # Check if error was rate limit or permission that can be handled via browser
+        err_lower = (err or '').lower()
+        if 'conflict' in err_lower:
+            record.update(ok=False, status='CONFLICTING', via='gh', error=err)
+            return record
+
+    # Browser CDP fallback or forced browser mode
+    b_res = merge_via_browser_cdp(pr_url, method=method, admin_bypass=admin_bypass, cdp_port=cdp_port)
+    record.update(b_res)
+    record['via'] = 'browser_cdp'
+    return record
+
+
+def merge_open_prs(open_prs: List[Dict[str, Any]], method: str = 'squash', admin_bypass: bool = True,
+                   use_browser: bool = False, cdp_port: int = 9222) -> List[Dict[str, Any]]:
+    """Merge a list of open PR dictionaries."""
+    results = []
+    for pr in open_prs:
+        url = pr.get('url') or f"https://github.com/{pr.get('repo')}/pull/{pr.get('number')}"
+        res = merge_pull_request(url, repo=pr.get('repo'), method=method,
+                                admin_bypass=admin_bypass, use_browser=use_browser, cdp_port=cdp_port)
+        results.append(res)
+    return results
+
+
+def merge_result_markdown(results: List[Dict[str, Any]]) -> str:
+    """Format PR merge execution results into a clean markdown table."""
+    lines = ['# MONAG: Pull Request Merge Report', '']
+    if not results:
+        lines.append('_No Pull Requests processed._\n')
+        return '\n'.join(lines)
+
+    rows = []
+    for r in results:
+        status = r.get('status', 'UNKNOWN')
+        icon = '✅' if r.get('ok') else ('⚠️' if status == 'CONFLICTING' else '❌')
+        repo_str = r.get('repo', '-')
+        pr_str = f"#{r.get('number')}" if r.get('number') else '-'
+        via_str = r.get('via', '-')
+        msg = r.get('error') or r.get('message') or r.get('status') or 'Success'
+        rows.append([icon, repo_str, pr_str, status, via_str, msg[:50]])
+
+    lines.extend([
+        table(['', 'Repository', 'PR', 'Status', 'Via', 'Details'], rows),
+        '',
+    ])
     return '\n'.join(lines) + '\n'

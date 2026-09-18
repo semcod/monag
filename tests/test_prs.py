@@ -262,6 +262,70 @@ class PrsTests(unittest.TestCase):
         self.assertEqual(prs_list[0]['title'], 'REST fallback PR')
         self.assertEqual(prs_list[0]['state'], 'OPEN')
 
+    def test_merge_pull_request_gh_success(self):
+        with patch('monag.prs.command', return_value=('Squashed and merged pull request #42', None)):
+            res = prs.merge_pull_request('semcod/monag#42', method='squash', admin_bypass=True, use_browser=False)
+            self.assertTrue(res['ok'])
+            self.assertEqual(res['status'], 'MERGED')
+            self.assertEqual(res['via'], 'gh')
+            self.assertEqual(res['number'], 42)
+            self.assertEqual(res['repo'], 'semcod/monag')
+
+    def test_merge_pull_request_conflict(self):
+        with patch('monag.prs.command', return_value=('', 'GraphQL: Pull request has conflicts (mergePullRequest)')):
+            res = prs.merge_pull_request('https://github.com/semcod/planfile/pull/140', method='squash', use_browser=False)
+            self.assertFalse(res['ok'])
+            self.assertEqual(res['status'], 'CONFLICTING')
+            self.assertEqual(res['number'], 140)
+
+    def test_merge_pull_request_fallback_to_browser(self):
+        with patch('monag.prs.command', return_value=('', 'API rate limit exceeded')):
+            with patch('monag.prs.merge_via_browser_cdp', return_value={'ok': True, 'status': 'MERGED'}) as mock_cdp:
+                res = prs.merge_pull_request('semcod/monag#56', method='squash', use_browser=False)
+                self.assertTrue(res['ok'])
+                self.assertEqual(res['via'], 'browser_cdp')
+                mock_cdp.assert_called_once_with('https://github.com/semcod/monag/pull/56', method='squash', admin_bypass=True, cdp_port=9222)
+
+    def test_merge_open_prs_and_markdown(self):
+        open_prs = [
+            {'repo': 'semcod/monag', 'number': 56, 'url': 'https://github.com/semcod/monag/pull/56'},
+            {'repo': 'semcod/planfile', 'number': 141, 'url': 'https://github.com/semcod/planfile/pull/141'},
+        ]
+        with patch('monag.prs.merge_pull_request') as mock_merge:
+            mock_merge.side_effect = [
+                {'repo': 'semcod/monag', 'number': 56, 'ok': True, 'status': 'MERGED', 'via': 'browser_cdp'},
+                {'repo': 'semcod/planfile', 'number': 141, 'ok': False, 'status': 'CONFLICTING', 'via': 'gh', 'error': 'conflicts'},
+            ]
+            results = prs.merge_open_prs(open_prs)
+            self.assertEqual(len(results), 2)
+            self.assertEqual(results[0]['status'], 'MERGED')
+            self.assertEqual(results[1]['status'], 'CONFLICTING')
+
+            md = prs.merge_result_markdown(results)
+            self.assertIn('Pull Request Merge Report', md)
+            self.assertIn('semcod/monag', md)
+            self.assertIn('semcod/planfile', md)
+            self.assertIn('141', md)
+            self.assertIn('CONFLICTING', md)
+
+    def test_cli_merge_subcommand(self):
+        stdout = Output(False)
+        with patch('monag.prs.merge_pull_request') as mock_merge, patch('sys.stdout', stdout):
+            mock_merge.return_value = {
+                'ok': True,
+                'status': 'MERGED',
+                'repo': 'semcod/monag',
+                'number': 56,
+                'via': 'browser_cdp',
+                'output': 'Merged',
+            }
+            code = main(['merge', 'semcod/monag#56', '--browser'])
+            self.assertEqual(code, 0)
+            mock_merge.assert_called_once_with('semcod/monag#56', method='squash', admin_bypass=True, use_browser=True)
+            self.assertIn('semcod/monag', stdout.getvalue())
+            self.assertIn('56', stdout.getvalue())
+            self.assertIn('MERGED', stdout.getvalue())
+
 
 if __name__ == '__main__':
     unittest.main()
