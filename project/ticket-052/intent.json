@@ -1,0 +1,28 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-052",
+  "summary": "Unified API with Natural Language DSL, MCP server, and REST endpoints",
+  "workstream": "application",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-052/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/dsl.py",
+    "src/monag/mcp.py",
+    "src/monag/panel.py",
+    "src/monag/cli.py",
+    "tests/test_dsl.py",
+    "tests/test_mcp.py",
+    "tests/test_panel.py"
+  ],
+  "forbiddenPaths": ["project/ticket-*/user-*.md"],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}
