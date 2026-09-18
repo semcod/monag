@@ -196,13 +196,24 @@ class State:
             self._export, self._export_at = data, time.monotonic()
         return data
 
+    def get_advise(self, ttl=300):
+        with self.lock:
+            if getattr(self, '_advise', None) is not None and time.monotonic() - getattr(self, '_advise_at', 0) < ttl:
+                return self._advise
+        from . import advise
+        data = advise.advise(self.root, depth=self.depth, state_dir=self.state_dir)
+        with self.lock:
+            self._advise, self._advise_at = data, time.monotonic()
+        return data
+
 
 ROUTES = {'/api/snapshot.json': lambda s: s.snapshot,
           '/api/resume.json': lambda s: s.resume,
           '/api/prs.json': State.get_prs,
           '/api/audit.json': State.get_audit,
           '/api/catalog.json': State.get_catalog,
-          '/api/export.json': State.get_export}
+          '/api/export.json': State.get_export,
+          '/api/advise.json': State.get_advise}
 
 
 def make_handler(state):
