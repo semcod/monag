@@ -147,6 +147,27 @@ def _claude_session(agent, home=None):
         return None
 
 
+def _opencode_session(agent, home=None):
+    """Newest opencode.db session in the process cwd → `opencode --session <id>`."""
+    cwd = agent.get('cwd')
+    base = Path(home).expanduser() if home else Path.home()
+    db = base / '.local' / 'share' / 'opencode' / 'opencode.db'
+    if not cwd or not db.is_file():
+        return None
+    import sqlite3
+    try:
+        con = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
+        try:
+            row = con.execute(
+                'SELECT id FROM session WHERE directory = ? '
+                'ORDER BY time_updated DESC LIMIT 1', (cwd,)).fetchone()
+        finally:
+            con.close()
+    except Exception:
+        return None
+    return ['opencode', '--session', row[0]] if row and row[0] else None
+
+
 def session_argv(agent, proc='/proc', home=None):
     """Exact-session resume argv when the running session can be identified."""
     kind = agent.get('kind')
@@ -158,6 +179,8 @@ def session_argv(agent, proc='/proc', home=None):
         return None
     if kind == 'claude':
         return _claude_session(agent, home=home)
+    if kind == 'opencode':
+        return _opencode_session(agent, home=home)
     return None
 
 

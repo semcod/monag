@@ -277,8 +277,40 @@ class SessionArgvTest(unittest.TestCase):
         self.assertEqual(opener.recipe(row, home=home)[0],
                          ['claude', '--continue'])
 
+    def _opencode_db(self, home):
+        import sqlite3
+        db = home / '.local' / 'share' / 'opencode' / 'opencode.db'
+        db.parent.mkdir(parents=True, exist_ok=True)
+        con = sqlite3.connect(str(db))
+        con.execute('CREATE TABLE session (id TEXT, directory TEXT, time_updated INTEGER)')
+        con.execute("INSERT INTO session VALUES "
+                    "('ses_old','/work/repo',1),('ses_new','/work/repo',9),('ses_other','/other',10)")
+        con.commit()
+        con.close()
+
+    def test_opencode_session_from_db(self):
+        home = self.root / 'home'
+        self._opencode_db(home)
+        row = agent(kind='opencode')
+        self.assertEqual(opener.session_argv(row, home=home),
+                         ['opencode', '--session', 'ses_new'])
+        self.assertEqual(opener.recipe(row, home=home)[0],
+                         ['opencode', '--session', 'ses_new'])
+
+    def test_opencode_without_matching_dir_falls_back(self):
+        home = self.root / 'home'
+        self._opencode_db(home)
+        row = agent(kind='opencode', cwd='/nope')
+        self.assertIsNone(opener.session_argv(row, home=home))
+        self.assertEqual(opener.recipe(row, home=home)[0], ['opencode'])
+
+    def test_opencode_missing_db_falls_back(self):
+        home = self.root / 'home'
+        home.mkdir()
+        row = agent(kind='opencode')
+        self.assertIsNone(opener.session_argv(row, home=home))
+
     def test_other_kinds_have_no_session_probe(self):
-        self.assertIsNone(opener.session_argv(agent(kind='opencode')))
         self.assertIsNone(opener.session_argv(agent(kind='devin')))
 
 

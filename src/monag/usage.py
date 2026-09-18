@@ -69,6 +69,22 @@ def detect_provider_account(provider, home=None):
                 con.close()
                 if row and row[0]:
                     return row[0]
+        elif provider == 'opencode':
+            opencode_db = base / '.local' / 'share' / 'opencode' / 'opencode.db'
+            if opencode_db.is_file():
+                import sqlite3
+                con = sqlite3.connect(f'file:{opencode_db}?mode=ro', uri=True)
+                try:
+                    row = con.execute(
+                        'SELECT a.email FROM account_state s '
+                        'JOIN account a ON a.id = s.active_account_id').fetchone()
+                    if not row:
+                        row = con.execute(
+                            'SELECT email FROM control_account WHERE active = 1').fetchone()
+                finally:
+                    con.close()
+                if row and row[0]:
+                    return row[0]
     except Exception:
         pass
     return None

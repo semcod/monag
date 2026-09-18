@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -209,6 +210,25 @@ class UsageTests(unittest.TestCase):
             'oauthAccount': {'emailAddress': 'user@claude.ai'}
         }))
         self.assertEqual(usage.detect_provider_account('claude', home=fake_home), 'user@claude.ai')
+
+    def test_detect_provider_account_opencode(self):
+        fake_home = self.root / 'fakehome'
+        db = fake_home / '.local' / 'share' / 'opencode' / 'opencode.db'
+        db.parent.mkdir(parents=True)
+        con = sqlite3.connect(str(db))
+        con.execute('CREATE TABLE account (id TEXT, email TEXT)')
+        con.execute('CREATE TABLE account_state (id TEXT, active_account_id TEXT)')
+        con.execute("INSERT INTO account VALUES ('a1', 'oc@example.com')")
+        con.execute("INSERT INTO account_state VALUES ('s1', 'a1')")
+        con.commit()
+        con.close()
+        self.assertEqual(usage.detect_provider_account('opencode', home=fake_home),
+                         'oc@example.com')
+
+    def test_detect_provider_account_opencode_empty(self):
+        fake_home = self.root / 'fakehome'
+        fake_home.mkdir()
+        self.assertIsNone(usage.detect_provider_account('opencode', home=fake_home))
 
     def test_agents_table_shows_account_email(self):
         proc = self.fake_proc()
