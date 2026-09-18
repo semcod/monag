@@ -12,7 +12,7 @@ canonical repository's coverage. A failed fork-metadata lookup is reported as
 an explicit unknown and never silently treated as "zero".
 """
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import time
@@ -84,7 +84,31 @@ def github_issues(repo, limit=200):
         return None, [f'{repo}: invalid gh JSON']
 
 
-def audit_repo(path, issue_limit=200):
+def parse_iso(value):
+    """GitHub's ISO-8601 timestamp as an aware datetime, or None when unusable."""
+    if not isinstance(value, str):
+        return None
+    try:
+        stamp = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def age_label(moment, now):
+    """Compact 'in X'/'X ago' age for a table cell."""
+    seconds = int((now - moment).total_seconds())
+    label = f'{-seconds}s ago' if seconds < 0 else None
+    if label is None:
+        days, seconds = divmod(seconds, 86400)
+        hours, seconds = divmod(seconds, 3600)
+        minutes, _ = divmod(seconds, 60)
+        label = (f'{days}d{hours}h' if days else f'{hours}h{minutes}m' if hours
+                 else f'{minutes}m' if minutes else f'{seconds}s') + ' ago'
+    return label
+
+
+def audit_repo(path, issue_limit=200, recent_hours=None, now=None):
     """One repository's coverage report; never raises, errors are data."""
     path = Path(path)
     repo = repo_remote(path)
@@ -97,7 +121,7 @@ def audit_repo(path, issue_limit=200):
             'tickets': [], 'ticket_count': 0, 'mapped_ticket_count': 0,
             'sync_index_source': None, 'sync_index_error': None,
             'github_fetched': False, 'github_errors': [], 'github_issue_count': None,
-            'github_open': None, 'github_closed': None,
+            'github_open': None, 'github_closed': None, 'recent_issues': [],
             'untracked_issues': [], 'orphan_tickets': [], 'sync_drift': [],
         }
 
@@ -120,6 +144,14 @@ def audit_repo(path, issue_limit=200):
     sync_drift = ([{'id': ticket_id, 'github': issue_id, 'in_sync_index': index.get(ticket_id) == issue_id}
                   for ticket_id, issue_id in sorted(mapped.items()) if index.get(ticket_id) != issue_id]
                  if index_source is not None else [])
+    if fetched and recent_hours is not None:
+        cutoff = (now or datetime.now(timezone.utc)) - timedelta(hours=recent_hours)
+        recent_issues = sorted(
+            (item for item in issues
+             if (parse_iso(item.get('updatedAt')) or datetime.min.replace(tzinfo=timezone.utc)) >= cutoff),
+            key=lambda item: item.get('updatedAt') or '', reverse=True)
+    else:
+        recent_issues = []
     return {
         'path': str(path), 'repo': repo, 'is_fork': False if repo is not None and is_fork is False else None,
         'ignored': False, 'ignored_reason': None,
@@ -131,6 +163,7 @@ def audit_repo(path, issue_limit=200):
         'github_issue_count': len(issues) if fetched else None,
         'github_open': sum(1 for i in issues if i.get('state') == 'OPEN') if fetched else None,
         'github_closed': sum(1 for i in issues if i.get('state') == 'CLOSED') if fetched else None,
+        'recent_issues': recent_issues,
         'untracked_issues': untracked_issues, 'orphan_tickets': orphan_tickets,
         'sync_drift': sync_drift,
     }
@@ -157,11 +190,12 @@ def targets(root, depth):
     return 'workspace', found, errors
 
 
-def scan(root, depth=2, issue_limit=200):
+def scan(root, depth=2, issue_limit=200, recent_hours=None):
     started = time.monotonic()
+    now = datetime.now(timezone.utc)
     mode, paths, errors = targets(root, depth)
     with ThreadPoolExecutor(max_workers=8) as pool:
-        reports = list(pool.map(lambda p: audit_repo(p, issue_limit), paths))
+        reports = list(pool.map(lambda p: audit_repo(p, issue_limit, recent_hours, now), paths))
     ignored_forks = [r for r in reports if r.get('ignored_reason') == 'github-fork']
     repositories = [r for r in reports if not r.get('ignored')]
     repositories.sort(key=lambda r: (-len(r['untracked_issues']), -len(r['sync_drift']),
@@ -179,6 +213,9 @@ def scan(root, depth=2, issue_limit=200):
         'total_planfile_tickets': sum(r['ticket_count'] for r in repositories),
         'total_untracked_issues': sum(len(r['untracked_issues']) for r in repositories),
         'total_sync_drift': sum(len(r['sync_drift']) for r in repositories),
+        'recent_hours': recent_hours,
+        'total_recent_issues': (sum(len(r['recent_issues']) for r in repositories)
+                                if recent_hours is not None else None),
         'errors': errors,
         'notice': 'Read-only comparison of local Planfile tickets against GitHub Issues via `gh`; '
                   'no writes to either. A missing GitHub remote or failed `gh` call leaves that '
@@ -198,8 +235,13 @@ def markdown(data, limit=12):
              f"GitHub issues observed: **{data['total_github_issues']}** · "
              f"Planfile tickets: **{data['total_planfile_tickets']}** · "
              f"issues with no Planfile ticket: **{data['total_untracked_issues']}** · "
-             f"ticket/sync-index drift: **{data['total_sync_drift']}**.", '',
-             '## Repositories', '']
+             f"ticket/sync-index drift: **{data['total_sync_drift']}**.", '']
+    recent_hours = data.get('recent_hours')
+    now = parse_iso(data.get('observed_at')) or datetime.now(timezone.utc)
+    if recent_hours is not None:
+        lines.extend([f"GitHub issues updated in the last {recent_hours:g} h: "
+                      f"**{data['total_recent_issues']}**", ''])
+    lines.extend(['## Repositories', ''])
     shown = data['repositories'][:limit]
     lines.append(table(['Repository', 'GitHub issues', 'Planfile tickets', 'Mapped', 'Untracked', 'Orphan', 'Sync drift'],
                        [[r['repo'] or r['path'],
@@ -212,6 +254,17 @@ def markdown(data, limit=12):
                       for r in shown for issue in r['untracked_issues'][:limit]]
     lines.extend(['', '## GitHub issues with no Planfile ticket', '',
                  table(['Repository', 'Issue', 'State', 'Title'], untracked_rows[:limit])])
+    if recent_hours is not None:
+        recent_pairs = [(issue.get('updatedAt') or '',
+                         [r['repo'] or r['path'], '#' + str(issue.get('number')),
+                          issue.get('state', ''),
+                          age_label(parse_iso(issue.get('updatedAt')) or now, now),
+                          issue.get('title', '')])
+                        for r in shown for issue in r['recent_issues']]
+        recent_pairs.sort(key=lambda pair: pair[0], reverse=True)
+        lines.extend(['', f'## GitHub issues updated in the last {recent_hours:g} h', '',
+                      table(['Repository', 'Issue', 'State', 'Updated', 'Title'],
+                            [row for _, row in recent_pairs[:limit]])])
     drift_rows = [[r['repo'] or r['path'], drift['id'], drift['github'],
                   'present' if drift['in_sync_index'] else 'missing/mismatched']
                  for r in shown for drift in r['sync_drift'][:limit]]

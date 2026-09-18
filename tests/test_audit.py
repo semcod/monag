@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import subprocess
@@ -199,6 +200,47 @@ class AuditTests(unittest.TestCase):
         self.assertFalse(errors)
         self.assertEqual({i['id'] for i in items}, {'PLF-001', 'PLF-002'})
         self.assertEqual(len(sources), 2)
+
+    def test_recent_window_filters_issues_by_updated_at(self):
+        repo = self.make_repo('org/demo', remote='git@github.com:org/demo.git')
+        now = datetime.now(timezone.utc)
+        issues = json.dumps([
+            {'number': 1, 'title': 'Fresh', 'state': 'OPEN',
+             'updatedAt': (now - timedelta(minutes=30)).isoformat()},
+            {'number': 2, 'title': 'Stale', 'state': 'CLOSED',
+             'updatedAt': (now - timedelta(hours=3)).isoformat()},
+            {'number': 3, 'title': 'No timestamp', 'state': 'OPEN'},
+            {'number': 4, 'title': 'Bad timestamp', 'state': 'OPEN', 'updatedAt': 'soon'},
+        ])
+        with patch('monag.audit.command', side_effect=self.fake_gh({'org/demo': (issues, None)})):
+            data = audit.scan(repo, recent_hours=1)
+        r = data['repositories'][0]
+        self.assertEqual([i['number'] for i in r['recent_issues']], [1])
+        self.assertEqual(data['total_recent_issues'], 1)
+        self.assertEqual(data['recent_hours'], 1)
+
+    def test_recent_window_off_leaves_recent_fields_empty(self):
+        repo = self.make_repo('org/demo', remote='git@github.com:org/demo.git')
+        now = datetime.now(timezone.utc)
+        issues = json.dumps([{'number': 1, 'title': 'Fresh', 'state': 'OPEN',
+                              'updatedAt': now.isoformat()}])
+        with patch('monag.audit.command', side_effect=self.fake_gh({'org/demo': (issues, None)})):
+            data = audit.scan(repo)
+        self.assertEqual(data['repositories'][0]['recent_issues'], [])
+        self.assertIsNone(data['total_recent_issues'])
+        self.assertIsNone(data['recent_hours'])
+
+    def test_markdown_renders_recent_section_when_window_set(self):
+        repo = self.make_repo('org/demo', remote='git@github.com:org/demo.git')
+        now = datetime.now(timezone.utc)
+        issues = json.dumps([{'number': 7, 'title': 'Just now', 'state': 'OPEN',
+                              'updatedAt': now.isoformat()}])
+        with patch('monag.audit.command', side_effect=self.fake_gh({'org/demo': (issues, None)})):
+            data = audit.scan(repo, recent_hours=1)
+        text = audit.markdown(data)
+        self.assertIn('updated in the last 1 h', text)
+        self.assertIn('#7', text)
+        self.assertIn('Updated', text)
 
     def test_markdown_renders_every_section_without_crashing(self):
         repo = self.make_repo('org/demo', remote='git@github.com:org/demo.git')
