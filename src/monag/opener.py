@@ -4,14 +4,18 @@ Selection is by the numbered row of `monag usage` output or an explicit
 `pid:NNNN`, optionally followed by an action letter: `open 4t` opens a
 terminal (default), `4b`/`4w` a browser route, `4d` the desktop UI,
 `4o`/`4f` the working directory in the file manager and `4p` prints the
-command without spawning. IDE-managed ACP adapters are reported, never
-respawned.
+command without spawning. A bare `monag open` in a terminal shows an
+interactive cursor picker instead. IDE-managed ACP adapters are reported,
+never respawned.
 """
+import contextlib
 import os
 import re
+import select
 import shlex
 import shutil
 import subprocess
+import sys
 
 from .agents import ACP
 
@@ -197,4 +201,99 @@ def open_target(agents, target, action=None, browser=False, dry_run=False,
     agent, problem = pick(agents, ref)
     if agent is None:
         return False, problem
+    return open_agent(agent, action=action, dry_run=dry_run, env=env, spawn=spawn)
+
+
+PICKER_HINT = 'arrows/j/k move · t terminal · b browser · d desktop · o files · p print · Enter open · q quit'
+
+
+def _read_key(stream):
+    """One keypress → 'up', 'down', 'enter', 'quit', or a single character."""
+    ch = stream.read(1)
+    if ch == '\x1b':
+        # Arrow keys arrive as ESC [ A/B; a bare Esc means quit. The select
+        # guard keeps a lone Esc from blocking on the escape-sequence read.
+        if hasattr(stream, 'fileno'):
+            try:
+                if select.select([stream], [], [], 0.05)[0]:
+                    seq = stream.read(2)
+                    if seq == '[A':
+                        return 'up'
+                    if seq == '[B':
+                        return 'down'
+            except (OSError, ValueError):
+                pass
+        return 'quit'
+    if ch in ('\r', '\n'):
+        return 'enter'
+    if ch in ('\x03', '\x04'):  # Ctrl-C, Ctrl-D
+        return 'quit'
+    if ch == 'k':
+        return 'up'
+    if ch == 'j':
+        return 'down'
+    if ch == 'q':
+        return 'quit'
+    return ch
+
+
+def choose(agents, limit=None, stream=None, out=None, default_action='terminal'):
+    """Interactive row picker; returns (agent, action) or (None, None) on quit."""
+    rows = list(agents[:limit] if limit else agents)
+    if not rows:
+        return None, None
+    stream = stream or sys.stdin
+    out = out or sys.stdout
+    index, drawn = 0, 0
+    while True:
+        lines = [f'  {PICKER_HINT}']
+        for i, a in enumerate(rows):
+            mark = '>' if i == index else ' '
+            account = (a.get('account') or '—')[:28]
+            lines.append(f'{mark} {i + 1:<3} {a["pid"]:<9} {a["kind"]:<14} {account:<30} {a["cwd"]}')
+        if drawn:
+            out.write(f'\x1b[{drawn}F')
+        out.write('\n'.join(lines) + '\n')
+        out.flush()
+        drawn = len(lines)
+        key = _read_key(stream)
+        if key == 'quit':
+            return None, None
+        if key == 'up':
+            index = (index - 1) % len(rows)
+        elif key == 'down':
+            index = (index + 1) % len(rows)
+        elif key == 'enter':
+            return rows[index], default_action
+        elif key in ACTION_LETTERS:
+            return rows[index], ACTION_LETTERS[key]
+
+
+@contextlib.contextmanager
+def _cbreak(stream):
+    """Put a tty in cbreak mode so keypresses arrive without Enter."""
+    import termios
+    import tty
+    fd = stream.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        yield
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def open_interactive(agents, limit=None, default_action='terminal', dry_run=False,
+                     env=None, spawn=subprocess.Popen, stream=None, out=None):
+    """Cursor-picker entry point for a bare `monag open`."""
+    stream = stream or sys.stdin
+    if not stream.isatty():
+        return False, 'no row given; `monag open N[t|b|d|o|p]` or run in a terminal for the picker'
+    with _cbreak(stream):
+        agent, action = choose(agents, limit=limit, stream=stream, out=out,
+                               default_action=default_action)
+    if agent is None:
+        return False, 'selection cancelled'
+    if action == 'print':
+        action, dry_run = 'terminal', True
     return open_agent(agent, action=action, dry_run=dry_run, env=env, spawn=spawn)

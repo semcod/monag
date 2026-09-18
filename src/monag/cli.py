@@ -23,7 +23,7 @@ SHELL_COMMANDS = {
     'refresh': 'odśwież status i backlog Planfile',
     'status': 'pokaż jeden snapshot agentów i checkoutów',
     'usage': 'pokaż tabelę zużycia agentów i kont',
-    'open': 'otwórz wiersz `usage` (open N, open 4t/4b/4d/4o/4p lub open pid:NNNN)',
+    'open': 'otwórz wiersz `usage` (open N, open 4t/4b/4d/4o/4p, open pid:NNNN lub sam open = wybór kursorem)',
     'resume': 'pokaż worktree, lease i otwarte tickety Planfile',
     'audit': 'porównaj lokalne tickety Planfile z GitHub Issues',
     'catalog': 'pokaż lokalny katalog projektów',
@@ -195,8 +195,10 @@ def main(argv=None):
                                    '(coordinator containers on this host)')
     open_parser = sub.add_parser('open', help='open one numbered `usage` row; append an action '
                                             'letter (t/b/d/o/p) or use --browser')
-    open_parser.add_argument('target', help='row number from `usage`, or pid:NNNN; an action '
-                                            'letter may be appended (4t, 4b, 4d, 4o, 4p)')
+    open_parser.add_argument('target', nargs='?',
+                             help='row number from `usage`, or pid:NNNN; an action '
+                                  'letter may be appended (4t, 4b, 4d, 4o, 4p). '
+                                  'Omit for the interactive picker')
     open_parser.add_argument('action', nargs='?',
                              help='action letter or name: t terminal, b/w browser, '
                                   'd desktop, o/f files, p print')
@@ -331,10 +333,16 @@ def main(argv=None):
             from . import opener, usage
             data = usage.scan(root, registry=registry, machine=args.machine,
                               all_users=args.all_users)
-            ok, message = opener.open_target(data['agents'], args.target,
-                                             action=args.action,
-                                             browser=args.browser,
-                                             dry_run=args.print_only)
+            if args.target:
+                ok, message = opener.open_target(data['agents'], args.target,
+                                                 action=args.action,
+                                                 browser=args.browser,
+                                                 dry_run=args.print_only)
+            else:
+                ok, message = opener.open_interactive(
+                    data['agents'], limit=args.limit or None,
+                    default_action='browser' if args.browser else 'terminal',
+                    dry_run=args.print_only)
             print(message, flush=True)
             return 0 if ok else 2
         if args.mode == 'resume':
@@ -496,13 +504,13 @@ def main(argv=None):
                     from . import opener, usage
                     parts = command_line.split(maxsplit=1)
                     target = parts[1].strip() if len(parts) > 1 else ''
-                    if not target:
-                        print('Użycie: open N[litera]  — 4t terminal, 4b przeglądarka, '
-                              '4d desktop, 4o pliki, 4p podgląd; lub open pid:NNNN', flush=True)
-                        continue
                     opened = usage.scan(root, registry=registry, machine=args.machine,
                                         all_users=args.all_users)
-                    print(opener.open_target(opened['agents'], target)[1], flush=True)
+                    if target:
+                        print(opener.open_target(opened['agents'], target)[1], flush=True)
+                    else:
+                        print(opener.open_interactive(opened['agents'],
+                                                      limit=args.limit or None)[1], flush=True)
                     continue
                 show_report(command_name)
         if console is not None and args.mode == 'watch' and sys.stdout.isatty():

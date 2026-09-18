@@ -1,3 +1,4 @@
+import io
 import unittest
 
 from monag import opener
@@ -178,6 +179,47 @@ class OpenAgentTest(unittest.TestCase):
         ok, message = opener.open_target(agents, '1t', action='b')
         self.assertFalse(ok)
         self.assertIn('given twice', message)
+
+
+class ChooseTest(unittest.TestCase):
+    def test_choose_moves_and_picks_action(self):
+        agents = [agent(11), agent(22, 'claude'), agent(33, 'opencode')]
+        out = io.StringIO()
+        picked, action = opener.choose(agents, stream=io.StringIO('jjb'), out=out)
+        self.assertEqual(picked['pid'], 33)
+        self.assertEqual(action, 'browser')
+        self.assertIn('opencode', out.getvalue())
+
+    def test_enter_uses_default_action(self):
+        agents = [agent(11)]
+        picked, action = opener.choose(agents, stream=io.StringIO('\r'),
+                                       out=io.StringIO())
+        self.assertEqual(picked['pid'], 11)
+        self.assertEqual(action, 'terminal')
+        _, action = opener.choose(agents, stream=io.StringIO('\r'), out=io.StringIO(),
+                                  default_action='browser')
+        self.assertEqual(action, 'browser')
+
+    def test_up_wraps_to_last_row(self):
+        agents = [agent(11), agent(22)]
+        picked, _ = opener.choose(agents, stream=io.StringIO('k\r'), out=io.StringIO())
+        self.assertEqual(picked['pid'], 22)
+
+    def test_quit_cancels(self):
+        picked, action = opener.choose([agent(11)], stream=io.StringIO('q'),
+                                       out=io.StringIO())
+        self.assertIsNone(picked)
+        self.assertIsNone(action)
+
+    def test_empty_list_returns_none(self):
+        picked, action = opener.choose([], stream=io.StringIO(''), out=io.StringIO())
+        self.assertIsNone(picked)
+        self.assertIsNone(action)
+
+    def test_open_interactive_requires_tty(self):
+        ok, message = opener.open_interactive([agent(11)], stream=io.StringIO('q'))
+        self.assertFalse(ok)
+        self.assertIn('no row given', message)
 
 
 if __name__ == '__main__':
