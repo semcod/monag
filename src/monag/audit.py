@@ -167,6 +167,9 @@ def audit_repo(path, issue_limit=200, recent_hours=None, now=None):
             'sync_index_source': None, 'sync_index_error': None,
             'github_fetched': False, 'github_errors': [], 'github_issue_count': None,
             'github_open': None, 'github_closed': None, 'github_pr_count': None,
+            'github_pr_open': None, 'github_pr_merged': None, 'github_pr_closed': None,
+            'open_prs': [],
+            'recent_issues': [],
             'recent_ops': [], 'untracked_issues': [], 'orphan_tickets': [],
             'pr_tickets': [], 'sync_drift': [],
         }
@@ -223,6 +226,9 @@ def audit_repo(path, issue_limit=200, recent_hours=None, now=None):
     else:
         recent_issues = []
         recent_ops = []
+    open_prs = [p for p in prs if p.get('state') == 'OPEN'] if pr_fetched else []
+    merged_prs = [p for p in prs if p.get('state') == 'MERGED'] if pr_fetched else []
+    closed_prs = [p for p in prs if p.get('state') == 'CLOSED' and not p.get('mergedAt')] if pr_fetched else []
     return {
         'path': str(path), 'repo': repo, 'is_fork': False if repo is not None and is_fork is False else None,
         'ignored': False, 'ignored_reason': None,
@@ -235,6 +241,12 @@ def audit_repo(path, issue_limit=200, recent_hours=None, now=None):
         'github_open': sum(1 for i in issues if i.get('state') == 'OPEN') if fetched else None,
         'github_closed': sum(1 for i in issues if i.get('state') == 'CLOSED') if fetched else None,
         'github_pr_count': len(prs) if pr_fetched else None,
+        'github_pr_open': len(open_prs) if pr_fetched else None,
+        'github_pr_merged': len(merged_prs) if pr_fetched else None,
+        'github_pr_closed': len(closed_prs) if pr_fetched else None,
+        'open_prs': [{'number': p.get('number'), 'title': p.get('title', ''),
+                      'url': p.get('url', ''), 'author': (p.get('author') or {}).get('login', '-'),
+                      'updatedAt': p.get('updatedAt')} for p in open_prs] if pr_fetched else [],
         'recent_issues': recent_issues,
         'recent_ops': recent_ops,
         'untracked_issues': untracked_issues, 'orphan_tickets': orphan_tickets,
@@ -413,6 +425,9 @@ def scan(root, depth=2, issue_limit=200, recent_hours=None, worktrees_hours=10.0
         'repositories_with_planfile': sum(1 for r in repositories if r['planfile_available']),
         'total_github_issues': sum(r['github_issue_count'] or 0 for r in repositories),
         'total_github_prs': sum(r['github_pr_count'] or 0 for r in repositories),
+        'total_github_prs_open': sum(r['github_pr_open'] or 0 for r in repositories),
+        'total_github_prs_merged': sum(r['github_pr_merged'] or 0 for r in repositories),
+        'total_github_prs_closed': sum(r['github_pr_closed'] or 0 for r in repositories),
         'total_planfile_tickets': sum(r['ticket_count'] for r in repositories),
         'total_untracked_issues': sum(len(r['untracked_issues']) for r in repositories),
         'total_sync_drift': sum(len(r['sync_drift']) for r in repositories),
@@ -488,6 +503,8 @@ def markdown(data, limit=12):
              f"{data['duration_seconds']} s. · ignored GitHub forks: "
              f"**{data['ignored_fork_count']}**", '',
              f"GitHub issues observed: **{data['total_github_issues']}** · "
+             f"GitHub PRs observed: **{data.get('total_github_prs', 0)}** "
+             f"({data.get('total_github_prs_open', 0)} open, {data.get('total_github_prs_merged', 0)} merged) · "
              f"Planfile tickets: **{data['total_planfile_tickets']}** · "
              f"issues with no Planfile ticket: **{data['total_untracked_issues']}** · "
              f"ticket/sync-index drift: **{data['total_sync_drift']}**.", '']
@@ -512,6 +529,15 @@ def markdown(data, limit=12):
                       for r in shown for issue in r['untracked_issues'][:limit]]
     lines.extend(['', '## GitHub issues with no Planfile ticket', '',
                  table(['Repository', 'Issue', 'State', 'Title'], untracked_rows[:limit])])
+    all_open_prs = [
+        dict(p, repo=r['repo'] or r['path'])
+        for r in shown for p in r.get('open_prs', [])
+    ]
+    if all_open_prs:
+        lines.extend(['', '## Open GitHub Pull Requests', '',
+                      table(['Repository', 'PR', 'Author', 'Title'],
+                            [[p['repo'], '#' + str(p['number']), p.get('author', '-'), p.get('title', '')[:60]]
+                             for p in all_open_prs[:limit]])])
     if recent_hours is not None:
         recent_pairs = [(op.get('updatedAt') or '',
                          [r['repo'] or r['path'], op.get('kind', ''),

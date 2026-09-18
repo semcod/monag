@@ -26,6 +26,8 @@ SHELL_COMMANDS = {
     'open': 'otwórz wiersz `usage` (open N, open 4t/4b/4d/4o/4p, open pid:NNNN lub sam open = wybór kursorem)',
     'resume': 'pokaż worktree, lease i otwarte tickety Planfile',
     'audit': 'porównaj lokalne tickety Planfile z GitHub Issues',
+    'prs': 'sprawdź status Pull Requestów i gałęzi (open/merged)',
+    'pr': 'alias dla prs',
     'catalog': 'pokaż lokalny katalog projektów',
     'history': 'pokaż zapisane obserwacje',
     'help': 'pokaż tę pomoc',
@@ -228,6 +230,18 @@ def main(argv=None):
                                    'skip GitHub issue queries')
     audit_parser.add_argument('--worktrees-hours', type=float, default=10.0, metavar='HOURS',
                               help='time window in hours for worktree commit recency (default: 10)')
+    prs_parser = sub.add_parser('prs', aliases=['pr'],
+                                help='read-only audit of GitHub Pull Requests and local branch merge status')
+    prs_parser.add_argument('--hours', '--within', dest='hours', type=float, default=24.0, metavar='HOURS',
+                            help='time window in hours for PR recency and activity filtering (default: 24)')
+    prs_parser.add_argument('--state', choices=['all', 'open', 'merged'], default='all',
+                            help='filter PRs by state (default: all)')
+    prs_parser.add_argument('--unpushed-only', action='store_true',
+                            help='show only local branches with unpushed commits or no PR')
+    prs_parser.add_argument('--all-repos', action='store_true',
+                            help='query GitHub PRs for all discovered repositories under --root, ignoring recency filter')
+    prs_parser.add_argument('--pr-limit', type=int, default=200,
+                            help='maximum PRs to fetch per repository via gh (default: 200)')
     sub.add_parser('catalog', help='read-only, local-only catalog of what each repository under --root '
                                    'declares itself to be (description, stack, entry points)')
     export_parser = sub.add_parser('export', help='read-only staging list of candidate work items '
@@ -289,6 +303,8 @@ def main(argv=None):
         parser.error('interval must be between 0.2 and 86400 seconds')
     if args.mode in ('audit', 'export') and args.issue_limit < 1:
         parser.error('issue-limit must be >= 1')
+    if args.mode in ('prs', 'pr') and getattr(args, 'pr_limit', 200) < 1:
+        parser.error('pr-limit must be >= 1')
     if args.mode == 'panel' and not (0 <= args.port <= 65535 and 1 <= args.panel_interval < 86400
                                      and args.port_attempts >= 0):
         parser.error('port must be 0-65535 (0 = always pick automatically), '
@@ -390,6 +406,22 @@ def main(argv=None):
             else:
                 display_report(audit.markdown(data, args.limit))
             return 0
+        if args.mode in ('prs', 'pr'):
+            from . import prs
+            if output_format != 'json' and sys.stderr.isatty():
+                print('MONAG: auditing pull requests and local branches via gh; this can take a while.',
+                      file=sys.stderr, flush=True)
+            data = prs.scan(root, args.depth,
+                            hours=getattr(args, 'hours', 24.0),
+                            state=getattr(args, 'state', 'all'),
+                            pr_limit=getattr(args, 'pr_limit', 200),
+                            unpushed_only=getattr(args, 'unpushed_only', False),
+                            all_repos=getattr(args, 'all_repos', False))
+            if output_format == 'json':
+                print(json.dumps(data, ensure_ascii=True))
+            else:
+                display_report(prs.markdown(data, args.limit))
+            return 0
         if args.mode == 'catalog':
             from . import catalog
             if output_format != 'json' and sys.stderr.isatty():
@@ -481,6 +513,17 @@ def main(argv=None):
                         print(json.dumps(data, ensure_ascii=True), flush=True)
                     else:
                         display_report(audit.markdown(data, args.limit))
+                elif command_name in ('prs', 'pr'):
+                    from . import prs
+                    data = prs.scan(root, args.depth,
+                                    hours=getattr(args, 'hours', 24.0),
+                                    state=getattr(args, 'state', 'all'),
+                                    pr_limit=getattr(args, 'pr_limit', 200),
+                                    unpushed_only=getattr(args, 'unpushed_only', False))
+                    if output_format == 'json':
+                        print(json.dumps(data, ensure_ascii=True), flush=True)
+                    else:
+                        display_report(prs.markdown(data, args.limit))
                 elif command_name == 'catalog':
                     from . import catalog
                     data = catalog.scan(root, args.depth)

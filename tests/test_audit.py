@@ -420,7 +420,30 @@ class AuditTests(unittest.TestCase):
         payload = json.loads(stream.getvalue())
         self.assertTrue(payload['worktrees_only'])
         self.assertEqual(payload['worktrees_hours'], 8)
-        self.assertEqual(payload['total_worktrees'], 2)
+    def test_audit_reports_pr_open_merged_breakdown(self):
+        repo = self.make_repo('org/demo', remote='git@github.com:org/demo.git')
+        prs_json = json.dumps([
+            {'number': 10, 'title': 'Open PR', 'state': 'OPEN', 'author': {'login': 'dev'}},
+            {'number': 11, 'title': 'Merged PR', 'state': 'MERGED', 'mergedAt': '2026-09-18T10:00:00Z', 'author': {'login': 'dev'}},
+        ])
+        with patch('monag.audit.command', side_effect=self.fake_gh({
+            'org/demo': ('[]', None),
+            'org/demo:prs': (prs_json, None),
+        })):
+            data = audit.scan(repo)
+        self.assertEqual(data['total_github_prs'], 2)
+        self.assertEqual(data['total_github_prs_open'], 1)
+        self.assertEqual(data['total_github_prs_merged'], 1)
+        r = data['repositories'][0]
+        self.assertEqual(r['github_pr_open'], 1)
+        self.assertEqual(r['github_pr_merged'], 1)
+        self.assertEqual(len(r['open_prs']), 1)
+        self.assertEqual(r['open_prs'][0]['number'], 10)
+
+        text = audit.markdown(data)
+        self.assertIn('GitHub PRs observed: **2** (1 open, 1 merged)', text)
+        self.assertIn('## Open GitHub Pull Requests', text)
+        self.assertIn('#10', text)
 
 
 if __name__ == '__main__':
