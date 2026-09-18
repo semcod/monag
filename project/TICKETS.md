@@ -36,4 +36,6 @@
 | **ticket-040** | [`README.md`](./ticket-040/README.md) | - | - | - | - | - |
 | **ticket-041** | [`README.md`](./ticket-041/README.md) | - | - | - | - | - |
 | **ticket-042** | [`README.md`](./ticket-042/README.md) | - | - | - | - | - |
+| **ticket-043** | [`README.md`](./ticket-043/README.md) | - | - | - | - | - |
+| **ticket-044** | [`README.md`](./ticket-044/README.md) | - | - | - | - | - |
 <!-- AUTO:TICKET_INDEX:END -->
