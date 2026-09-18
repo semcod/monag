@@ -1,0 +1,28 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-054",
+  "summary": "normative specification and reference implementation for NL-DSL-LLM",
+  "workstream": "integration",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-054/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "docs/information/nl-dsl-llm.md",
+    "docs/README.md",
+    "src/monag/dsl_llm.py",
+    "src/monag/cli.py",
+    "src/monag/panel.py",
+    "src/monag/mcp.py",
+    "tests/test_dsl_llm.py"
+  ],
+  "forbiddenPaths": ["project/ticket-*/user-*.md"],
+  "stacks": ["python"],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}

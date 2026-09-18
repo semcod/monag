@@ -438,9 +438,9 @@ def main(argv=None):
             mcp.run_stdio_server(root, depth=args.depth)
             return 0
         if args.mode in ('query', 'ask'):
-            from . import dsl
+            from . import dsl_llm
             query_str = ' '.join(args.query)
-            res = dsl.execute(query_str, root, depth=args.depth, registry=registry)
+            res = dsl_llm.execute(query_str, root, depth=args.depth, registry=registry)
             if output_format == 'json':
                 print(json.dumps(res, ensure_ascii=True))
             else:
@@ -597,11 +597,11 @@ def main(argv=None):
                     print(shell_help(), flush=True)
                     continue
                 if command_name == 'query':
-                    from . import dsl
+                    from . import dsl_llm
                     parts = command_line.split(maxsplit=1)
                     q = parts[1].strip() if len(parts) > 1 else ''
                     if q:
-                        res = dsl.execute(q, root, depth=args.depth, registry=registry)
+                        res = dsl_llm.execute(q, root, depth=args.depth, registry=registry)
                         if res.get('status') == 'ok':
                             display_report(res['markdown'])
                         else:
@@ -610,8 +610,8 @@ def main(argv=None):
                         print("Wpisz zapytanie po 'query', np.: query pokaż otwarte PR", flush=True)
                     continue
                 if command_name not in SHELL_COMMANDS:
-                    from . import dsl
-                    res = dsl.execute(command_line, root, depth=args.depth, registry=registry)
+                    from . import dsl_llm
+                    res = dsl_llm.execute(command_line, root, depth=args.depth, registry=registry)
                     if res.get('status') == 'ok' and res.get('markdown'):
                         display_report(res['markdown'])
                         continue

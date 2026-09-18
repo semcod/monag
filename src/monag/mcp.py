@@ -151,8 +151,9 @@ def handle_tool_call(name, arguments, root, depth=2):
         return [{'type': 'text', 'text': res['markdown']}]
 
     elif name == 'monag_query':
+        from . import dsl_llm
         q_str = arguments.get('query', '')
-        res = dsl.execute(q_str, root, depth=depth)
+        res = dsl_llm.execute(q_str, root, depth=depth)
         if res.get('status') == 'error':
             return [{'type': 'text', 'text': f"Error: {res.get('error')}"}]
         return [{'type': 'text', 'text': res['markdown']}]
