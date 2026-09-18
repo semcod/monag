@@ -1,0 +1,26 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-050",
+  "summary": "audit: recent-op columns and coverage-gap diagnostics",
+  "workstream": "application",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-050/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/audit.py",
+    "src/monag/cli.py",
+    "tests/test_audit.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}
