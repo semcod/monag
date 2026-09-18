@@ -1,0 +1,90 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-067",
+  "summary": "Release monag 0.3.2 to PyPI via goal -a",
+  "workstream": "integration",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P1",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-067/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "CHANGELOG.md",
+    "VERSION",
+    "README.md",
+    "goal.yaml",
+    "pyproject.toml",
+    "src/monag/**"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "484059757026401cb836edd2a49c591d5bae4cc8",
+    "targetBranch": "main",
+    "outcome": "Bump 0.3.1 -> 0.3.2 across versioning files, record release in CHANGELOG, enable PyPI publishing in goal.yaml, and publish monag 0.3.2 to PyPI.",
+    "nonGoals": [
+      "No breaking changes to public CLI interfaces.",
+      "Preserve existing functionality and test suites."
+    ],
+    "complexity": "M",
+    "estimatedMinutes": 20,
+    "budgets": {
+      "maxImplementationFiles": 9,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Update version string in VERSION, pyproject.toml, and src/monag/__init__.py, add CHANGELOG entry for 0.3.2, enable publishing in goal.yaml, and publish via goal.",
+      "components": [
+        {
+          "name": "release",
+          "paths": [
+            "VERSION",
+            "pyproject.toml",
+            "CHANGELOG.md",
+            "README.md",
+            "goal.yaml",
+            "src/monag/__init__.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the release slice through protected review; a published PyPI version cannot be replaced, only superseded."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "uv build",
+          "twine check dist/*"
+        ],
+        "evidence": "Wheel and sdist built cleanly and passed twine check."
+      },
+      {
+        "criterion": "AC-04",
+        "commands": [
+          "goal -ay -f"
+        ],
+        "evidence": "Monag 0.3.2 published successfully to PyPI."
+      }
+    ]
+  }
+}
