@@ -32,6 +32,7 @@ SHELL_COMMANDS = {
     'query': 'zapytanie w języku naturalnym (PL/EN) lub DSL (OBSERVE ...)',
     'catalog': 'pokaż lokalny katalog projektów',
     'history': 'pokaż zapisane obserwacje',
+    'report': 'wygeneruj raport email z aktywności workspace',
     'help': 'pokaż tę pomoc',
     'quit': 'zakończ powłokę',
 }
@@ -290,6 +291,38 @@ def main(argv=None):
                                help="add a candidate per repository where semcod/taskill's read-only "
                                     "'status' (never 'run') reports it would update README/CHANGELOG/"
                                     "TODO; a missing/failing taskill checks nothing, never assumes clean")
+    report_parser = sub.add_parser('report', help='workspace activity digest sent via email; '
+                                                   'collects data from status, prs, audit, resume '
+                                                   'and export, then sends a Markdown/HTML email')
+    report_parser.add_argument('--email', dest='report_email', action='append', default=[],
+                               metavar='ADDR', help='recipient email address; repeatable')
+    report_parser.add_argument('--sections', dest='report_sections', default=None,
+                               help='comma-separated list of sections to include '
+                                    '(status,prs,audit,resume,export); default: all')
+    report_parser.add_argument('--smtp-host', dest='smtp_host', default=None,
+                               help='SMTP server hostname (env: MONAG_SMTP_HOST, default: localhost)')
+    report_parser.add_argument('--smtp-port', dest='smtp_port', type=int, default=None,
+                               help='SMTP server port (env: MONAG_SMTP_PORT, default: 587)')
+    report_parser.add_argument('--smtp-user', dest='smtp_user', default=None,
+                               help='SMTP username (env: MONAG_SMTP_USER)')
+    report_parser.add_argument('--smtp-password', dest='smtp_pass', default=None,
+                               help='SMTP password (env: MONAG_SMTP_PASSWORD)')
+    report_parser.add_argument('--smtp-tls', dest='smtp_tls', action='store_true', default=None,
+                               help='use STARTTLS (env: MONAG_SMTP_TLS, default: on for port 587)')
+    report_parser.add_argument('--from', dest='smtp_from', default=None,
+                               help='sender address (env: MONAG_FROM)')
+    report_parser.add_argument('--subject', dest='report_subject', default=None,
+                               help='email subject (default: MONAG report — <root> — <timestamp>)')
+    report_parser.add_argument('--schedule', dest='report_schedule', default=None, metavar='CRON',
+                               help='cron expression for periodic execution (e.g. "0 * * * *")')
+    report_parser.add_argument('--install-cron', dest='install_cron', action='store_true',
+                               help='install a crontab entry for periodic report delivery')
+    report_parser.add_argument('--remove-cron', dest='remove_cron', action='store_true',
+                               help='remove the monag:report crontab entry')
+    report_parser.add_argument('--dry-run', dest='report_dry_run', action='store_true',
+                               help='generate and print the report without sending email')
+    report_parser.add_argument('--issue-limit', type=int, default=200,
+                               help='GitHub issues fetched per repository (default: 200)')
     quality = sub.add_parser('quality', help='read-only semcod/regix quality gate for ONE repository '
                                              '(--root must be a Git checkout, not a workspace); '
                                              'costs roughly a minute per run, never a write command')
@@ -557,6 +590,60 @@ def main(argv=None):
             else:
                 display_report(export.markdown(data, args.limit))
             return 0
+        if args.mode == 'report':
+            from . import report
+            if getattr(args, 'remove_cron', False):
+                result = report.remove_cron()
+                if output_format == 'json':
+                    print(json.dumps(result, ensure_ascii=True))
+                else:
+                    print(f"{'OK' if result['ok'] else 'FAILED'}: {result.get('action', result.get('error'))}",
+                          flush=True)
+                return 0 if result['ok'] else 1
+            sections = None
+            if getattr(args, 'report_sections', None):
+                sections = [s.strip() for s in args.report_sections.split(',')]
+            if output_format != 'json' and sys.stderr.isatty():
+                print('MONAG: collecting workspace report data (status, prs, audit, resume, export)...',
+                     file=sys.stderr, flush=True)
+            data = report.collect(
+                root, args.depth, args.hours, sections, args.github,
+                args.issue_limit, registry, args.machine, args.all_users,
+                args.state_dir)
+            body = report.markdown(data)
+            if getattr(args, 'report_dry_run', False) or not args.report_email:
+                if output_format == 'json':
+                    print(json.dumps(data, ensure_ascii=True))
+                else:
+                    display_report(body)
+                return 0
+            smtp_cfg = report._smtp_config(
+                args_host=args.smtp_host, args_port=args.smtp_port,
+                args_user=args.smtp_user, args_pass=args.smtp_pass,
+                args_tls=args.smtp_tls, args_from=args.smtp_from)
+            subject = args.report_subject or f'MONAG report — {root.name} — {data["observed_at"][:16]}'
+            result = report.send_email(args.report_email, subject, body, smtp_cfg)
+            if output_format == 'json':
+                print(json.dumps(result, ensure_ascii=True))
+            else:
+                if result['ok']:
+                    print(f"Report sent to {', '.join(result['recipients'])} via {result['via']}",
+                          flush=True)
+                else:
+                    print(f"Send FAILED: {result['error']}", file=sys.stderr, flush=True)
+            if getattr(args, 'install_cron', False) and args.report_email:
+                schedule_expr = getattr(args, 'report_schedule', None) or '0 * * * *'
+                cron_result = report.install_cron(
+                    args.report_email[0], root, schedule_expr, sections)
+                if output_format == 'json':
+                    print(json.dumps(cron_result, ensure_ascii=True))
+                else:
+                    if cron_result['ok']:
+                        print(f"Cron installed: {cron_result['cron_line']}", flush=True)
+                    else:
+                        print(f"Cron install FAILED: {cron_result['error']}",
+                              file=sys.stderr, flush=True)
+            return 0 if result['ok'] else 1
         if args.mode == 'quality':
             from . import quality
             if output_format != 'json' and sys.stderr.isatty():
