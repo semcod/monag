@@ -310,6 +310,26 @@ class SessionArgvTest(unittest.TestCase):
         row = agent(kind='opencode')
         self.assertIsNone(opener.session_argv(row, home=home))
 
+    def test_codex_rollout_from_open_file(self):
+        rollout = ('/home/u/.codex/sessions/2026/09/18/'
+                   'rollout-2026-09-18T07-47-17-01a0ade7-af8c-7b83-9611-dc26a9fcbf72.jsonl')
+        self._fd_link(200, '5', rollout)
+        self._fd_link(200, '6', '/dev/null')
+        row = agent(pid=200, kind='codex')
+        self.assertEqual(
+            opener.session_argv(row, proc=self.root / 'proc'),
+            ['codex', 'resume', '01a0ade7-af8c-7b83-9611-dc26a9fcbf72'])
+        self.assertEqual(
+            opener.recipe(row, proc=self.root / 'proc')[0],
+            ['codex', 'resume', '01a0ade7-af8c-7b83-9611-dc26a9fcbf72'])
+
+    def test_codex_without_rollout_falls_back(self):
+        self._fd_link(200, '1', '/dev/null')
+        row = agent(pid=200, kind='codex')
+        self.assertIsNone(opener.session_argv(row, proc=self.root / 'proc'))
+        self.assertEqual(opener.recipe(row, proc=self.root / 'proc')[0],
+                         ['codex', 'resume'])
+
     def _tcp_listen(self, inode='424242', host='0100007F', port='1006'):
         net = self.root / 'proc' / 'net'
         net.mkdir(parents=True, exist_ok=True)
