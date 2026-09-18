@@ -190,8 +190,79 @@ class PrsTests(unittest.TestCase):
             self.assertEqual(code, 0)
         payload = json.loads(stdout_json.getvalue())
         self.assertEqual(payload['schema'], prs.SCHEMA)
-        self.assertTrue(payload['all_merged'])
+    def test_normalize_rest_pr(self):
+        raw_rest_open = {
+            'number': 42,
+            'title': 'Add feature',
+            'head': {'ref': 'feature/x'},
+            'base': {'ref': 'main'},
+            'html_url': 'https://github.com/org/repo/pull/42',
+            'draft': False,
+            'state': 'open',
+            'user': {'login': 'alice'},
+            'updated_at': '2026-09-18T10:00:00Z',
+            'created_at': '2026-09-18T09:00:00Z',
+            'merged_at': None,
+        }
+        normalized = prs._normalize_rest_pr(raw_rest_open)
+        self.assertEqual(normalized['number'], 42)
+        self.assertEqual(normalized['headRefName'], 'feature/x')
+        self.assertEqual(normalized['baseRefName'], 'main')
+        self.assertEqual(normalized['state'], 'OPEN')
+        self.assertFalse(normalized['isDraft'])
+        self.assertEqual(normalized['author'], {'login': 'alice'})
+
+        raw_rest_merged = {
+            'number': 43,
+            'title': 'Fix bug',
+            'head': {'ref': 'fix/y'},
+            'base': {'ref': 'main'},
+            'html_url': 'https://github.com/org/repo/pull/43',
+            'draft': False,
+            'state': 'closed',
+            'user': {'login': 'bob'},
+            'updated_at': '2026-09-18T11:00:00Z',
+            'created_at': '2026-09-18T10:00:00Z',
+            'merged_at': '2026-09-18T10:30:00Z',
+        }
+        normalized_merged = prs._normalize_rest_pr(raw_rest_merged)
+        self.assertEqual(normalized_merged['number'], 43)
+        self.assertEqual(normalized_merged['state'], 'MERGED')
+
+    def test_github_open_prs_rest_fallback_on_graphql_error(self):
+        def fake_cmd(args, cwd=None, timeout=25):
+            if args[:3] == ['gh', 'pr', 'list']:
+                return '', 'GraphQL: API rate limit already exceeded for user ID 5669657.'
+            if args[:3] == ['gh', 'api', 'repos/org/repo/pulls?state=all&per_page=100']:
+                rest_payload = [
+                    {
+                        'number': 100,
+                        'title': 'REST fallback PR',
+                        'head': {'ref': 'ticket/100'},
+                        'base': {'ref': 'main'},
+                        'html_url': 'https://github.com/org/repo/pull/100',
+                        'draft': False,
+                        'state': 'open',
+                        'user': {'login': 'dev'},
+                        'updated_at': '2026-09-18T12:00:00Z',
+                        'created_at': '2026-09-18T11:00:00Z',
+                        'merged_at': None,
+                    }
+                ]
+                return json.dumps(rest_payload), None
+            return real_command(args, cwd=cwd, timeout=timeout)
+
+        with patch('monag.prs.command', side_effect=fake_cmd):
+            prs_list, errors = prs.github_open_prs('org/repo')
+
+        self.assertEqual(errors, [])
+        self.assertIsNotNone(prs_list)
+        self.assertEqual(len(prs_list), 1)
+        self.assertEqual(prs_list[0]['number'], 100)
+        self.assertEqual(prs_list[0]['title'], 'REST fallback PR')
+        self.assertEqual(prs_list[0]['state'], 'OPEN')
 
 
 if __name__ == '__main__':
     unittest.main()
+

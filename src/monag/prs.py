@@ -61,22 +61,65 @@ def repo_remote(path):
     return github_repo(remote) if remote else None
 
 
+def _normalize_rest_pr(pr):
+    """Normalize a GitHub REST API pull request payload to standard prs dict format."""
+    state = 'MERGED' if pr.get('merged_at') else (pr.get('state') or '').upper()
+    return {
+        'number': pr.get('number'),
+        'title': pr.get('title'),
+        'headRefName': (pr.get('head') or {}).get('ref'),
+        'baseRefName': (pr.get('base') or {}).get('ref'),
+        'url': pr.get('html_url'),
+        'isDraft': bool(pr.get('draft', False)),
+        'state': state,
+        'author': {'login': (pr.get('user') or {}).get('login')},
+        'updatedAt': pr.get('updated_at'),
+        'createdAt': pr.get('created_at'),
+        'mergedAt': pr.get('merged_at'),
+    }
+
+
+def github_prs_via_rest(repo, state='all', limit=200):
+    """Fetch pull requests via GitHub REST API (gh api repos/<repo>/pulls).
+
+    Used as resilient fallback when GraphQL-based gh pr list hits secondary rate limits.
+    """
+    gh_state = state if state in {'open', 'closed', 'all'} else 'all'
+    endpoint = f'repos/{repo}/pulls?state={gh_state}&per_page={min(limit, 100)}'
+    out, error = command(['gh', 'api', endpoint], timeout=25)
+    if error:
+        return None, [f'{repo}: REST fallback failed: {error}']
+    try:
+        data = json.loads(out)
+        if not isinstance(data, list):
+            raise ValueError('expected a JSON array')
+        return [_normalize_rest_pr(p) for p in data], []
+    except (ValueError, TypeError):
+        return None, [f'{repo}: invalid REST JSON']
+
+
 def github_open_prs(repo, state='all', limit=200):
-    """Fetch pull requests for a repository via gh."""
+    """Fetch pull requests for a repository via gh with automatic REST fallback."""
     gh_state = state if state in {'open', 'closed', 'merged', 'all'} else 'all'
     out, error = command(['gh', 'pr', 'list', '--repo', repo, '--state', gh_state,
                           '--limit', str(limit), '--json',
                           'number,title,headRefName,baseRefName,url,isDraft,state,author,updatedAt,createdAt,mergedAt'],
                          timeout=25)
-    if error:
-        return None, [f'{repo}: {error}']
-    try:
-        prs = json.loads(out)
-        if not isinstance(prs, list):
-            raise ValueError('expected a JSON array')
-        return prs, []
-    except (ValueError, TypeError):
-        return None, [f'{repo}: invalid gh JSON']
+    if not error:
+        try:
+            prs = json.loads(out)
+            if isinstance(prs, list):
+                return prs, []
+        except (ValueError, TypeError):
+            pass
+
+    # Resilient fallback: use GitHub REST API when gh pr list fails (e.g. GraphQL burst rate limits)
+    prs_rest, rest_err = github_prs_via_rest(repo, state=state, limit=limit)
+    if prs_rest is not None:
+        return prs_rest, []
+
+    return None, [f'{repo}: {error or "unknown gh error"}']
+
 
 
 def inspect_working_tree(path):
