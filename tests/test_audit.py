@@ -27,6 +27,8 @@ class AuditTests(unittest.TestCase):
         self.git(repo, 'init', '-b', 'main')
         self.git(repo, 'config', 'user.email', 'test@example.invalid')
         self.git(repo, 'config', 'user.name', 'Test')
+        (repo / '.gitignore').write_text('/.worktrees/\n')
+        self.git(repo, 'add', '.gitignore')
         (repo / 'README').write_text('base')
         self.git(repo, 'add', 'README')
         self.git(repo, 'commit', '-m', 'base')
@@ -51,6 +53,9 @@ class AuditTests(unittest.TestCase):
             if args[:3] == ['gh', 'repo', 'view']:
                 repo = args[3]
                 return responses.get(f'{repo}:metadata', ('{"isFork": false}', None))
+            if args[:3] == ['gh', 'pr', 'list']:
+                repo = args[args.index('--repo') + 1]
+                return responses.get(f'{repo}:prs', ('[]', None))
             if args[:1] == ['gh']:
                 repo = args[args.index('--repo') + 1]
                 return responses.get(repo, ('[]', None))
@@ -206,7 +211,9 @@ class AuditTests(unittest.TestCase):
         now = datetime.now(timezone.utc)
         issues = json.dumps([
             {'number': 1, 'title': 'Fresh', 'state': 'OPEN',
-             'updatedAt': (now - timedelta(minutes=30)).isoformat()},
+             'updatedAt': (now - timedelta(minutes=30)).isoformat(),
+             'createdAt': (now - timedelta(days=2)).isoformat(),
+             'author': {'login': 'bot[bot]'}, 'labels': [{'name': 'bug'}]},
             {'number': 2, 'title': 'Stale', 'state': 'CLOSED',
              'updatedAt': (now - timedelta(hours=3)).isoformat()},
             {'number': 3, 'title': 'No timestamp', 'state': 'OPEN'},
@@ -215,9 +222,58 @@ class AuditTests(unittest.TestCase):
         with patch('monag.audit.command', side_effect=self.fake_gh({'org/demo': (issues, None)})):
             data = audit.scan(repo, recent_hours=1)
         r = data['repositories'][0]
-        self.assertEqual([i['number'] for i in r['recent_issues']], [1])
-        self.assertEqual(data['total_recent_issues'], 1)
+        self.assertEqual(len(r['recent_ops']), 1)
+        op = r['recent_ops'][0]
+        self.assertEqual(op['number'], 1)
+        self.assertEqual(op['kind'], 'issue')
+        self.assertEqual(op['change'], 'updated')
+        self.assertEqual(op['actor'], 'bot[bot]')
+        self.assertEqual(op['labels'], 'bug')
+        self.assertEqual(data['total_recent_ops'], 1)
         self.assertEqual(data['recent_hours'], 1)
+
+    def test_recent_window_classifies_pr_changes(self):
+        repo = self.make_repo('org/demo', remote='git@github.com:org/demo.git')
+        now = datetime.now(timezone.utc)
+        prs = json.dumps([
+            {'number': 10, 'title': 'Merged PR', 'state': 'MERGED',
+             'updatedAt': (now - timedelta(minutes=5)).isoformat(),
+             'createdAt': (now - timedelta(days=1)).isoformat(),
+             'closedAt': (now - timedelta(minutes=5)).isoformat(),
+             'mergedAt': (now - timedelta(minutes=5)).isoformat(),
+             'author': {'login': 'ifuri-validator-agent[bot]'}, 'labels': []},
+            {'number': 11, 'title': 'New PR', 'state': 'OPEN',
+             'updatedAt': (now - timedelta(minutes=10)).isoformat(),
+             'createdAt': (now - timedelta(minutes=10)).isoformat(),
+             'author': {'login': 'dev'}, 'labels': [{'name': 'feat'}]},
+        ])
+        with patch('monag.audit.command',
+                   side_effect=self.fake_gh({'org/demo': ('[]', None),
+                                             'org/demo:prs': (prs, None)})):
+            data = audit.scan(repo, recent_hours=1)
+        ops = {op['number']: op for op in data['repositories'][0]['recent_ops']}
+        self.assertEqual(ops[10]['change'], 'merged')
+        self.assertEqual(ops[10]['kind'], 'pr')
+        self.assertEqual(ops[10]['actor'], 'ifuri-validator-agent[bot]')
+        self.assertEqual(ops[11]['change'], 'opened')
+        self.assertEqual(ops[11]['labels'], 'feat')
+        self.assertEqual(data['repositories'][0]['github_pr_count'], 2)
+        self.assertEqual(data['total_github_prs'], 2)
+
+    def test_ticket_mapped_to_pr_is_not_an_orphan(self):
+        repo = self.make_repo('org/demo', remote='git@github.com:org/demo.git')
+        self.write_sprint(repo, 'current.yaml', {
+            'PLF-001': {'status': 'open', 'name': 'PR work', 'sync': {'github': {'id': '42'}}},
+        })
+        prs = json.dumps([{'number': 42, 'title': 'WIP', 'state': 'OPEN'}])
+        with patch('monag.audit.command',
+                   side_effect=self.fake_gh({'org/demo': ('[]', None),
+                                             'org/demo:prs': (prs, None)})):
+            data = audit.scan(repo)
+        r = data['repositories'][0]
+        self.assertEqual(r['orphan_tickets'], [])
+        self.assertEqual(r['pr_tickets'], [{'id': 'PLF-001', 'github': '42', 'pr_state': 'OPEN'}])
+        self.assertEqual(data['total_pr_tickets'], 1)
 
     def test_recent_window_off_leaves_recent_fields_empty(self):
         repo = self.make_repo('org/demo', remote='git@github.com:org/demo.git')
@@ -226,21 +282,35 @@ class AuditTests(unittest.TestCase):
                               'updatedAt': now.isoformat()}])
         with patch('monag.audit.command', side_effect=self.fake_gh({'org/demo': (issues, None)})):
             data = audit.scan(repo)
-        self.assertEqual(data['repositories'][0]['recent_issues'], [])
-        self.assertIsNone(data['total_recent_issues'])
+        self.assertEqual(data['repositories'][0]['recent_ops'], [])
+        self.assertIsNone(data['total_recent_ops'])
         self.assertIsNone(data['recent_hours'])
 
     def test_markdown_renders_recent_section_when_window_set(self):
         repo = self.make_repo('org/demo', remote='git@github.com:org/demo.git')
         now = datetime.now(timezone.utc)
         issues = json.dumps([{'number': 7, 'title': 'Just now', 'state': 'OPEN',
-                              'updatedAt': now.isoformat()}])
+                              'updatedAt': now.isoformat(), 'createdAt': now.isoformat()}])
         with patch('monag.audit.command', side_effect=self.fake_gh({'org/demo': (issues, None)})):
             data = audit.scan(repo, recent_hours=1)
         text = audit.markdown(data)
         self.assertIn('updated in the last 1 h', text)
         self.assertIn('#7', text)
-        self.assertIn('Updated', text)
+        self.assertIn('opened', text)
+        self.assertIn('Actor', text)
+
+    def test_markdown_groups_read_errors_by_pattern(self):
+        repo = self.make_repo('org/demo', remote='git@github.com:org/demo.git')
+        repo2 = self.make_repo('org/demo2', remote='git@github.com:org/demo2.git')
+        (repo / '.planfile' / 'sprints').mkdir(parents=True)
+        (repo / '.planfile' / 'sprints' / 'broken.yaml').write_text('{bad: [yaml')
+        (repo2 / '.planfile' / 'sprints').mkdir(parents=True)
+        (repo2 / '.planfile' / 'sprints' / 'broken.yaml').write_text('{bad: [yaml')
+        with patch('monag.audit.command', side_effect=self.fake_gh({})):
+            data = audit.scan(self.root)
+        self.assertGreaterEqual(len([e for r in data['repositories'] for e in r['planfile_errors']]), 1)
+        text = audit.markdown(data)
+        self.assertIn('Read errors — top patterns', text)
 
     def test_markdown_renders_every_section_without_crashing(self):
         repo = self.make_repo('org/demo', remote='git@github.com:org/demo.git')
@@ -254,5 +324,105 @@ class AuditTests(unittest.TestCase):
         self.assertIn('ignored GitHub forks', text)
 
 
+    def test_audit_worktree_clean_and_recent(self):
+        repo = self.make_repo('org/demo')
+        wt_path = self.root / 'org/demo/.worktrees/ticket-100--test'
+        self.git(repo, 'worktree', 'add', '-b', 'ticket/100-test', str(wt_path))
+        record = {'path': str(wt_path), 'branch': 'ticket/100-test'}
+        now = datetime.now(timezone.utc)
+        cutoff_ts = (now - timedelta(hours=10)).timestamp()
+        info = audit.audit_worktree(record, 'org/demo', repo, cutoff_ts, now)
+        self.assertEqual(info['branch'], 'ticket/100-test')
+        self.assertTrue(info['clean'])
+        self.assertEqual(info['dirty_count'], 0)
+        self.assertTrue(info['recent'])
+        self.assertTrue(info['exists'])
+        self.assertFalse(info['is_primary'])
+        self.assertEqual(info['commit_subject'], 'base')
+
+    def test_audit_worktree_dirty_detects_uncommitted_files(self):
+        repo = self.make_repo('org/demo')
+        wt_path = self.root / 'org/demo/.worktrees/ticket-101--dirty'
+        self.git(repo, 'worktree', 'add', '-b', 'ticket/101-dirty', str(wt_path))
+        (wt_path / 'new_file.txt').write_text('dirty content')
+        record = {'path': str(wt_path), 'branch': 'ticket/101-dirty'}
+        now = datetime.now(timezone.utc)
+        cutoff_ts = (now - timedelta(hours=10)).timestamp()
+        info = audit.audit_worktree(record, 'org/demo', repo, cutoff_ts, now)
+        self.assertFalse(info['clean'])
+        self.assertEqual(info['dirty_count'], 1)
+        self.assertIn('new_file.txt', info['dirty_files'][0])
+
+    def test_audit_worktree_missing_path_handled_safely(self):
+        repo = self.make_repo('org/demo')
+        missing_path = self.root / 'org/demo/.worktrees/nonexistent'
+        record = {'path': str(missing_path), 'branch': 'ticket/999-gone'}
+        now = datetime.now(timezone.utc)
+        cutoff_ts = (now - timedelta(hours=10)).timestamp()
+        info = audit.audit_worktree(record, 'org/demo', repo, cutoff_ts, now)
+        self.assertFalse(info['exists'])
+        self.assertIsNone(info['clean'])
+        self.assertFalse(info['recent'])
+        self.assertTrue(info['errors'])
+
+    def test_collect_worktrees_finds_repos_with_worktrees(self):
+        repo1 = self.make_repo('org/with-wt')
+        wt1 = self.root / 'org/with-wt/.worktrees/ticket-001--feature'
+        self.git(repo1, 'worktree', 'add', '-b', 'ticket/001-feature', str(wt1))
+        repo2 = self.make_repo('org/without-wt')
+        summary = audit.collect_worktrees([repo1, repo2], hours=10)
+        self.assertEqual(summary['repos_with_worktrees'], 1)
+        self.assertEqual(len(summary['worktrees']), 2)
+        branches = {w['branch'] for w in summary['worktrees']}
+        self.assertIn('ticket/001-feature', branches)
+        self.assertIn('main', branches)
+
+    def test_scan_worktrees_only_mode(self):
+        repo = self.make_repo('org/demo')
+        wt = self.root / 'org/demo/.worktrees/ticket-002--wtonly'
+        self.git(repo, 'worktree', 'add', '-b', 'ticket/002-wtonly', str(wt))
+        data = audit.scan(repo, worktrees_only=True, worktrees_hours=5)
+        self.assertTrue(data['worktrees_only'])
+        self.assertEqual(data['worktrees_hours'], 5)
+        self.assertEqual(data['total_worktrees'], 2)
+        self.assertNotIn('repositories', data)
+        text = audit.markdown(data)
+        self.assertIn('Worktrees activity audit', text)
+        self.assertIn('002', text)
+        self.assertIn('wtonly', text)
+        self.assertIn('Recent commits (last 5 h)', text)
+
+    def test_markdown_renders_worktrees_activity_in_full_audit(self):
+        repo = self.make_repo('org/demo', remote='git@github.com:org/demo.git')
+        wt = self.root / 'org/demo/.worktrees/ticket-003--active'
+        self.git(repo, 'worktree', 'add', '-b', 'ticket/003-active', str(wt))
+        (wt / 'edit.txt').write_text('dirty')
+        with patch('monag.audit.command', side_effect=self.fake_gh({'org/demo': ('[]', None)})):
+            data = audit.scan(repo)
+        self.assertFalse(data['worktrees_only'])
+        self.assertEqual(data['total_worktrees'], 2)
+        self.assertEqual(data['dirty_worktree_count'], 1)
+        text = audit.markdown(data)
+        self.assertIn('Worktrees activity (last 10 h)', text)
+        self.assertIn('003', text)
+        self.assertIn('dirty \\(1\\)', text)
+
+    def test_cli_worktrees_only_json(self):
+        from io import StringIO
+        from monag.cli import main
+        repo = self.make_repo('org/demo')
+        wt = self.root / 'org/demo/.worktrees/ticket-004--cli'
+        self.git(repo, 'worktree', 'add', '-b', 'ticket/004-cli', str(wt))
+        stream = StringIO()
+        with patch('sys.stdout', stream):
+            code = main(['--root', str(repo), '--json', 'audit', '--worktrees-only', '--worktrees-hours', '8'])
+        self.assertEqual(code, 0)
+        payload = json.loads(stream.getvalue())
+        self.assertTrue(payload['worktrees_only'])
+        self.assertEqual(payload['worktrees_hours'], 8)
+        self.assertEqual(payload['total_worktrees'], 2)
+
+
 if __name__ == '__main__':
     unittest.main()
+

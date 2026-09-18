@@ -222,6 +222,12 @@ def main(argv=None):
                                    '(e.g. --within 1 for the last hour); default: off')
     audit_parser.add_argument('--last-hour', dest='last_hour', action='store_true',
                               help='shortcut for --within 1')
+    audit_parser.add_argument('--worktrees-only', '--worktrees-summary',
+                              dest='worktrees_only', action='store_true',
+                              help='report only local worktree activity and uncommitted status; '
+                                   'skip GitHub issue queries')
+    audit_parser.add_argument('--worktrees-hours', type=float, default=10.0, metavar='HOURS',
+                              help='time window in hours for worktree commit recency (default: 10)')
     sub.add_parser('catalog', help='read-only, local-only catalog of what each repository under --root '
                                    'declares itself to be (description, stack, entry points)')
     export_parser = sub.add_parser('export', help='read-only staging list of candidate work items '
@@ -276,6 +282,9 @@ def main(argv=None):
     within = getattr(args, 'within', None)
     if within is not None and not 0 < within < 876000:
         parser.error('0 < within < 876000 required')
+    worktrees_hours = getattr(args, 'worktrees_hours', 10.0)
+    if worktrees_hours is not None and not 0 < worktrees_hours < 876000:
+        parser.error('0 < worktrees-hours < 876000 required')
     if args.mode == 'watch' and not 0.2 <= args.interval < 86400:
         parser.error('interval must be between 0.2 and 86400 seconds')
     if args.mode in ('audit', 'export') and args.issue_limit < 1:
@@ -366,10 +375,16 @@ def main(argv=None):
         if args.mode == 'audit':
             from . import audit
             if output_format != 'json' and sys.stderr.isatty():
-                print('MONAG: scanning repositories and querying GitHub via gh; this can take a while.',
-                     file=sys.stderr, flush=True)
+                if getattr(args, 'worktrees_only', False):
+                    print('MONAG: scanning worktree checkouts across repositories.',
+                          file=sys.stderr, flush=True)
+                else:
+                    print('MONAG: scanning repositories and querying GitHub via gh; this can take a while.',
+                          file=sys.stderr, flush=True)
             data = audit.scan(root, args.depth, args.issue_limit,
-                              recent_hours=1 if getattr(args, 'last_hour', False) else args.within)
+                              recent_hours=1 if getattr(args, 'last_hour', False) else args.within,
+                              worktrees_hours=getattr(args, 'worktrees_hours', 10.0),
+                              worktrees_only=getattr(args, 'worktrees_only', False))
             if output_format == 'json':
                 print(json.dumps(data, ensure_ascii=True))
             else:
@@ -459,7 +474,9 @@ def main(argv=None):
                     from . import audit
                     data = audit.scan(root, args.depth, 200,
                                       recent_hours=(1 if getattr(args, 'last_hour', False)
-                                                    else getattr(args, 'within', None)))
+                                                    else getattr(args, 'within', None)),
+                                      worktrees_hours=getattr(args, 'worktrees_hours', 10.0),
+                                      worktrees_only=getattr(args, 'worktrees_only', False))
                     if output_format == 'json':
                         print(json.dumps(data, ensure_ascii=True), flush=True)
                     else:
