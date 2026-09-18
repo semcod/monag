@@ -79,6 +79,11 @@ button{background:#16202b;color:#d6e0ea;border:1px solid #2a3a4a;border-radius:4
 <table id="export"><thead><tr><th>Origin</th><th>Repository</th>
 <th>Title</th><th>Evidence</th></tr></thead><tbody></tbody></table></section>
 
+<section><h2>Periodic Report & Architectural Advisory
+<button onclick="triggerReport()">send now</button>
+<button onclick="disableReport()">disable cron</button></h2>
+<div id="report-status" class="sub">loading…</div></section>
+
 <script>
 function row(cells){const tr=document.createElement('tr');
   for(const c of cells){const td=document.createElement('td');td.textContent=c;tr.appendChild(td);}
@@ -120,7 +125,22 @@ async function loadExport(){
   fill('export', data.candidates.map(c=>[c.origin, c.repo||c.path, c.title, c.evidence]),
        'No candidates observed.');
 }
-loadLive(); loadAudit(); loadCatalog(); loadExport();
+async function loadReportStatus(){
+  try{
+    const res = await fetch('/api/report/status.json').then(r=>r.json());
+    document.getElementById('report-status').textContent =
+      'Recipient: ' + (res.detected_email || 'none detected') + ' · Local URL: ' + res.server_url;
+  }catch(e){}
+}
+async function triggerReport(){
+  const res = await fetch('/api/report/send-now.json').then(r=>r.json());
+  alert(res.status === 'ok' ? 'Report sent!' : 'Send failed: ' + (res.error || JSON.stringify(res.detail)));
+}
+async function disableReport(){
+  const res = await fetch('/api/report/disable.json').then(r=>r.json());
+  alert(res.status === 'ok' ? 'Schedule disabled!' : 'Disable failed: ' + JSON.stringify(res.detail));
+}
+loadLive(); loadAudit(); loadCatalog(); loadExport(); loadReportStatus();
 setInterval(loadLive, 5000);
 </script>
 </body></html>"""
@@ -129,10 +149,12 @@ setInterval(loadLive, 5000);
 class State:
     """Background-refreshed live view, plus lazily-computed, briefly-cached reports."""
 
-    def __init__(self, root, state_dir, depth, registry, github, machine, all_users, open_files):
+    def __init__(self, root, state_dir, depth=2, registry=None, github=False, machine=False,
+                 all_users=False, open_files=False, bind='127.0.0.1', port=8090):
         self.root, self.state_dir, self.depth = root, state_dir, depth
-        self.registry, self.github = registry, github
+        self.registry, self.github = registry or {}, github
         self.machine, self.all_users, self.open_files = machine, all_users, open_files
+        self.bind, self.port = bind, port
         self.lock = threading.Lock()
         self.snapshot, self.resume = {'agents': [], 'repositories': [], 'observed_at': None}, {'projects': []}
         self._cache = {}
@@ -206,6 +228,36 @@ class State:
             self._advise, self._advise_at = data, time.monotonic()
         return data
 
+    def get_report_status(self):
+        from . import report
+        email_detected = report.detect_user_email()
+        return {
+            'status': 'ok',
+            'detected_email': email_detected,
+            'root': str(self.root),
+            'server_url': f"http://{self.bind}:{self.port}",
+        }
+
+    def report_disable(self):
+        from . import report
+        res = report.remove_cron()
+        return {
+            'status': 'ok' if res.get('ok') else 'error',
+            'action': 'cron_disabled',
+            'detail': res,
+        }
+
+    def report_send_now(self):
+        from . import report
+        email_addr = report.detect_user_email()
+        if not email_addr:
+            return {'status': 'error', 'error': 'No recipient email detected from gh or git config'}
+        data = report.collect(self.root, depth=self.depth, state_dir=self.state_dir)
+        body = report.markdown(data, port=self.port, recipients=[email_addr])
+        smtp_cfg = report._smtp_config()
+        res = report.send_email([email_addr], f"MONAG on-demand report — {self.root.name}", body, smtp_cfg)
+        return {'status': 'ok' if res.get('ok') else 'error', 'detail': res}
+
 
 ROUTES = {'/api/snapshot.json': lambda s: s.snapshot,
           '/api/resume.json': lambda s: s.resume,
@@ -213,7 +265,13 @@ ROUTES = {'/api/snapshot.json': lambda s: s.snapshot,
           '/api/audit.json': State.get_audit,
           '/api/catalog.json': State.get_catalog,
           '/api/export.json': State.get_export,
-          '/api/advise.json': State.get_advise}
+          '/api/advise.json': State.get_advise,
+          '/api/report/status': State.get_report_status,
+          '/api/report/status.json': State.get_report_status,
+          '/api/report/disable': State.report_disable,
+          '/api/report/disable.json': State.report_disable,
+          '/api/report/send-now': State.report_send_now,
+          '/api/report/send-now.json': State.report_send_now}
 
 
 def make_handler(state):
@@ -325,8 +383,9 @@ def write_state_file(state_dir, bind, port):
 
 def build_server(root, state_dir, depth=2, bind='127.0.0.1', port=8090, port_attempts=20,
                  registry=None, github=False, machine=False, all_users=False, open_files=False):
-    state = State(root, state_dir, depth, registry, github, machine, all_users, open_files)
+    state = State(root, state_dir, depth, registry, github, machine, all_users, open_files, bind=bind, port=port)
     server = bind_server(make_handler(state), bind, port, port_attempts)
+    state.port = server.server_address[1]
     return server, state
 
 

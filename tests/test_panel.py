@@ -193,6 +193,21 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(data['status'], 'ok')
         self.assertEqual(data['target'], 'prs')
 
+    def test_report_endpoints(self):
+        server, state = self.start()
+        # Status endpoint
+        status, content_type, body = self.get(server, '/api/report/status.json')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data['status'], 'ok')
+        self.assertIn('server_url', data)
+
+        # Disable endpoint
+        status, content_type, body = self.get(server, '/api/report/disable.json')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data['action'], 'cron_disabled')
+
 
 if __name__ == '__main__':
     unittest.main()

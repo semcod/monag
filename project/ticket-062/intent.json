@@ -1,0 +1,28 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-062",
+  "summary": "monag report: auto-detect GitHub email, hourly daemon, and footer management links/endpoints",
+  "workstream": "application",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-062/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/report.py",
+    "src/monag/cli.py",
+    "src/monag/panel.py",
+    "tests/test_report.py",
+    "tests/test_panel.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}

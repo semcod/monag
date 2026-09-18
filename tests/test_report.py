@@ -352,3 +352,52 @@ def test_format_section_advise():
     assert '95' in rendered
     assert 'Sprawdź konsumentów downstream' in rendered
 
+
+def test_detect_user_email_from_gh():
+    with mock.patch('subprocess.run') as mock_run:
+        mock_run.return_value = mock.Mock(returncode=0, stdout='user@test.org\n')
+        email_addr = report.detect_user_email()
+        assert email_addr == 'user@test.org'
+
+
+def test_detect_user_email_git_fallback():
+    with mock.patch('subprocess.run') as mock_run:
+        mock_run.side_effect = [
+            mock.Mock(returncode=1, stdout=''),  # gh fails
+            mock.Mock(returncode=0, stdout='gituser@test.org\n'),  # git succeeds
+        ]
+        email_addr = report.detect_user_email()
+        assert email_addr == 'gituser@test.org'
+
+
+def test_footer_management_markdown():
+    footer = report.footer_management_markdown(recipients=['me@test.dev'], port=8090)
+    assert 'Zarządzanie raportem i konfiguracja' in footer
+    assert 'me@test.dev' in footer
+    assert 'monag report --email' in footer
+    assert 'http://127.0.0.1:8090/api/report/disable' in footer
+    assert 'http://127.0.0.1:8090/api/report/send-now' in footer
+
+
+def test_markdown_includes_footer():
+    data = {
+        'schema': 'monag.report/v1', 'root': '/tmp/test',
+        'observed_at': '2026-09-18T16:00:00+00:00', 'duration_seconds': 0.1,
+        'requested_sections': [], 'sections': {}, 'errors': [],
+    }
+    md = report.markdown(data, port=8090, include_management_footer=True, recipients=['tom@test.com'])
+    assert 'Zarządzanie raportem i konfiguracja' in md
+    assert 'tom@test.com' in md
+
+
+def test_run_daemon_single_iteration(tmp_path):
+    with mock.patch('monag.report.collect', return_value={
+        'schema': 'monag.report/v1', 'root': str(tmp_path),
+        'observed_at': '2026-09-18T16:00:00+00:00', 'duration_seconds': 0.1,
+        'requested_sections': [], 'sections': {}, 'errors': [],
+    }), mock.patch('monag.report.send_email', return_value={'ok': True, 'recipients': ['test@dev']}):
+        results = report.run_daemon(tmp_path, emails=['test@dev'], interval=0.01, max_iterations=1)
+        assert len(results) == 1
+        assert results[0]['ok'] is True
+
+
