@@ -274,6 +274,64 @@ ROUTES = {'/api/snapshot.json': lambda s: s.snapshot,
           '/api/report/send-now.json': State.report_send_now}
 
 
+def render_report_config_page(cfg, updated=False, server_url=''):
+    notice = ''
+    if updated:
+        notice = f'<div style="background:#163820;border:1px solid #2d7a3a;padding:.6rem 1rem;border-radius:4px;margin-bottom:1rem;color:#7ee787">✓ Zaktualizowano konfigurację raportu! Interwał: <strong>{cfg.get("interval")}s</strong>, Odbiorcy: <strong>{", ".join(cfg.get("recipients", []))}</strong></div>'
+
+    interval = cfg.get('interval', 3600)
+    recipients = ', '.join(cfg.get('recipients', []))
+    enabled = cfg.get('enabled', True)
+
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>MONAG — Konfiguracja Raportu</title>
+<style>
+body{{font-family:system-ui,sans-serif;margin:2rem auto;max-width:700px;background:#0b0f14;color:#d6e0ea;line-height:1.5}}
+h1{{font-size:1.3rem;margin-bottom:.5rem;color:#8fd3ff}}
+.sub{{color:#8a9bb0;font-size:.9rem;margin-bottom:1.5rem}}
+.card{{background:#121820;border:1px solid #1c2733;border-radius:6px;padding:1.2rem;margin-bottom:1.5rem}}
+.btn{{display:inline-block;background:#1b2633;color:#8fd3ff;border:1px solid #2a3a4a;border-radius:4px;padding:.4rem .8rem;font-size:.85rem;text-decoration:none;margin:.2rem;cursor:pointer}}
+.btn:hover{{background:#223244;color:#fff}}
+.btn.active{{background:#1f4368;border-color:#388bfd;color:#fff}}
+label{{display:block;font-size:.85rem;color:#8a9bb0;margin-top:.8rem;margin-bottom:.3rem}}
+input[type="text"]{{width:100%;box-sizing:border-box;background:#0b0f14;border:1px solid #2a3a4a;color:#d6e0ea;padding:.5rem;border-radius:4px}}
+input[type="submit"]{{margin-top:1rem;background:#238636;color:#fff;border:none;padding:.5rem 1.2rem;border-radius:4px;cursor:pointer}}
+a.back{{color:#8a9bb0;font-size:.85rem;text-decoration:none}}
+a.back:hover{{color:#d6e0ea}}
+</style></head>
+<body>
+<a class="back" href="/">&larr; Wróć do panelu monag</a>
+<h1>Konfiguracja Raportu Cyklicznego</h1>
+<div class="sub">Zarządzaj częstotliwością, odbiorcami i statusem wysyłki.</div>
+{notice}
+
+<div class="card">
+  <h3>Częstotliwość wysyłki (1-click)</h3>
+  <p style="font-size:.85rem;color:#8a9bb0">Wybierz jak często monag ma wysyłać raport na e-mail:</p>
+  <a class="btn {'active' if interval == 1800 else ''}" href="/report/config?interval=1800">⏱ Co 30 minut</a>
+  <a class="btn {'active' if interval == 3600 else ''}" href="/report/config?interval=3600">⏱ Co 1 godzinę</a>
+  <a class="btn {'active' if interval == 7200 else ''}" href="/report/config?interval=7200">⏱ Co 2 godziny</a>
+  <a class="btn {'active' if interval == 14400 else ''}" href="/report/config?interval=14400">⏱ Co 4 godziny</a>
+  <a class="btn {'active' if interval == 86400 else ''}" href="/report/config?interval=86400">⏱ Raz na dobę (24h)</a>
+</div>
+
+<div class="card">
+  <h3>Odbiorca i status</h3>
+  <form method="GET" action="/report/config">
+    <label>Adres e-mail odbiorcy:</label>
+    <input type="text" name="email" value="{recipients}" placeholder="np. dev@domain.com" />
+    <label>Status wysyłki:</label>
+    <select name="enabled" style="background:#0b0f14;border:1px solid #2a3a4a;color:#d6e0ea;padding:.4rem;border-radius:4px">
+      <option value="true" {"selected" if enabled else ""}>Aktywna</option>
+      <option value="false" {"selected" if not enabled else ""}>Wstrzymana / Wyłączona</option>
+    </select>
+    <br/>
+    <input type="submit" value="Zapisz ustawienia" />
+  </form>
+</div>
+</body></html>"""
+
+
 def make_handler(state):
     class Handler(BaseHTTPRequestHandler):
         server_version = 'monag-panel/1'
@@ -293,6 +351,37 @@ def make_handler(state):
             parsed = urlparse(self.path)
             if parsed.path == '/':
                 self._send(PAGE.encode(), 'text/html; charset=utf-8')
+                return
+            if parsed.path in {'/report/config', '/api/report/config', '/api/report/config.json'}:
+                params = parse_qs(parsed.query)
+                from . import report as report_mod
+                cfg = report_mod.load_config(state.state_dir)
+                updated = False
+                if 'interval' in params:
+                    try:
+                        cfg['interval'] = int(params['interval'][0])
+                        updated = True
+                    except ValueError:
+                        pass
+                if 'email' in params:
+                    cfg['recipients'] = [e.strip() for e in params['email'][0].split(',') if e.strip()]
+                    updated = True
+                if 'enabled' in params:
+                    cfg['enabled'] = params['enabled'][0].lower() in {'true', '1', 'yes', 'on'}
+                    updated = True
+                if 'schedule' in params:
+                    cfg['schedule'] = params['schedule'][0].strip()
+                    updated = True
+                if updated:
+                    report_mod.save_config(state.state_dir, cfg)
+
+                accept = self.headers.get('Accept', '')
+                if parsed.path == '/report/config' or ('text/html' in accept and not parsed.path.endswith('.json')):
+                    html = render_report_config_page(cfg, updated=updated, server_url=f"http://{state.bind}:{state.port}")
+                    self._send(html.encode('utf-8'), 'text/html; charset=utf-8')
+                    return
+                self._send(json.dumps({'status': 'ok', 'updated': updated, 'config': cfg}, ensure_ascii=False).encode(),
+                           'application/json; charset=utf-8')
                 return
             if parsed.path in {'/api/query', '/api/query.json'}:
                 params = parse_qs(parsed.query)
@@ -320,6 +409,39 @@ def make_handler(state):
 
         def do_POST(self):
             parsed = urlparse(self.path)
+            if parsed.path in {'/report/config', '/api/report/config', '/api/report/config.json'}:
+                try:
+                    length = int(self.headers.get('Content-Length', 0))
+                    raw_data = self.rfile.read(length)
+                    body = json.loads(raw_data) if raw_data else {}
+                except (ValueError, TypeError, json.JSONDecodeError):
+                    body = {}
+                from . import report as report_mod
+                cfg = report_mod.load_config(state.state_dir)
+                updated = False
+                if 'interval' in body:
+                    try:
+                        cfg['interval'] = int(body['interval'])
+                        updated = True
+                    except (ValueError, TypeError):
+                        pass
+                if 'email' in body:
+                    if isinstance(body['email'], list):
+                        cfg['recipients'] = body['email']
+                    else:
+                        cfg['recipients'] = [e.strip() for e in str(body['email']).split(',') if e.strip()]
+                    updated = True
+                if 'enabled' in body:
+                    cfg['enabled'] = bool(body['enabled'])
+                    updated = True
+                if 'schedule' in body:
+                    cfg['schedule'] = str(body['schedule']).strip()
+                    updated = True
+                if updated:
+                    report_mod.save_config(state.state_dir, cfg)
+                self._send(json.dumps({'status': 'ok', 'updated': updated, 'config': cfg}, ensure_ascii=False).encode(),
+                           'application/json; charset=utf-8')
+                return
             if parsed.path in {'/api/query', '/api/query.json'}:
                 try:
                     length = int(self.headers.get('Content-Length', 0))

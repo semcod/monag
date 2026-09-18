@@ -377,6 +377,10 @@ def test_footer_management_markdown():
     assert 'monag report --email' in footer
     assert 'http://127.0.0.1:8090/api/report/disable' in footer
     assert 'http://127.0.0.1:8090/api/report/send-now' in footer
+    assert 'http://127.0.0.1:8090/api/report/config?interval=1800' in footer
+    assert 'http://127.0.0.1:8090/api/report/config?interval=3600' in footer
+    assert 'http://127.0.0.1:8090/api/report/config?interval=7200' in footer
+    assert 'http://127.0.0.1:8090/report/config' in footer
 
 
 def test_markdown_includes_footer():
@@ -399,5 +403,34 @@ def test_run_daemon_single_iteration(tmp_path):
         results = report.run_daemon(tmp_path, emails=['test@dev'], interval=0.01, max_iterations=1)
         assert len(results) == 1
         assert results[0]['ok'] is True
+
+
+def test_load_and_save_config(tmp_path):
+    cfg = report.load_config(tmp_path)
+    assert cfg['interval'] == 3600
+    assert cfg['enabled'] is True
+
+    cfg['interval'] = 7200
+    cfg['recipients'] = ['custom@domain.org']
+    report.save_config(tmp_path, cfg)
+
+    reloaded = report.load_config(tmp_path)
+    assert reloaded['interval'] == 7200
+    assert reloaded['recipients'] == ['custom@domain.org']
+
+
+def test_run_daemon_dynamic_config(tmp_path):
+    report.save_config(tmp_path, {'interval': 1, 'enabled': True, 'recipients': ['dyn@dev.local']})
+    with mock.patch('monag.report.collect', return_value={
+        'schema': 'monag.report/v1', 'root': str(tmp_path),
+        'observed_at': '2026-09-18T16:00:00+00:00', 'duration_seconds': 0.1,
+        'requested_sections': [], 'sections': {}, 'errors': [],
+    }), mock.patch('monag.report.send_email', return_value={'ok': True, 'recipients': ['dyn@dev.local']}) as mock_send:
+        results = report.run_daemon(tmp_path, state_dir=tmp_path, interval=10, max_iterations=1)
+        assert len(results) == 1
+        assert results[0]['ok'] is True
+        mock_send.assert_called_once()
+        assert mock_send.call_args[0][0] == ['dyn@dev.local']
+
 
 

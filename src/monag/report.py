@@ -61,6 +61,51 @@ def detect_user_email():
     return None
 
 
+DEFAULT_REPORT_CONFIG = {
+    'interval': 3600,
+    'schedule': '0 * * * *',
+    'recipients': [],
+    'sections': list(SECTION_REGISTRY),
+    'advisory_limit': 5,
+    'enabled': True,
+}
+
+
+def load_config(state_dir=None):
+    """Load persistent report configuration from state directory."""
+    from pathlib import Path
+    import json
+    target_dir = Path(state_dir) if state_dir else Path.home() / '.local' / 'state' / 'monag'
+    cfg_file = target_dir / 'report_config.json'
+    cfg = dict(DEFAULT_REPORT_CONFIG)
+    if cfg_file.is_file():
+        try:
+            data = json.loads(cfg_file.read_text(encoding='utf-8'))
+            if isinstance(data, dict):
+                cfg.update(data)
+        except (json.JSONDecodeError, OSError):
+            pass
+    if not cfg.get('recipients'):
+        detected = detect_user_email()
+        if detected:
+            cfg['recipients'] = [detected]
+    return cfg
+
+
+def save_config(state_dir, config):
+    """Save persistent report configuration to state directory atomically."""
+    from pathlib import Path
+    import json
+    target_dir = Path(state_dir) if state_dir else Path.home() / '.local' / 'state' / 'monag'
+    target_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    cfg_file = target_dir / 'report_config.json'
+    tmp_file = cfg_file.with_suffix('.tmp')
+    tmp_file.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding='utf-8')
+    tmp_file.chmod(0o600)
+    tmp_file.replace(cfg_file)
+    return config
+
+
 def _smtp_config(args_host=None, args_port=None, args_user=None,
                  args_pass=None, args_tls=None, args_from=None):
     host = args_host or os.environ.get('MONAG_SMTP_HOST') or 'localhost'
@@ -267,7 +312,15 @@ def footer_management_markdown(recipients=None, port=8090, root=None):
         "",
         "## Zarządzanie raportem i konfiguracja",
         "",
-        f"Ten raport jest generowany cyklicznie (co godzinę){to_desc}.",
+        f"Ten raport jest generowany cyklicznie{to_desc}.",
+        "",
+        "### Szybka zmiana częstotliwości wysyłki (1-click link):",
+        f"- [⏱ Co 30 minut]({panel_url}/api/report/config?interval=1800)",
+        f"- [⏱ Co 1 godzinę (domyślne)]({panel_url}/api/report/config?interval=3600)",
+        f"- [⏱ Co 2 godziny]({panel_url}/api/report/config?interval=7200)",
+        f"- [⏱ Co 4 godziny]({panel_url}/api/report/config?interval=14400)",
+        f"- [⏱ Raz na dobę (24h)]({panel_url}/api/report/config?interval=86400)",
+        f"- [⚙ Formularz konfiguracji w przeglądarce]({panel_url}/report/config)",
         "",
         "### Zmiana konfiguracji przez CLI:",
         "- **Zmiana harmonogramu / adresu:**",
@@ -465,17 +518,29 @@ def run_daemon(root, emails=None, interval=3600, depth=2, hours=24,
     iterations = 0
     results = []
     while not stop_event.is_set():
-        data = collect(root, depth=depth, hours=hours, sections=sections,
-                       github=github, issue_limit=issue_limit, registry=registry,
-                       machine=machine, all_users=all_users, state_dir=state_dir,
-                       advisory_limit=advisory_limit)
-        body = markdown(data, recipients=to_list)
-        subject = subject_template or f'MONAG report — {Path(root).name} — {data["observed_at"][:16]}'
-        res = send_email(to_list, subject, body, smtp_cfg)
-        results.append(res)
-        iterations += 1
-        if max_iterations is not None and iterations >= max_iterations:
-            break
-        stop_event.wait(interval)
+        cfg = load_config(state_dir)
+        current_enabled = cfg.get('enabled', True)
+        current_interval = cfg.get('interval', interval)
+        current_recipients = cfg.get('recipients') or to_list
+        current_sections = cfg.get('sections') or sections
+
+        if current_enabled:
+            data = collect(root, depth=depth, hours=hours, sections=current_sections,
+                           github=github, issue_limit=issue_limit, registry=registry,
+                           machine=machine, all_users=all_users, state_dir=state_dir,
+                           advisory_limit=cfg.get('advisory_limit', advisory_limit))
+            body = markdown(data, recipients=current_recipients)
+            subject = subject_template or f'MONAG report — {Path(root).name} — {data["observed_at"][:16]}'
+            res = send_email(current_recipients, subject, body, smtp_cfg)
+            results.append(res)
+            iterations += 1
+            if max_iterations is not None and iterations >= max_iterations:
+                break
+            stop_event.wait(current_interval)
+        else:
+            iterations += 1
+            if max_iterations is not None and iterations >= max_iterations:
+                break
+            stop_event.wait(min(current_interval, 5))
     return results
 

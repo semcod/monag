@@ -37,10 +37,10 @@ class PanelTests(unittest.TestCase):
         self.addCleanup(thread.join, 2)
         return server, state
 
-    def get(self, server, path):
+    def get(self, server, path, headers=None):
         conn = http.client.HTTPConnection(server.server_address[0], server.server_address[1], timeout=5)
         try:
-            conn.request('GET', path)
+            conn.request('GET', path, headers=headers or {})
             response = conn.getresponse()
             body = response.read()
             return response.status, response.getheader('Content-Type'), body
@@ -207,6 +207,41 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(status, 200)
         data = json.loads(body)
         self.assertEqual(data['action'], 'cron_disabled')
+
+    def test_report_config_endpoint(self):
+        server, state = self.start()
+        # GET /report/config serves HTML
+        status, content_type, body = self.get(server, '/report/config')
+        self.assertEqual(status, 200)
+        self.assertIn('text/html', content_type)
+        self.assertIn('Konfiguracja Raportu Cyklicznego'.encode('utf-8'), body)
+
+        # GET /api/report/config?interval=7200 updates config
+        status, content_type, body = self.get(server, '/api/report/config?interval=7200')
+        self.assertEqual(status, 200)
+        self.assertIn('application/json', content_type)
+        data = json.loads(body)
+        self.assertTrue(data['updated'])
+        self.assertEqual(data['config']['interval'], 7200)
+
+        # GET /report/config with Accept: text/html and query param returns HTML with confirmation
+        status, content_type, body = self.get(server, '/report/config?interval=1800', headers={'Accept': 'text/html'})
+        self.assertEqual(status, 200)
+        self.assertIn('text/html', content_type)
+        self.assertIn('Zaktualizowano konfigurację raportu'.encode('utf-8'), body)
+
+        # POST /api/report/config with body
+        status, content_type, body = self.post(server, '/api/report/config', {
+            'interval': 14400,
+            'email': 'custom@dev.local',
+            'enabled': False,
+        })
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertTrue(data['updated'])
+        self.assertEqual(data['config']['interval'], 14400)
+        self.assertEqual(data['config']['recipients'], ['custom@dev.local'])
+        self.assertFalse(data['config']['enabled'])
 
 
 if __name__ == '__main__':
