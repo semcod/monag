@@ -157,5 +157,43 @@ class PanelTests(unittest.TestCase):
             blocker.close()
 
 
+    def post(self, server, path, body_dict):
+        conn = http.client.HTTPConnection(server.server_address[0], server.server_address[1], timeout=5)
+        try:
+            payload = json.dumps(body_dict).encode()
+            conn.request('POST', path, body=payload, headers={'Content-Type': 'application/json'})
+            response = conn.getresponse()
+            body = response.read()
+            return response.status, response.getheader('Content-Type'), body
+        finally:
+            conn.close()
+
+    def test_prs_endpoint_serves_prs_report(self):
+        server, state = self.start()
+        status, content_type, body = self.get(server, '/api/prs.json')
+        self.assertEqual(status, 200)
+        self.assertIn('application/json', content_type)
+        data = json.loads(body)
+        self.assertIn('scanned_repos_count', data)
+
+    def test_query_endpoint_get_and_post(self):
+        server, state = self.start()
+        # Test GET with ?q=
+        status, content_type, body = self.get(server, '/api/query?q=status')
+        self.assertEqual(status, 200)
+        self.assertIn('application/json', content_type)
+        data = json.loads(body)
+        self.assertEqual(data['status'], 'ok')
+        self.assertEqual(data['target'], 'status')
+
+        # Test POST with body
+        status, content_type, body = self.post(server, '/api/query', {'query': 'OBSERVE prs'})
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data['status'], 'ok')
+        self.assertEqual(data['target'], 'prs')
+
+
 if __name__ == '__main__':
     unittest.main()
+

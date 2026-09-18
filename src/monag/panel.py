@@ -25,6 +25,7 @@ import json
 import os
 import threading
 import time
+from urllib.parse import parse_qs, urlparse
 
 from . import audit, catalog, export, resume
 from .monitor import snapshot as monitor_snapshot
@@ -138,6 +139,17 @@ class State:
         self._audit, self._audit_at = None, 0.0
         self._catalog, self._catalog_at = None, 0.0
         self._export, self._export_at = None, 0.0
+        self._prs, self._prs_at = None, 0.0
+
+    def get_prs(self, ttl=60):
+        with self.lock:
+            if self._prs is not None and time.monotonic() - self._prs_at < ttl:
+                return self._prs
+        from . import prs
+        data = prs.scan(self.root, self.depth)
+        with self.lock:
+            self._prs, self._prs_at = data, time.monotonic()
+        return data
 
     def refresh_live(self):
         since = '24 hours ago'
@@ -187,6 +199,7 @@ class State:
 
 ROUTES = {'/api/snapshot.json': lambda s: s.snapshot,
           '/api/resume.json': lambda s: s.resume,
+          '/api/prs.json': State.get_prs,
           '/api/audit.json': State.get_audit,
           '/api/catalog.json': State.get_catalog,
           '/api/export.json': State.get_export}
@@ -208,10 +221,22 @@ def make_handler(state):
             self.wfile.write(body)
 
         def do_GET(self):
-            if self.path == '/':
+            parsed = urlparse(self.path)
+            if parsed.path == '/':
                 self._send(PAGE.encode(), 'text/html; charset=utf-8')
                 return
-            handler = ROUTES.get(self.path)
+            if parsed.path in {'/api/query', '/api/query.json'}:
+                params = parse_qs(parsed.query)
+                q = (params.get('q') or params.get('query') or params.get('nl') or [''])[0]
+                if not q:
+                    self._send(json.dumps({'error': 'query required in q or query param'}).encode(),
+                              'application/json; charset=utf-8', status=400)
+                    return
+                from . import dsl
+                result = dsl.execute(q, state.root, depth=state.depth, registry=state.registry)
+                self._send(json.dumps(result, ensure_ascii=True).encode(), 'application/json; charset=utf-8')
+                return
+            handler = ROUTES.get(parsed.path)
             if handler is None:
                 self._send(json.dumps({'error': 'not found', 'path': clean(self.path)}).encode(),
                           'application/json; charset=utf-8', status=404)
@@ -223,6 +248,29 @@ def make_handler(state):
                           'application/json; charset=utf-8', status=500)
                 return
             self._send(json.dumps(payload, ensure_ascii=True).encode(), 'application/json; charset=utf-8')
+
+        def do_POST(self):
+            parsed = urlparse(self.path)
+            if parsed.path in {'/api/query', '/api/query.json'}:
+                try:
+                    length = int(self.headers.get('Content-Length', 0))
+                    raw_data = self.rfile.read(length)
+                    body = json.loads(raw_data) if raw_data else {}
+                except (ValueError, TypeError, json.JSONDecodeError):
+                    self._send(json.dumps({'error': 'invalid json body'}).encode(),
+                              'application/json; charset=utf-8', status=400)
+                    return
+                q = body.get('query') or body.get('q') or body.get('nl') or ''
+                if not q:
+                    self._send(json.dumps({'error': 'query or nl field required in body'}).encode(),
+                              'application/json; charset=utf-8', status=400)
+                    return
+                from . import dsl
+                result = dsl.execute(q, state.root, depth=state.depth, registry=state.registry)
+                self._send(json.dumps(result, ensure_ascii=True).encode(), 'application/json; charset=utf-8')
+                return
+            self._send(json.dumps({'error': 'method not allowed'}).encode(),
+                      'application/json; charset=utf-8', status=405)
     return Handler
 
 

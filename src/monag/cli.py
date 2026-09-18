@@ -28,6 +28,7 @@ SHELL_COMMANDS = {
     'audit': 'porównaj lokalne tickety Planfile z GitHub Issues',
     'prs': 'sprawdź status Pull Requestów i gałęzi (open/merged)',
     'pr': 'alias dla prs',
+    'query': 'zapytanie w języku naturalnym (PL/EN) lub DSL (OBSERVE ...)',
     'catalog': 'pokaż lokalny katalog projektów',
     'history': 'pokaż zapisane obserwacje',
     'help': 'pokaż tę pomoc',
@@ -40,6 +41,12 @@ def shell_help():
     lines = ['MONAG shell — polecenia:']
     lines.extend(f'  {name:<8} {description}' for name, description in SHELL_COMMANDS.items())
     lines.append('  exit     alias dla quit')
+    lines.append('')
+    lines.append('Możesz także wpisywać zapytania bezpośrednio w języku naturalnym, np.:')
+    lines.append('  pokaż niescalone PR')
+    lines.append('  stan procesów agentów')
+    lines.append('  audyt ticketów Planfile')
+    lines.append('  OBSERVE prs STATE open HOURS 12')
     lines.append('')
     lines.append('Raporty są tylko obserwacją. Synchronizację wykonaj jawnie:')
     lines.append('  planfile sync github --direction both')
@@ -242,6 +249,10 @@ def main(argv=None):
                             help='query GitHub PRs for all discovered repositories under --root, ignoring recency filter')
     prs_parser.add_argument('--pr-limit', type=int, default=200,
                             help='maximum PRs to fetch per repository via gh (default: 200)')
+    sub.add_parser('mcp', help='run Model Context Protocol (MCP) server over stdio for AI agents')
+    query_parser = sub.add_parser('query', aliases=['ask'],
+                                  help='execute a natural language query or OBSERVE DSL command')
+    query_parser.add_argument('query', nargs='+', help='natural language query phrase or OBSERVE DSL command')
     sub.add_parser('catalog', help='read-only, local-only catalog of what each repository under --root '
                                    'declares itself to be (description, stack, entry points)')
     export_parser = sub.add_parser('export', help='read-only staging list of candidate work items '
@@ -422,6 +433,23 @@ def main(argv=None):
             else:
                 display_report(prs.markdown(data, args.limit))
             return 0
+        if args.mode == 'mcp':
+            from . import mcp
+            mcp.run_stdio_server(root, depth=args.depth)
+            return 0
+        if args.mode in ('query', 'ask'):
+            from . import dsl
+            query_str = ' '.join(args.query)
+            res = dsl.execute(query_str, root, depth=args.depth, registry=registry)
+            if output_format == 'json':
+                print(json.dumps(res, ensure_ascii=True))
+            else:
+                if res.get('status') == 'ok':
+                    display_report(res['markdown'])
+                else:
+                    print(f"Error: {res.get('error')}", file=sys.stderr)
+                    return 1
+            return 0
         if args.mode == 'catalog':
             from . import catalog
             if output_format != 'json' and sys.stderr.isatty():
@@ -568,8 +596,26 @@ def main(argv=None):
                 if command_name in {'help', '?'}:
                     print(shell_help(), flush=True)
                     continue
+                if command_name == 'query':
+                    from . import dsl
+                    parts = command_line.split(maxsplit=1)
+                    q = parts[1].strip() if len(parts) > 1 else ''
+                    if q:
+                        res = dsl.execute(q, root, depth=args.depth, registry=registry)
+                        if res.get('status') == 'ok':
+                            display_report(res['markdown'])
+                        else:
+                            print(f"Błąd: {res.get('error')}", flush=True)
+                    else:
+                        print("Wpisz zapytanie po 'query', np.: query pokaż otwarte PR", flush=True)
+                    continue
                 if command_name not in SHELL_COMMANDS:
-                    print(f'Nieznane polecenie: {command_name}. Wpisz help.', flush=True)
+                    from . import dsl
+                    res = dsl.execute(command_line, root, depth=args.depth, registry=registry)
+                    if res.get('status') == 'ok' and res.get('markdown'):
+                        display_report(res['markdown'])
+                        continue
+                    print(f'Nieznane polecenie: {command_name}. Wpisz help lub zapytaj w języku naturalnym.', flush=True)
                     continue
                 if command_name == 'open':
                     from . import opener, usage
