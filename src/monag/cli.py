@@ -342,6 +342,9 @@ def main(argv=None):
                                help='extra directories or log files to ingest with subactor.reflex')
     advise_parser.add_argument('--issue-limit', type=int, default=200,
                                help='GitHub issues fetched per repository (default: 200)')
+    advise_parser.add_argument('--tier', choices=['all', 'floor', 'mission', 'hygiene', 'backlog'],
+                               default='all',
+                               help='filter recommendations by Priority DSL tier (default: all)')
     quality = sub.add_parser('quality', help='read-only semcod/regix quality gate for ONE repository '
                                              '(--root must be a Git checkout, not a workspace); '
                                              'costs roughly a minute per run, never a write command')
@@ -696,7 +699,8 @@ def main(argv=None):
                 hygiene=getattr(args, 'hygiene', False),
                 reflex_source=getattr(args, 'reflex_source', None),
                 state_dir=args.state_dir,
-                limit=args.limit)
+                limit=args.limit,
+                tier=getattr(args, 'tier', 'all'))
             if output_format == 'json':
                 print(json.dumps(data, ensure_ascii=False, indent=2))
             else:

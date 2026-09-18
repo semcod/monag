@@ -98,12 +98,18 @@ TOOLS = [
     },
     {
         'name': 'monag_advise',
-        'description': 'Generate architectural guidance and prioritized next tasks combining candidate items and reflex learning loop patterns.',
+        'description': 'Generate architectural guidance and prioritized next tasks combining candidate items, Priority DSL tiers, and reflex learning loop patterns.',
         'inputSchema': {
             'type': 'object',
             'properties': {
                 'limit': {'type': 'integer', 'description': 'Maximum recommendations to return (default: 10)', 'default': 10},
                 'radar': {'type': 'boolean', 'description': 'Include ticket-radar sizing', 'default': False},
+                'tier': {
+                    'type': 'string',
+                    'description': 'Filter by Priority DSL tier (floor, mission, hygiene, backlog, all)',
+                    'enum': ['all', 'floor', 'mission', 'hygiene', 'backlog'],
+                    'default': 'all',
+                },
             },
         },
     },
@@ -178,7 +184,8 @@ def handle_tool_call(name, arguments, root, depth=2):
     elif name == 'monag_advise':
         from . import advise
         data = advise.advise(root, depth=depth, limit=int(arguments.get('limit', 10)),
-                             radar=bool(arguments.get('radar', False)))
+                             radar=bool(arguments.get('radar', False)),
+                             tier=arguments.get('tier'))
         return [{'type': 'text', 'text': advise.markdown(data)}]
 
     else:

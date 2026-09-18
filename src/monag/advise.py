@@ -20,6 +20,20 @@ from . import export, presentation
 
 SCHEMA = 'monag.advisory/v1'
 
+TIER_FLOOR = 'floor'
+TIER_MISSION = 'mission'
+TIER_HYGIENE = 'hygiene'
+TIER_BACKLOG = 'backlog'
+
+TIER_ORDER = [TIER_FLOOR, TIER_MISSION, TIER_HYGIENE, TIER_BACKLOG]
+
+TIER_BASE_SCORES = {
+    TIER_FLOOR: 1000,
+    TIER_MISSION: 500,
+    TIER_HYGIENE: 200,
+    TIER_BACKLOG: 50,
+}
+
 FAILURE_KEYWORD_MAP = {
     'remote-rate-limit': ('rate limit', '403', '429', 'secondary limit', 'api rate'),
     'timeout-failure': ('timeout', 'timed out', 'deadline exceeded', 'sigkill'),
@@ -140,6 +154,49 @@ def _match_reflex_risk(title: str, description: str, reflex_data: dict[str, Any]
     return sorted(set(matched))
 
 
+def classify_tier(candidate: dict[str, Any], matched_risks: list[str]) -> str:
+    """Classify a work candidate into a lexicographic Priority DSL tier.
+
+    Tiers:
+    - floor: Critical failures, active governance friction, broken tests/gates,
+             or rate-limit blocks that must be resolved first.
+    - mission: Direct delivery work, open sprint issues, high-priority features.
+    - hygiene: Refactoring, complexity reduction, documentation drift, catalog metadata.
+    - backlog: Ideas, low-priority backlog items, general improvements.
+    """
+    priority = str(candidate.get('priority', '')).lower()
+    origin = candidate.get('origin', '')
+    title = candidate.get('title', '').lower()
+
+    # Floor conditions: critical priority, active governance or test failure risks, security
+    if priority in {'critical', 'p0'}:
+        return TIER_FLOOR
+    if any(r in matched_risks for r in ('governance-friction', 'test-feedback-friction')):
+        return TIER_FLOOR
+    if any(term in title for term in ('broken', 'security', 'fail-closed', 'deadlock', 'sigkill')):
+        return TIER_FLOOR
+
+    # Mission conditions: active user/github issues, high priority, delivery
+    if priority in {'high', 'p1'} or origin == 'audit-untracked-issue':
+        return TIER_MISSION
+    if any(term in title for term in ('release', 'pr', 'feature', 'delivery')):
+        return TIER_MISSION
+
+    # Hygiene conditions: refactoring, complexity, drift, catalog
+    if origin in {'taskill-doc-drift', 'catalog-undescribed'}:
+        return TIER_HYGIENE
+    radar = candidate.get('radar')
+    if radar and isinstance(radar, dict) and (radar.get('split_recommended') or radar.get('complexity') == 'high'):
+        return TIER_HYGIENE
+    if any(term in title for term in ('refactor', 'clean', 'format', 'smell', 'complexity')):
+        return TIER_HYGIENE
+
+    if priority in {'medium', 'p2'}:
+        return TIER_HYGIENE
+
+    return TIER_BACKLOG
+
+
 def synthesize_guidelines(candidate: dict[str, Any], matched_risks: list[str]) -> dict[str, Any]:
     """Generate concrete action, rationale, and guardrails for an item."""
     origin = candidate.get('origin', '')
@@ -147,19 +204,25 @@ def synthesize_guidelines(candidate: dict[str, Any], matched_risks: list[str]) -
     summary = candidate.get('summary', candidate.get('description', ''))
     repo = candidate.get('repo', candidate.get('path', ''))
 
-    # Determine base action
+    # Determine base action and satisfied_when condition
     if origin == 'audit-untracked-issue':
-        action = f"Rozpocznij realizację zgłoszenia #{candidate.get('issue_number', '')} w {repo}: stwórz ticket i gałąź roboczą."
+        issue_num = candidate.get('issue_number', '')
+        action = f"Rozpocznij realizację zgłoszenia #{issue_num} w {repo}: stwórz ticket i gałąź roboczą."
         evidence = f"Otwarte zgłoszenie GitHub bez powiązanego ticketu Planfile: '{title}'."
+        satisfied_when = f"Zgłoszenie #{issue_num} w {repo} zostało zamknięte lub zintegrowane w PR."
     elif origin == 'catalog-undescribed':
         action = f"Uzupełnij opis projektu i stosu technologicznego w {repo} (README/pyproject.toml/package.json)."
         evidence = f"Katalog repozytoriów wskazuje brak metadanych w {repo}."
+        satisfied_when = f"Plik README/pyproject.toml w {repo} zawiera wymagane metadane."
     elif origin == 'taskill-doc-drift':
         action = f"Zsynchronizuj dryf dokumentacji w {repo} (README/CHANGELOG/TODO)."
         evidence = f"Taskill wykrył niezatwierdzone zmiany w dokumentacji po ostatnich commitach."
+        satisfied_when = f"Zsynchronizowano dokumentację w {repo} i brak ostrzeżeń taskill."
     else:
+        ticket_id = candidate.get('id', candidate.get('ticket', ''))
         action = f"Kontynuuj realizację zadania w {repo}: {title}."
-        evidence = f"Zadanie oczekujące w backlogu Planfile ({candidate.get('id', candidate.get('ticket', ''))})."
+        evidence = f"Zadanie oczekujące w backlogu Planfile ({ticket_id})."
+        satisfied_when = f"Ticket {ticket_id} osiągnął status DONE i testy przechodzą."
 
     # Add guardrails based on detected risks
     guardrails = ["Weryfikuj zgodność z regułami governance repozytorium przed otwarciem PR."]
@@ -177,40 +240,103 @@ def synthesize_guidelines(candidate: dict[str, Any], matched_risks: list[str]) -
     return {
         'action': action,
         'evidence': evidence,
+        'satisfied_when': satisfied_when,
         'guardrails': guardrails,
     }
 
 
-def compute_advisory_score(candidate: dict[str, Any], matched_risks: list[str]) -> int:
-    """Calculate an advisory priority score (0-150)."""
-    score = 50
-    priority = str(candidate.get('priority', '')).lower()
-    if priority in {'critical', 'p0'}:
-        score += 40
-    elif priority in {'high', 'p1'}:
-        score += 25
-    elif priority in {'medium', 'p2'}:
-        score += 10
+def compute_advisory_score(candidate: dict[str, Any], matched_risks: list[str],
+                           tier: str | None = None) -> int:
+    """Calculate an advisory priority score enforcing Priority DSL lexicographic tiers."""
+    if tier is None:
+        tier = classify_tier(candidate, matched_risks)
 
-    # Risk bonus: actively failing patterns require urgent attention
-    score += len(matched_risks) * 15
+    base = TIER_BASE_SCORES.get(tier, 50)
+    priority = str(candidate.get('priority', '')).lower()
+    mod = 0
+    if priority in {'critical', 'p0'}:
+        mod += 40
+    elif priority in {'high', 'p1'}:
+        mod += 25
+    elif priority in {'medium', 'p2'}:
+        mod += 10
+
+    # Risk bonus: actively failing patterns require urgent attention within tier
+    mod += len(matched_risks) * 15
 
     # Radar sizing bonus: complex items needing decomposition
     radar = candidate.get('radar')
     if radar and isinstance(radar, dict):
         if radar.get('split_recommended'):
-            score += 15
+            mod += 15
         if radar.get('complexity') == 'high':
-            score += 10
+            mod += 10
 
-    return score
+    return base + mod
+
+
+def generate_priority_readings(reflex_data: dict[str, Any], recommendations: list[dict[str, Any]],
+                               doc_id: str = "monag.advise.priority") -> dict[str, Any]:
+    """Emit a compliant wellmanifest.priority/readings/v1 envelope."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    patterns = reflex_data.get('patterns', [])
+    active_categories = {p.get('category') for p in patterns if p.get('category')}
+
+    tier_counts = {t: 0 for t in TIER_ORDER}
+    for r in recommendations:
+        t = r.get('tier', TIER_BACKLOG)
+        tier_counts[t] = tier_counts.get(t, 0) + 1
+
+    readings = {
+        'floor_friction_count': {
+            'observedAt': now_iso,
+            'producerRef': 'monag.advise/tiers',
+            'value': tier_counts[TIER_FLOOR],
+        },
+        'mission_demand_count': {
+            'observedAt': now_iso,
+            'producerRef': 'monag.advise/tiers',
+            'value': tier_counts[TIER_MISSION],
+        },
+        'active_failure_patterns': {
+            'observedAt': now_iso,
+            'producerRef': 'subactor.reflex',
+            'value': len(patterns),
+        },
+        'remote_rate_limit': {
+            'observedAt': now_iso,
+            'producerRef': 'subactor.reflex',
+            'value': 1 if 'remote-rate-limit' in active_categories else 0,
+        },
+        'governance_friction': {
+            'observedAt': now_iso,
+            'producerRef': 'subactor.reflex',
+            'value': 1 if 'governance-friction' in active_categories else 0,
+        },
+        'timeout_failure': {
+            'observedAt': now_iso,
+            'producerRef': 'subactor.reflex',
+            'value': 1 if 'timeout-failure' in active_categories else 0,
+        },
+    }
+
+    return {
+        'schema': 'wellmanifest.priority/readings/v1',
+        'document': {
+            'id': doc_id,
+            'version': '0.1.0',
+        },
+        'observedAt': now_iso,
+        'readings': readings,
+    }
 
 
 def advise(root: Path, depth: int = 2, issue_limit: int = 200,
            radar: bool = False, hygiene: bool = False,
            reflex_source: list[str] | None = None,
            state_dir: Path | None = None, limit: int = 15,
-           export_data: dict[str, Any] | None = None) -> dict[str, Any]:
+           export_data: dict[str, Any] | None = None,
+           tier: str | None = None) -> dict[str, Any]:
     """Generate prioritized next actions and architectural guidelines."""
     started = time.monotonic()
     if export_data is None:
@@ -226,27 +352,42 @@ def advise(root: Path, depth: int = 2, issue_limit: int = 200,
         title = c.get('title', '')
         desc = c.get('summary', c.get('description', ''))
         matched_risks = _match_reflex_risk(title, desc, reflex_data)
+        item_tier = classify_tier(c, matched_risks)
         guidelines = synthesize_guidelines(c, matched_risks)
-        score = compute_advisory_score(c, matched_risks)
+        score = compute_advisory_score(c, matched_risks, tier=item_tier)
 
         recommendations.append({
             'target': c.get('repo', c.get('path', '')),
             'title': title,
             'origin': c.get('origin', ''),
+            'tier': item_tier,
             'score': score,
             'matched_risks': matched_risks,
             'action': guidelines['action'],
             'evidence': guidelines['evidence'],
+            'satisfied_when': guidelines['satisfied_when'],
             'guardrails': guidelines['guardrails'],
             'radar': c.get('radar'),
         })
 
+    readings = generate_priority_readings(reflex_data, recommendations)
+
+    # Sort descending by score across all items
     recommendations.sort(key=lambda r: r['score'], reverse=True)
-    capped = recommendations[:limit]
+
+    # Filter by tier if specified
+    active_tier = tier.lower() if (tier and tier.lower() != 'all') else 'all'
+    if active_tier != 'all':
+        filtered = [r for r in recommendations if r['tier'] == active_tier]
+    else:
+        filtered = recommendations
+
+    capped = filtered[:limit]
 
     duration = round(time.monotonic() - started, 2)
+    tier_suffix = f" (filtr tier: {active_tier})" if active_tier != 'all' else ""
     summary_text = (
-        f"{len(capped)} rekomendowanych działań na bazie {len(candidates)} kandydatów "
+        f"{len(capped)} rekomendowanych działań{tier_suffix} na bazie {len(candidates)} kandydatów "
         f"i {len(reflex_data.get('patterns', []))} wzorców reflex."
     )
 
@@ -256,6 +397,8 @@ def advise(root: Path, depth: int = 2, issue_limit: int = 200,
         'generated_at': datetime.now(timezone.utc).isoformat(),
         'duration_seconds': duration,
         'summary': summary_text,
+        'tier_filter': active_tier,
+        'readings': readings,
         'recommendations': capped,
         'total_candidates': len(candidates),
         'reflex': {
@@ -279,6 +422,16 @@ def markdown(advisory_data: dict[str, Any]) -> str:
         "",
     ]
 
+    readings_env = advisory_data.get('readings')
+    if readings_env and isinstance(readings_env, dict):
+        r_map = readings_env.get('readings', {})
+        floor_val = r_map.get('floor_friction_count', {}).get('value', 0)
+        mission_val = r_map.get('mission_demand_count', {}).get('value', 0)
+        active_pats = r_map.get('active_failure_patterns', {}).get('value', 0)
+        lines.append(f"*Priority DSL readings: Floor friction ({floor_val}) · Mission demand ({mission_val}) · "
+                     f"Active failure patterns ({active_pats}).*")
+        lines.append("")
+
     reflex_info = advisory_data.get('reflex', {})
     if reflex_info.get('available'):
         lines.append(f"*Learning Loop: aktywne wzorce Reflex ({reflex_info.get('pattern_count', 0)}) "
@@ -297,22 +450,27 @@ def markdown(advisory_data: dict[str, Any]) -> str:
     table_rows = []
     for r in recs:
         risks_str = ', '.join(r['matched_risks']) if r['matched_risks'] else '—'
+        tier_str = r.get('tier', '—').upper()
         table_rows.append([
+            tier_str,
             str(r['score']),
             r['target'],
             r['title'],
             risks_str,
         ])
 
-    lines.append(presentation.table(['Score', 'Projekt', 'Zadanie', 'Wykryte ryzyka (Reflex)'], table_rows))
+    lines.append(presentation.table(['Tier', 'Score', 'Projekt', 'Zadanie', 'Wykryte ryzyka (Reflex)'], table_rows))
     lines.append("")
     lines.append("## Szczegółowe wytyczne dla kolejnych zadań")
     lines.append("")
 
     for idx, r in enumerate(recs, 1):
-        lines.append(f"### {idx}. [{r['score']} pkt] {r['target']}: {r['title']}")
+        tier_tag = f"[{r.get('tier', '').upper()}] " if r.get('tier') else ""
+        lines.append(f"### {idx}. {tier_tag}[{r['score']} pkt] {r['target']}: {r['title']}")
         lines.append(f"- **Rekomendowane działanie**: {r['action']}")
         lines.append(f"- **Uzasadnienie / Fakty**: {r['evidence']}")
+        if r.get('satisfied_when'):
+            lines.append(f"- **Warunek ukończenia (Satisfied When)**: {r['satisfied_when']}")
         if r['matched_risks']:
             lines.append(f"- **Zidentyfikowane wzorce błędów**: `{', '.join(r['matched_risks'])}`")
         if r.get('guardrails'):
@@ -327,6 +485,7 @@ def markdown(advisory_data: dict[str, Any]) -> str:
         lines.append("")
 
     lines.append("---")
-    lines.append("*Wygenerowano przez monag advise na bazie faktów kodu, statusu zadań i śladów reflex.*")
+    lines.append("*Wygenerowano przez monag advise na bazie faktów kodu, statusu zadań, Priority DSL i śladów reflex.*")
     lines.append("")
     return '\n'.join(lines)
+

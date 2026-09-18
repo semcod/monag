@@ -161,4 +161,145 @@ def test_synthesize_guidelines_autogrammar_contract():
     candidate = {'origin': 'test', 'repo': 'autogrammar/intract', 'title': 'Contract drift', 'description': 'schema mismatch'}
     guidelines = advise.synthesize_guidelines(candidate, ['contract-schema-drift'])
     assert any('intract' in g.lower() or 'code2schema' in g.lower() for g in guidelines['guardrails'])
+    assert 'satisfied_when' in guidelines
+
+
+def test_classify_tier():
+    # Floor: critical priority, governance friction, broken keywords
+    assert advise.classify_tier({'priority': 'critical', 'title': 'Routine task'}, []) == advise.TIER_FLOOR
+    assert advise.classify_tier({'priority': 'low', 'title': 'Routine'}, ['governance-friction']) == advise.TIER_FLOOR
+    assert advise.classify_tier({'title': 'Fix broken test suite in CI'}, []) == advise.TIER_FLOOR
+
+    # Mission: high priority, untracked issue, feature/pr/release
+    assert advise.classify_tier({'priority': 'high', 'title': 'Add telemetry'}, []) == advise.TIER_MISSION
+    assert advise.classify_tier({'origin': 'audit-untracked-issue', 'title': 'Missing feature'}, []) == advise.TIER_MISSION
+    assert advise.classify_tier({'title': 'Release v1.2.0 candidate'}, []) == advise.TIER_MISSION
+
+    # Hygiene: doc drift, undescribed catalog, complexity
+    assert advise.classify_tier({'origin': 'taskill-doc-drift', 'title': 'Sync docs'}, []) == advise.TIER_HYGIENE
+    assert advise.classify_tier({'origin': 'catalog-undescribed', 'title': 'Metadata'}, []) == advise.TIER_HYGIENE
+    assert advise.classify_tier({'title': 'Refactor database models'}, []) == advise.TIER_HYGIENE
+    assert advise.classify_tier({'priority': 'medium', 'title': 'Normal task'}, []) == advise.TIER_HYGIENE
+
+    # Backlog: low priority or unclassified
+    assert advise.classify_tier({'priority': 'low', 'title': 'Investigate idea'}, []) == advise.TIER_BACKLOG
+
+
+def test_lexicographic_hierarchy_scores():
+    # Even with all risk bonuses, hygiene cannot beat mission base score
+    floor_item = {'priority': 'critical', 'title': 'Fix broken build'}
+    mission_item = {'priority': 'high', 'title': 'Release feature'}
+    hygiene_item = {
+        'origin': 'taskill-doc-drift',
+        'title': 'Refactor complexity',
+        'radar': {'split_recommended': True, 'complexity': 'high'},
+    }
+    backlog_item = {'priority': 'low', 'title': 'Someday idea'}
+
+    score_floor = advise.compute_advisory_score(floor_item, [])
+    score_mission = advise.compute_advisory_score(mission_item, ['timeout-failure', 'remote-rate-limit'])
+    score_hygiene = advise.compute_advisory_score(hygiene_item, ['tool-contract-friction'])
+    score_backlog = advise.compute_advisory_score(backlog_item, [])
+
+    # Floor base is 1000, Mission base is 500, Hygiene base is 200, Backlog base is 50
+    assert score_floor > score_mission > score_hygiene > score_backlog
+    assert score_floor >= 1000
+    assert score_mission >= 500
+    assert score_hygiene >= 200
+    assert score_backlog >= 50
+
+
+def test_generate_priority_readings():
+    reflex_data = {
+        'patterns': [
+            {'category': 'remote-rate-limit'},
+            {'category': 'governance-friction'},
+        ]
+    }
+    recs = [
+        {'tier': advise.TIER_FLOOR, 'title': 'Floor 1'},
+        {'tier': advise.TIER_MISSION, 'title': 'Mission 1'},
+        {'tier': advise.TIER_MISSION, 'title': 'Mission 2'},
+        {'tier': advise.TIER_HYGIENE, 'title': 'Hygiene 1'},
+    ]
+    envelope = advise.generate_priority_readings(reflex_data, recs)
+
+    assert envelope['schema'] == 'wellmanifest.priority/readings/v1'
+    assert envelope['document']['id'] == 'monag.advise.priority'
+    assert 'observedAt' in envelope
+
+    readings = envelope['readings']
+    assert readings['floor_friction_count']['value'] == 1
+    assert readings['mission_demand_count']['value'] == 2
+    assert readings['active_failure_patterns']['value'] == 2
+    assert readings['remote_rate_limit']['value'] == 1
+    assert readings['governance_friction']['value'] == 1
+    assert readings['timeout_failure']['value'] == 0
+
+
+def test_advise_tier_filtering(tmp_path):
+    mock_candidates = [
+        {'origin': 'audit-untracked-issue', 'repo': 'semcod/critical', 'issue_number': 10, 'title': 'Broken build', 'priority': 'critical'},
+        {'origin': 'audit-untracked-issue', 'repo': 'semcod/feature', 'issue_number': 11, 'title': 'New release feature', 'priority': 'high'},
+        {'origin': 'taskill-doc-drift', 'repo': 'semcod/docs', 'title': 'Refactor docs', 'priority': 'low'},
+    ]
+
+    with mock.patch('monag.export.scan', return_value={'candidates': mock_candidates}), \
+         mock.patch('monag.advise.collect_reflex_patterns', return_value={'available': False, 'patterns': []}):
+
+        # All tiers
+        all_res = advise.advise(tmp_path, tier='all')
+        assert len(all_res['recommendations']) == 3
+        assert all_res['tier_filter'] == 'all'
+        assert 'readings' in all_res
+        assert all_res['readings']['schema'] == 'wellmanifest.priority/readings/v1'
+
+        # Floor only
+        floor_res = advise.advise(tmp_path, tier='floor')
+        assert len(floor_res['recommendations']) == 1
+        assert floor_res['recommendations'][0]['tier'] == 'floor'
+        assert floor_res['recommendations'][0]['target'] == 'semcod/critical'
+        assert 'satisfied_when' in floor_res['recommendations'][0]
+
+        # Mission only
+        mission_res = advise.advise(tmp_path, tier='mission')
+        assert len(mission_res['recommendations']) == 1
+        assert mission_res['recommendations'][0]['tier'] == 'mission'
+        assert mission_res['recommendations'][0]['target'] == 'semcod/feature'
+
+        # Hygiene only
+        hygiene_res = advise.advise(tmp_path, tier='hygiene')
+        assert len(hygiene_res['recommendations']) == 1
+        assert hygiene_res['recommendations'][0]['tier'] == 'hygiene'
+
+
+def test_cli_advise_tier_argument(tmp_path):
+    from monag.cli import main
+    mock_data = {
+        'schema': 'monag.advisory/v1', 'root': str(tmp_path),
+        'generated_at': '2026-09-18T20:00:00+00:00', 'duration_seconds': 0.1,
+        'summary': '0 rekomendacji', 'recommendations': [], 'total_candidates': 0,
+        'reflex': {'available': False}, 'tier_filter': 'floor',
+    }
+    with mock.patch('monag.advise.advise', return_value=mock_data) as mock_adv:
+        rc = main(['--root', str(tmp_path), '--plain', 'advise', '--tier', 'floor'])
+        assert rc == 0
+        mock_adv.assert_called_once()
+        _, kwargs = mock_adv.call_args
+        assert kwargs.get('tier') == 'floor'
+
+
+def test_mcp_advise_tool_with_tier(tmp_path):
+    from monag.mcp import handle_tool_call
+    mock_data = {
+        'schema': 'monag.advisory/v1', 'root': str(tmp_path),
+        'generated_at': '2026-09-18T20:00:00+00:00', 'duration_seconds': 0.1,
+        'summary': 'test summary', 'recommendations': [], 'total_candidates': 0,
+        'reflex': {'available': False},
+    }
+    with mock.patch('monag.advise.advise', return_value=mock_data) as mock_adv:
+        handle_tool_call('monag_advise', {'limit': 5, 'tier': 'mission'}, tmp_path)
+        mock_adv.assert_called_once()
+        _, kwargs = mock_adv.call_args
+        assert kwargs.get('tier') == 'mission'
 
