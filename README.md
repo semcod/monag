@@ -52,3 +52,8 @@ planfile sync github --direction both
 Governance checks are available through `./project.sh` on Linux/macOS and
 `project.bat` on Windows; both entry points execute the repository's pinned
 governance validator before optional analysis tooling.
+
+
+## License
+
+Licensed under Apache-2.0.
