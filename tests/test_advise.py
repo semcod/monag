@@ -303,3 +303,40 @@ def test_mcp_advise_tool_with_tier(tmp_path):
         _, kwargs = mock_adv.call_args
         assert kwargs.get('tier') == 'mission'
 
+
+def test_find_algocode_runner():
+    runner = advise._find_algocode_runner()
+    # If algocode is in workspace, it should be discovered as import or None in clean env
+    assert runner in {'import', 'cli', None}
+
+
+def test_synthesize_guidelines_with_algocode_conflict():
+    candidate = {
+        'origin': 'audit-untracked-issue',
+        'repo': 'wellmanifest/new-project',
+        'title': 'Overlapping change',
+        'issue_number': 99,
+    }
+    mock_conflict = {
+        'has_conflict': True,
+        'conflicts': [
+            {'type': 'path_overlap', 'message': 'Path overlap on governance/manifest.json'}
+        ]
+    }
+    guidelines = advise.synthesize_guidelines(candidate, [], algo_conflict=mock_conflict)
+    assert any('Algocode Gate' in g for g in guidelines['guardrails'])
+    assert any('kolizji ścieżek' in g for g in guidelines['guardrails'])
+
+
+def test_advise_with_algocode_metadata(tmp_path):
+    mock_candidates = [
+        {'origin': 'catalog-undescribed', 'path': '/repo/test', 'title': 'Test repo', 'priority': 'low'},
+    ]
+    with mock.patch('monag.export.scan', return_value={'candidates': mock_candidates}), \
+         mock.patch('monag.advise.collect_reflex_patterns', return_value={'available': False, 'patterns': []}):
+        result = advise.advise(tmp_path, limit=5)
+
+    assert 'algocode' in result
+    assert 'available' in result['algocode']
+
+

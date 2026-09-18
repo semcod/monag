@@ -68,6 +68,59 @@ def _find_reflex_runner():
     return None
 
 
+def _find_algocode_runner() -> str | None:
+    """Check if semcod/algocode engine is importable or available in workspace."""
+    try:
+        import algocode.engine  # noqa: F401
+        return 'import'
+    except ImportError:
+        pass
+    for parent in [Path.cwd(), Path.home() / 'github', Path.home() / 'github' / 'semcod']:
+        algo_dir = parent / 'algocode' / 'src'
+        if (algo_dir / 'algocode').is_dir() and str(algo_dir) not in sys.path:
+            sys.path.insert(0, str(algo_dir))
+            try:
+                import algocode.engine  # noqa: F401
+                return 'import'
+            except ImportError:
+                pass
+    import shutil
+    if shutil.which('algocode'):
+        return 'cli'
+    return None
+
+
+def verify_candidate_conflict(candidate: dict[str, Any], root: Path) -> dict[str, Any] | None:
+    """Run deterministic conflict check using semcod/algocode if available."""
+    runner = _find_algocode_runner()
+    if runner != 'import':
+        return None
+
+    try:
+        import algocode.engine as algo
+        repo = candidate.get('repo') or candidate.get('path') or ''
+        repo_path = Path(repo) if Path(repo).is_absolute() else root / repo
+        if not repo_path.is_dir():
+            return None
+
+        manifest_path = None
+        for cand in [repo_path / '.governance' / 'manifest.json',
+                     repo_path / 'governance' / 'manifest.json',
+                     repo_path / 'governance' / 'manifest.hub.json']:
+            if cand.is_file():
+                manifest_path = cand
+                break
+
+        if not manifest_path:
+            return None
+
+        report = algo.check_conflict(manifest_path, repo_root=repo_path)
+        return report
+    except Exception:
+        return None
+
+
+
 def collect_reflex_patterns(root: Path, state_dir: Path | None = None,
                             extra_sources: list[str] | None = None) -> dict[str, Any]:
     """Extract recurring failure patterns using subactor.reflex if available."""
@@ -197,7 +250,8 @@ def classify_tier(candidate: dict[str, Any], matched_risks: list[str]) -> str:
     return TIER_BACKLOG
 
 
-def synthesize_guidelines(candidate: dict[str, Any], matched_risks: list[str]) -> dict[str, Any]:
+def synthesize_guidelines(candidate: dict[str, Any], matched_risks: list[str],
+                          algo_conflict: dict[str, Any] | None = None) -> dict[str, Any]:
     """Generate concrete action, rationale, and guardrails for an item."""
     origin = candidate.get('origin', '')
     title = candidate.get('title', '')
@@ -226,6 +280,9 @@ def synthesize_guidelines(candidate: dict[str, Any], matched_risks: list[str]) -
 
     # Add guardrails based on detected risks
     guardrails = ["Weryfikuj zgodność z regułami governance repozytorium przed otwarciem PR."]
+    if algo_conflict and algo_conflict.get('has_conflict'):
+        confs = algo_conflict.get('conflicts', [])
+        guardrails.append(f"Algocode Gate: wykryto {len(confs)} kolizji ścieżek/workstreamów w manifest.")
     if 'remote-rate-limit' in matched_risks:
         guardrails.append("Uwaga na limity API: wykorzystaj lokalne procedury CDP lub OneDev zamiast powtarzanych zapytań zdalnych.")
     if 'timeout-failure' in matched_risks:
@@ -352,8 +409,12 @@ def advise(root: Path, depth: int = 2, issue_limit: int = 200,
         title = c.get('title', '')
         desc = c.get('summary', c.get('description', ''))
         matched_risks = _match_reflex_risk(title, desc, reflex_data)
+        algo_conflict = verify_candidate_conflict(c, root)
+        if algo_conflict and algo_conflict.get('has_conflict'):
+            if 'governance-friction' not in matched_risks:
+                matched_risks.append('governance-friction')
         item_tier = classify_tier(c, matched_risks)
-        guidelines = synthesize_guidelines(c, matched_risks)
+        guidelines = synthesize_guidelines(c, matched_risks, algo_conflict=algo_conflict)
         score = compute_advisory_score(c, matched_risks, tier=item_tier)
 
         recommendations.append({
@@ -406,6 +467,10 @@ def advise(root: Path, depth: int = 2, issue_limit: int = 200,
             'pattern_count': len(reflex_data.get('patterns', [])),
             'proposal_count': len(reflex_data.get('proposals', [])),
             'reason': reflex_data.get('reason'),
+        },
+        'algocode': {
+            'available': _find_algocode_runner() is not None,
+            'runner': _find_algocode_runner(),
         },
     }
 
