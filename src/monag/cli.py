@@ -33,6 +33,7 @@ SHELL_COMMANDS = {
     'catalog': 'pokaż lokalny katalog projektów',
     'history': 'pokaż zapisane obserwacje',
     'report': 'wygeneruj raport email z aktywności workspace',
+    'advise': 'rekomendacje kolejnych zadań z wytycznymi na bazie reflex',
     'help': 'pokaż tę pomoc',
     'quit': 'zakończ powłokę',
 }
@@ -322,6 +323,18 @@ def main(argv=None):
     report_parser.add_argument('--dry-run', dest='report_dry_run', action='store_true',
                                help='generate and print the report without sending email')
     report_parser.add_argument('--issue-limit', type=int, default=200,
+                               help='GitHub issues fetched per repository (default: 200)')
+    advise_parser = sub.add_parser('advise', help='architectural guidance and prioritized next tasks '
+                                                  'synthesized from candidate items and reflex patterns')
+    advise_parser.add_argument('--limit', type=int, default=10,
+                               help='maximum recommendations to display (default: 10)')
+    advise_parser.add_argument('--radar', action='store_true',
+                               help='size candidates and estimate split recommendation via ticket-radar')
+    advise_parser.add_argument('--hygiene', action='store_true',
+                               help='include semcod/taskill doc-drift candidates')
+    advise_parser.add_argument('--reflex-source', action='append', default=[],
+                               help='extra directories or log files to ingest with subactor.reflex')
+    advise_parser.add_argument('--issue-limit', type=int, default=200,
                                help='GitHub issues fetched per repository (default: 200)')
     quality = sub.add_parser('quality', help='read-only semcod/regix quality gate for ONE repository '
                                              '(--root must be a Git checkout, not a workspace); '
@@ -644,6 +657,23 @@ def main(argv=None):
                         print(f"Cron install FAILED: {cron_result['error']}",
                               file=sys.stderr, flush=True)
             return 0 if result['ok'] else 1
+        if args.mode == 'advise':
+            from . import advise
+            if output_format != 'json' and sys.stderr.isatty():
+                print('MONAG: generating architectural guidance and next task recommendations...',
+                      file=sys.stderr, flush=True)
+            data = advise.advise(
+                root, depth=args.depth, issue_limit=args.issue_limit,
+                radar=getattr(args, 'radar', False),
+                hygiene=getattr(args, 'hygiene', False),
+                reflex_source=getattr(args, 'reflex_source', None),
+                state_dir=args.state_dir,
+                limit=args.limit)
+            if output_format == 'json':
+                print(json.dumps(data, ensure_ascii=False, indent=2))
+            else:
+                display_report(advise.markdown(data))
+            return 0
         if args.mode == 'quality':
             from . import quality
             if output_format != 'json' and sys.stderr.isatty():
@@ -750,6 +780,14 @@ def main(argv=None):
                         display_report(presentation.history_markdown(data))
                     else:
                         print('\n'.join(event_line(e) for e in data) or 'No recorded observations.', flush=True)
+                elif command_name == 'advise':
+                    from . import advise
+                    data = advise.advise(root, depth=args.depth, issue_limit=args.issue_limit,
+                                         state_dir=args.state_dir, limit=args.limit)
+                    if output_format == 'json':
+                        print(json.dumps(data, ensure_ascii=False, indent=2), flush=True)
+                    else:
+                        display_report(advise.markdown(data))
 
             print(shell_help(), flush=True)
             show_report('refresh')

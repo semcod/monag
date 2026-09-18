@@ -96,6 +96,17 @@ TOOLS = [
             'required': ['query'],
         },
     },
+    {
+        'name': 'monag_advise',
+        'description': 'Generate architectural guidance and prioritized next tasks combining candidate items and reflex learning loop patterns.',
+        'inputSchema': {
+            'type': 'object',
+            'properties': {
+                'limit': {'type': 'integer', 'description': 'Maximum recommendations to return (default: 10)', 'default': 10},
+                'radar': {'type': 'boolean', 'description': 'Include ticket-radar sizing', 'default': False},
+            },
+        },
+    },
 ]
 
 RESOURCES = [
@@ -104,6 +115,7 @@ RESOURCES = [
     {'uri': 'monag://audit', 'name': 'Planfile / GitHub Coverage Audit', 'mimeType': 'text/markdown'},
     {'uri': 'monag://resume', 'name': 'Worktrees & Backlog Inventory', 'mimeType': 'text/markdown'},
     {'uri': 'monag://usage', 'name': 'Agent Usage & Account Ledgers', 'mimeType': 'text/markdown'},
+    {'uri': 'monag://advise', 'name': 'Architectural Advisory & Task Guidance', 'mimeType': 'text/markdown'},
 ]
 
 
@@ -114,9 +126,9 @@ def handle_tool_call(name, arguments, root, depth=2):
     if name == 'monag_prs':
         query = dsl.Query(
             target='prs',
-            hours=arguments.get('hours', 24.0),
+            hours=float(arguments.get('hours', 24.0)),
             state=arguments.get('state', 'all'),
-            unpushed_only=arguments.get('unpushed_only', False),
+            unpushed_only=bool(arguments.get('unpushed_only', False)),
         )
         res = dsl.execute(query, root, depth=depth)
         return [{'type': 'text', 'text': res['markdown']}]
@@ -124,14 +136,19 @@ def handle_tool_call(name, arguments, root, depth=2):
     elif name == 'monag_audit':
         query = dsl.Query(
             target='audit',
-            hours=arguments.get('hours', 24.0),
-            worktrees_only=arguments.get('worktrees_only', False),
+            issue_limit=int(arguments.get('issue_limit', 200)),
+            worktrees_only=bool(arguments.get('worktrees_only', False)),
+            hours=float(arguments.get('hours', 24.0)),
         )
-        res = dsl.execute(query, root, depth=depth, issue_limit=arguments.get('issue_limit', 200))
+        res = dsl.execute(query, root, depth=depth)
         return [{'type': 'text', 'text': res['markdown']}]
 
     elif name == 'monag_status':
-        query = dsl.Query(target='status', hours=arguments.get('hours', 24.0), limit=arguments.get('limit', 20))
+        query = dsl.Query(
+            target='status',
+            hours=float(arguments.get('hours', 24.0)),
+            limit=int(arguments.get('limit', 20)),
+        )
         res = dsl.execute(query, root, depth=depth)
         return [{'type': 'text', 'text': res['markdown']}]
 
@@ -158,14 +175,20 @@ def handle_tool_call(name, arguments, root, depth=2):
             return [{'type': 'text', 'text': f"Error: {res.get('error')}"}]
         return [{'type': 'text', 'text': res['markdown']}]
 
+    elif name == 'monag_advise':
+        from . import advise
+        data = advise.advise(root, depth=depth, limit=int(arguments.get('limit', 10)),
+                             radar=bool(arguments.get('radar', False)))
+        return [{'type': 'text', 'text': advise.markdown(data)}]
+
     else:
         raise ValueError(f'Unknown tool: {name}')
 
 
-def handle_resource_read(uri, root, depth=2):
-    """Read resource URI and return text."""
+def read_resource(uri, root, depth=2):
+    """Read resource content by URI and return markdown text."""
     target = uri.replace('monag://', '').strip('/')
-    if target in {'snapshot', 'status'}:
+    if target == 'snapshot':
         res = dsl.execute('OBSERVE status', root, depth=depth)
     elif target in {'prs', 'pr'}:
         res = dsl.execute('OBSERVE prs', root, depth=depth)
@@ -175,9 +198,16 @@ def handle_resource_read(uri, root, depth=2):
         res = dsl.execute('OBSERVE resume', root, depth=depth)
     elif target == 'usage':
         res = dsl.execute('OBSERVE usage', root, depth=depth)
+    elif target == 'advise':
+        from . import advise
+        data = advise.advise(root, depth=depth, limit=10)
+        return advise.markdown(data)
     else:
         raise ValueError(f'Unknown resource: {uri}')
     return res['markdown']
+
+
+handle_resource_read = read_resource
 
 
 def process_message(msg, root, depth=2):
