@@ -28,7 +28,7 @@ from . import presentation
 SCHEMA = 'monag.report/v1'
 
 SECTION_REGISTRY = (
-    'status', 'prs', 'audit', 'resume', 'export',
+    'status', 'prs', 'audit', 'resume', 'export', 'advise',
 )
 
 
@@ -52,7 +52,7 @@ def _smtp_config(args_host=None, args_port=None, args_user=None,
 
 def collect(root, depth=2, hours=24, sections=None, github=True,
             issue_limit=200, registry=None, machine=False,
-            all_users=False, state_dir=None):
+            all_users=False, state_dir=None, advisory_limit=5):
     """Collect workspace data from each requested section.
 
     Returns a dict with section names as keys and scan results as values,
@@ -92,6 +92,14 @@ def collect(root, depth=2, hours=24, sections=None, github=True,
                 from . import export
                 data = export.scan(root, depth, issue_limit)
                 result['sections']['export'] = data
+            elif section == 'advise':
+                from . import advise
+                cached_export = result['sections'].get('export')
+                data = advise.advise(root, depth=depth, issue_limit=issue_limit,
+                                     limit=advisory_limit,
+                                     export_data=cached_export,
+                                     state_dir=state_dir)
+                result['sections']['advise'] = data
         except Exception as exc:
             result['errors'].append(f'{section}: {type(exc).__name__}: {exc}')
     result['duration_seconds'] = round(time.monotonic() - started, 2)
@@ -178,12 +186,36 @@ def format_section_export(data):
     return export_mod.markdown(data, limit=30)
 
 
+def format_section_advise(data):
+    lines = []
+    summary = data.get('summary', '')
+    if summary:
+        lines.append(f'> {summary}')
+        lines.append('')
+    recs = data.get('recommendations', [])
+    if recs:
+        rows = [[str(r.get('score', 0)), r.get('target', ''), r.get('title', '')[:55],
+                 ', '.join(r.get('matched_risks', [])) or '—']
+                for r in recs]
+        lines.append(presentation.table(['Score', 'Project', 'Task', 'Reflex Risks'], rows))
+        lines.append('')
+        lines.append('**Key Actionable Guardrails:**')
+        for r in recs[:5]:
+            lines.append(f"- **{r.get('target')}** ({r.get('score')} pts): {r.get('action')}")
+            for g in r.get('guardrails', []):
+                lines.append(f"  * {g}")
+    else:
+        lines.append('No pending recommendations.')
+    return '\n'.join(lines)
+
+
 _SECTION_FORMATTERS = {
     'status': format_section_status,
     'prs': format_section_prs,
     'audit': format_section_audit,
     'resume': format_section_resume,
     'export': format_section_export,
+    'advise': format_section_advise,
 }
 
 _SECTION_TITLES = {
@@ -192,6 +224,7 @@ _SECTION_TITLES = {
     'audit': 'GitHub Issue audit',
     'resume': 'Planfile backlog and worktrees',
     'export': 'Candidate work items',
+    'advise': 'Architectural Advisory & Task Guidance',
 }
 
 

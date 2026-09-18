@@ -26,6 +26,7 @@ FAILURE_KEYWORD_MAP = {
     'governance-friction': ('governance', 'gov-', 'overlap', 'workstream', 'ticket-0'),
     'dependency-drift': ('dependency', 'pin', 'version', 'incompatible', 'digest'),
     'tool-contract-friction': ('usage:', 'invalid choice', 'contract', '422', 'not found'),
+    'contract-schema-drift': ('intract', 'code2schema', 'schema', 'dsl', 'grammar', 'cqrs', 'ast extraction'),
     'test-feedback-friction': ('test failure', 'assertionerror', 'failed test', 'exit code 1'),
 }
 
@@ -170,6 +171,8 @@ def synthesize_guidelines(candidate: dict[str, Any], matched_risks: list[str]) -
         guardrails.append("Migracja wersji/pinów: sprawdź konsumentów downstream (np. onedev-agent) przed zmianą digestów.")
     if 'governance-friction' in matched_risks:
         guardrails.append("Upewnij się, że modyfikowane ścieżki mieszczą się w jednym workstreamie i dokładnie jednym tickecie.")
+    if 'contract-schema-drift' in matched_risks or 'autogrammar' in repo:
+        guardrails.append("Weryfikuj zgodność intract / kontraktów semantycznych (autogrammar/intract / code2schema) oraz schematów.")
 
     return {
         'action': action,
@@ -206,11 +209,13 @@ def compute_advisory_score(candidate: dict[str, Any], matched_risks: list[str]) 
 def advise(root: Path, depth: int = 2, issue_limit: int = 200,
            radar: bool = False, hygiene: bool = False,
            reflex_source: list[str] | None = None,
-           state_dir: Path | None = None, limit: int = 15) -> dict[str, Any]:
+           state_dir: Path | None = None, limit: int = 15,
+           export_data: dict[str, Any] | None = None) -> dict[str, Any]:
     """Generate prioritized next actions and architectural guidelines."""
     started = time.monotonic()
-    export_data = export.scan(root, depth=depth, issue_limit=issue_limit,
-                              radar=radar, hygiene=hygiene)
+    if export_data is None:
+        export_data = export.scan(root, depth=depth, issue_limit=issue_limit,
+                                  radar=radar, hygiene=hygiene)
     reflex_data = collect_reflex_patterns(root, state_dir=state_dir,
                                           extra_sources=reflex_source)
 

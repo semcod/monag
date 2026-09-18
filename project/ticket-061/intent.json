@@ -1,0 +1,28 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-061",
+  "summary": "monag report: include architectural advisory and autogrammar contract guardrails",
+  "workstream": "application",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-061/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/advise.py",
+    "src/monag/report.py",
+    "src/monag/cli.py",
+    "tests/test_advise.py",
+    "tests/test_report.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}
