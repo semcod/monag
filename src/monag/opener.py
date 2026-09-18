@@ -147,6 +147,45 @@ def _claude_session(agent, home=None):
         return None
 
 
+SOCKET_FD = re.compile(r'socket:\[(\d+)\]')
+
+
+def _listening_ports(proc='/proc'):
+    """inode → 'host:port' for every LISTEN socket in proc/net/tcp{,6}."""
+    table = {}
+    for name in ('tcp', 'tcp6'):
+        try:
+            lines = (Path(proc) / 'net' / name).read_text().splitlines()
+        except OSError:
+            continue
+        for line in lines[1:]:
+            fields = line.split()
+            if len(fields) < 10 or fields[3] != '0A':  # 0A = LISTEN
+                continue
+            host_hex, port_hex = fields[1].split(':')
+            host = host_hex
+            if len(host_hex) == 8:  # IPv4 little-endian
+                host = '.'.join(str(int(host_hex[i:i + 2], 16))
+                                for i in (6, 4, 2, 0))
+            table[fields[9]] = f'{host}:{int(port_hex, 16)}'
+    return table
+
+
+def http_endpoint(agent, proc='/proc'):
+    """'host:port' the agent process listens on, or None."""
+    sockets = set()
+    for target in _fd_targets(agent['pid'], proc=proc):
+        match = SOCKET_FD.match(target or '')
+        if match:
+            sockets.add(match.group(1))
+    if not sockets:
+        return None
+    for inode, endpoint in _listening_ports(proc=proc).items():
+        if inode in sockets:
+            return endpoint
+    return None
+
+
 def _opencode_session(agent, home=None):
     """Newest opencode.db session in the process cwd → `opencode --session <id>`."""
     cwd = agent.get('cwd')
@@ -190,6 +229,10 @@ def recipe(agent, action='terminal', browser=False, proc='/proc', home=None):
     """Launch argv for one agent row, or (None, reason) when it cannot open."""
     kind = agent.get('kind') or ''
     if action == 'browser':
+        if kind == 'opencode':
+            endpoint = http_endpoint(agent, proc=proc)
+            if endpoint:
+                return ['xdg-open', f'http://{endpoint}'], None
         argv = BROWSER.get(kind) or DESKTOP.get(kind)
         if argv:
             return argv, None
@@ -202,7 +245,14 @@ def recipe(agent, action='terminal', browser=False, proc='/proc', home=None):
     if ACP.fullmatch(kind):
         return None, (f'{kind} is an IDE-managed ACP adapter; '
                       'open the session in its IDE')
-    argv = (session_argv(agent, proc=proc, home=home)
+    argv = None
+    if kind == 'opencode':
+        endpoint = http_endpoint(agent, proc=proc)
+        if endpoint:
+            # Live attach beats session-file resume: the running TUI server
+            # already holds this session in memory.
+            argv = ['opencode', 'attach', f'http://{endpoint}']
+    argv = (argv or session_argv(agent, proc=proc, home=home)
             or TERMINAL.get(kind) or DESKTOP.get(kind))
     if argv:
         return argv, None

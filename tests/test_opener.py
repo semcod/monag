@@ -310,6 +310,46 @@ class SessionArgvTest(unittest.TestCase):
         row = agent(kind='opencode')
         self.assertIsNone(opener.session_argv(row, home=home))
 
+    def _tcp_listen(self, inode='424242', host='0100007F', port='1006'):
+        net = self.root / 'proc' / 'net'
+        net.mkdir(parents=True, exist_ok=True)
+        (net / 'tcp').write_text(
+            '  sl  local_address rem_address   st tx_queue rx_queue tr tm->when '
+            'retrnsmt   uid  timeout inode\n'
+            f'   0: {host}:{port} 00000000:0000 0A 00000000:00000000 00:00000000 '
+            f'00000000  1000        0 {inode} 1 0000000000000000 100 0 0 10 0\n')
+
+    def test_http_endpoint_from_socket_fd(self):
+        self._tcp_listen()
+        self._fd_link(100, '9', 'socket:[424242]')
+        self._fd_link(100, '10', '/dev/null')
+        row = agent(pid=100, kind='opencode')
+        self.assertEqual(opener.http_endpoint(row, proc=self.root / 'proc'),
+                         '127.0.0.1:4102')
+
+    def test_opencode_terminal_attaches_to_live_server(self):
+        self._tcp_listen()
+        self._fd_link(100, '9', 'socket:[424242]')
+        row = agent(pid=100, kind='opencode')
+        self.assertEqual(opener.recipe(row, proc=self.root / 'proc')[0],
+                         ['opencode', 'attach', 'http://127.0.0.1:4102'])
+
+    def test_opencode_browser_opens_live_url(self):
+        self._tcp_listen()
+        self._fd_link(100, '9', 'socket:[424242]')
+        row = agent(pid=100, kind='opencode')
+        self.assertEqual(opener.recipe(row, action='browser',
+                                       proc=self.root / 'proc')[0],
+                         ['xdg-open', 'http://127.0.0.1:4102'])
+
+    def test_opencode_no_listener_uses_session_db(self):
+        self._fd_link(100, '9', '/dev/null')
+        home = self.root / 'home'
+        self._opencode_db(home)
+        row = agent(pid=100, kind='opencode')
+        self.assertEqual(opener.recipe(row, proc=self.root / 'proc', home=home)[0],
+                         ['opencode', '--session', 'ses_new'])
+
     def test_other_kinds_have_no_session_probe(self):
         self.assertIsNone(opener.session_argv(agent(kind='devin')))
 
