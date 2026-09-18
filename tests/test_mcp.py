@@ -66,6 +66,27 @@ class McpTests(unittest.TestCase):
         content = resp['result']['content']
         self.assertEqual(content[0]['text'], '# NL Query Result')
 
+    def test_tools_call_monag_advise_emit_planfile(self):
+        req = {
+            'jsonrpc': '2.0',
+            'id': 14,
+            'method': 'tools/call',
+            'params': {
+                'name': 'monag_advise',
+                'arguments': {'emit_planfile': True},
+            },
+        }
+        mock_advise = {'schema': 'monag.advisory/v1', 'recommendations': [{'target': 'a', 'title': 'b', 'tier': 'floor'}]}
+        with patch('monag.advise.advise', return_value=mock_advise):
+            resp = mcp.process_message(req, root=Path('/tmp'))
+
+        self.assertEqual(resp['id'], 14)
+        content = resp['result']['content']
+        payload = json.loads(content[0]['text'])
+        self.assertEqual(payload['schema'], 'planfile.tickets/v1')
+        self.assertEqual(payload['count'], 1)
+        self.assertEqual(payload['tickets'][0]['tier'], 'floor')
+
     def test_resources_list_and_read(self):
         req_list = {'jsonrpc': '2.0', 'id': 5, 'method': 'resources/list', 'params': {}}
         resp_list = mcp.process_message(req_list, root=Path('/tmp'))

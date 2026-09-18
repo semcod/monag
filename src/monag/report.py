@@ -170,10 +170,19 @@ def collect(root, depth=2, hours=24, sections=None, github=True,
             elif section == 'advise':
                 from . import advise
                 cached_export = result['sections'].get('export')
-                data = advise.advise(root, depth=depth, issue_limit=issue_limit,
-                                     limit=advisory_limit,
-                                     export_data=cached_export,
-                                     state_dir=state_dir)
+                prs_sec = result['sections'].get('prs')
+                audit_sec = result['sections'].get('audit')
+                kwargs = {
+                    'limit': advisory_limit,
+                    'export_data': cached_export,
+                    'state_dir': state_dir,
+                }
+                if prs_sec is not None:
+                    kwargs['open_prs_count'] = len(prs_sec.get('open_prs', []))
+                if audit_sec is not None:
+                    kwargs['worktrees_count'] = audit_sec.get('total_worktrees', len(audit_sec.get('worktrees', [])))
+                    kwargs['repos_with_worktrees'] = audit_sec.get('repos_with_worktrees')
+                data = advise.advise(root, depth=depth, issue_limit=issue_limit, **kwargs)
                 result['sections']['advise'] = data
         except Exception as exc:
             result['errors'].append(f'{section}: {type(exc).__name__}: {exc}')
@@ -350,6 +359,29 @@ def markdown(report_data, port=8090, include_management_footer=True, recipients=
              f'**{observed} UTC** · root: `{report_data["root"]}` · '
              f'scan: {report_data["duration_seconds"]}s',
              '']
+
+    # High-level overview table: PRs, Worktrees, Planfile, Advise
+    prs_sec = report_data['sections'].get('prs') or {}
+    open_prs_count = len(prs_sec.get('open_prs', []))
+    audit_sec = report_data['sections'].get('audit') or {}
+    total_wts = audit_sec.get('total_worktrees', len(audit_sec.get('worktrees', [])))
+    resume_sec = report_data['sections'].get('resume') or {}
+    total_tickets = sum(len(p.get('planfile', {}).get('remaining_tickets', []))
+                        for p in resume_sec.get('projects', []))
+    advise_sec = report_data['sections'].get('advise') or {}
+    total_recs = len(advise_sec.get('recommendations', []))
+
+    summary_rows = [[
+        str(open_prs_count),
+        str(total_wts),
+        str(total_tickets),
+        str(total_recs),
+    ]]
+    lines.append('## Podsumowanie Workspace')
+    lines.append('')
+    lines.append(presentation.table(['Otwarte PR', 'Aktywne Worktrees', 'Zadania Planfile', 'Rekomendacje Advise'], summary_rows))
+    lines.append('')
+
     for section_name in report_data['requested_sections']:
         section_data = report_data['sections'].get(section_name)
         if section_data is None:

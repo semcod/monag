@@ -340,3 +340,134 @@ def test_advise_with_algocode_metadata(tmp_path):
     assert 'available' in result['algocode']
 
 
+def test_to_planfile_ticket():
+    rec_floor = {
+        'target': 'semcod/critical',
+        'title': 'Broken CI gate',
+        'tier': advise.TIER_FLOOR,
+        'action': 'Fix pipeline',
+        'evidence': 'Exit code 1',
+        'satisfied_when': 'Tests pass',
+        'guardrails': ['Do not bypass check'],
+        'matched_risks': ['governance-friction'],
+        'origin': 'audit-untracked-issue',
+        'score': 1050,
+    }
+    ticket = advise.to_planfile_ticket(rec_floor)
+    assert ticket['title'] == '[semcod/critical] Broken CI gate'
+    assert ticket['priority'] == 'critical'
+    assert 'tier:floor' in ticket['labels']
+    assert 'monag' in ticket['labels']
+    assert 'risk:governance-friction' in ticket['labels']
+    assert '**Satisfied When**: Tests pass' in ticket['description']
+    assert '**Action**: Fix pipeline' in ticket['description']
+    assert ticket['source'] == 'monag'
+
+
+def test_export_planfile_tickets():
+    advisory_data = {
+        'recommendations': [
+            {'target': 'repo/a', 'title': 'Task 1', 'tier': advise.TIER_FLOOR},
+            {'target': 'repo/b', 'title': 'Task 2', 'tier': advise.TIER_MISSION},
+        ]
+    }
+    all_tickets = advise.export_planfile_tickets(advisory_data, tier='all')
+    assert all_tickets['schema'] == 'planfile.tickets/v1'
+    assert all_tickets['count'] == 2
+    assert len(all_tickets['tickets']) == 2
+
+    floor_only = advise.export_planfile_tickets(advisory_data, tier='floor')
+    assert floor_only['count'] == 1
+    assert floor_only['tickets'][0]['tier'] == 'floor'
+
+
+def test_feed_to_planfile(tmp_path):
+    advisory_data = {
+        'recommendations': [
+            {'target': 'repo/a', 'title': 'Task 1', 'tier': advise.TIER_MISSION},
+        ]
+    }
+    with mock.patch('shutil.which', return_value='/usr/local/bin/planfile'), \
+         mock.patch('subprocess.run') as mock_run:
+        mock_run.return_value = mock.Mock(returncode=0, stdout='Imported 1 ticket', stderr='')
+        res = advise.feed_to_planfile(advisory_data, root=tmp_path, sprint='sprint-42')
+        assert res['ok'] is True
+        assert res['count'] == 1
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert cmd == ['/usr/local/bin/planfile', 'ticket', 'import', '--source', 'monag', '--sprint', 'sprint-42']
+
+
+def test_collect_workspace_metrics(tmp_path):
+    with mock.patch('monag.audit.targets', return_value=('workspace', [tmp_path], [])), \
+         mock.patch('monag.audit.collect_worktrees', return_value={'worktrees': [{'path': str(tmp_path)}], 'repos_with_worktrees': 1}), \
+         mock.patch('monag.prs.scan', return_value={'open_prs': [{'number': 1}]}):
+        metrics = advise.collect_workspace_metrics(tmp_path)
+        assert metrics['total_open_prs'] == 1
+        assert metrics['total_worktrees'] == 1
+        assert metrics['repos_with_worktrees'] == 1
+
+
+def test_markdown_overview_table():
+    data = {
+        'schema': 'monag.advisory/v1',
+        'root': '/home/tom/github',
+        'generated_at': '2026-09-18T20:00:00+00:00',
+        'duration_seconds': 0.5,
+        'summary': '1 rekomendacja',
+        'total_candidates': 5,
+        'metrics': {
+            'total_open_prs': 3,
+            'total_worktrees': 12,
+            'repos_with_worktrees': 4,
+        },
+        'readings': {
+            'readings': {
+                'floor_friction_count': {'value': 1},
+                'mission_demand_count': {'value': 2},
+                'active_failure_patterns': {'value': 0},
+            }
+        },
+        'recommendations': [
+            {
+                'score': 1050,
+                'target': 'semcod/critical',
+                'title': 'CI failure',
+                'origin': 'audit-untracked-issue',
+                'tier': 'floor',
+                'matched_risks': ['governance-friction'],
+                'action': 'Fix pipeline',
+                'evidence': 'Exit code 1',
+                'satisfied_when': 'Pass',
+            }
+        ],
+    }
+    md = advise.markdown(data)
+    assert '## Stan Workspace (PRs & Worktrees)' in md
+    assert 'Otwarte PR' in md
+    assert 'Aktywne Worktrees' in md
+    assert '3' in md
+
+
+def test_cli_planfile_emit_and_feed(tmp_path):
+    from monag.cli import main
+    mock_data = {
+        'schema': 'monag.advisory/v1', 'root': str(tmp_path),
+        'generated_at': '2026-09-18T20:00:00+00:00', 'duration_seconds': 0.1,
+        'summary': '0 rekomendacji', 'recommendations': [], 'total_candidates': 0,
+        'reflex': {'available': False}, 'tier_filter': 'all',
+    }
+    with mock.patch('monag.advise.advise', return_value=mock_data), \
+         mock.patch('monag.advise.export_planfile_tickets', return_value={'tickets': []}) as mock_exp:
+        rc = main(['--root', str(tmp_path), '--plain', 'advise', '--emit-planfile'])
+        assert rc == 0
+        mock_exp.assert_called_once()
+
+    with mock.patch('monag.advise.advise', return_value=mock_data), \
+         mock.patch('monag.advise.feed_to_planfile', return_value={'ok': True, 'count': 0}) as mock_feed:
+        rc = main(['--root', str(tmp_path), '--plain', 'advise', '--feed-planfile', '--sprint', 's1'])
+        assert rc == 0
+        mock_feed.assert_called_once()
+
+
+

@@ -345,6 +345,12 @@ def main(argv=None):
     advise_parser.add_argument('--tier', choices=['all', 'floor', 'mission', 'hygiene', 'backlog'],
                                default='all',
                                help='filter recommendations by Priority DSL tier (default: all)')
+    advise_parser.add_argument('--emit-planfile', action='store_true',
+                               help='export recommendations as Planfile-importable JSON tickets')
+    advise_parser.add_argument('--feed-planfile', action='store_true',
+                               help='directly feed recommendations into Planfile backlog via planfile ticket import')
+    advise_parser.add_argument('--sprint', default='current',
+                               help='target sprint for --feed-planfile (default: current)')
     quality = sub.add_parser('quality', help='read-only semcod/regix quality gate for ONE repository '
                                              '(--root must be a Git checkout, not a workspace); '
                                              'costs roughly a minute per run, never a write command')
@@ -701,6 +707,19 @@ def main(argv=None):
                 state_dir=args.state_dir,
                 limit=args.limit,
                 tier=getattr(args, 'tier', 'all'))
+            if getattr(args, 'emit_planfile', False):
+                planfile_payload = advise.export_planfile_tickets(data, tier=getattr(args, 'tier', 'all'))
+                print(json.dumps(planfile_payload, ensure_ascii=False, indent=2))
+                return 0
+            if getattr(args, 'feed_planfile', False):
+                feed_res = advise.feed_to_planfile(data, root=root, sprint=getattr(args, 'sprint', 'current'),
+                                                   tier=getattr(args, 'tier', 'all'))
+                if feed_res.get('ok'):
+                    print(f"Planfile: zaimportowano {feed_res.get('count', 0)} ticketów do sprintu '{args.sprint}'.")
+                    return 0
+                else:
+                    print(f"Planfile import FAILED: {feed_res.get('error')}", file=sys.stderr)
+                    return 1
             if output_format == 'json':
                 print(json.dumps(data, ensure_ascii=False, indent=2))
             else:

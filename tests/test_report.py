@@ -433,4 +433,22 @@ def test_run_daemon_dynamic_config(tmp_path):
         assert mock_send.call_args[0][0] == ['dyn@dev.local']
 
 
-
+def test_markdown_overview_table_with_prs_and_wts():
+    data = {
+        'schema': 'monag.report/v1',
+        'root': '/home/tom/github',
+        'observed_at': '2026-09-18T16:00:00+00:00',
+        'duration_seconds': 1.2,
+        'requested_sections': ['prs', 'audit'],
+        'sections': {
+            'prs': {'open_prs': [{'number': 10}, {'number': 12}]},
+            'audit': {'total_worktrees': 25, 'worktrees': []},
+        },
+        'errors': [],
+    }
+    md = report.markdown(data, include_management_footer=False)
+    assert '## Podsumowanie Workspace' in md
+    assert 'Otwarte PR' in md
+    assert 'Aktywne Worktrees' in md
+    assert '2' in md
+    assert '25' in md

@@ -388,12 +388,142 @@ def generate_priority_readings(reflex_data: dict[str, Any], recommendations: lis
     }
 
 
+def to_planfile_ticket(rec: dict[str, Any]) -> dict[str, Any]:
+    """Convert an advisory recommendation item into a Planfile ticket dictionary."""
+    tier = rec.get('tier', TIER_BACKLOG)
+    tier_priority_map = {
+        TIER_FLOOR: 'critical',
+        TIER_MISSION: 'high',
+        TIER_HYGIENE: 'medium',
+        TIER_BACKLOG: 'low',
+    }
+    priority = tier_priority_map.get(tier, 'normal')
+
+    desc_lines = []
+    if rec.get('action'):
+        desc_lines.append(f"**Action**: {rec['action']}")
+    if rec.get('evidence'):
+        desc_lines.append(f"**Evidence**: {rec['evidence']}")
+    if rec.get('satisfied_when'):
+        desc_lines.append(f"**Satisfied When**: {rec['satisfied_when']}")
+    if rec.get('guardrails'):
+        desc_lines.append("**Guardrails**:")
+        for g in rec['guardrails']:
+            desc_lines.append(f"- {g}")
+    if rec.get('matched_risks'):
+        desc_lines.append(f"**Reflex Risks**: {', '.join(rec['matched_risks'])}")
+
+    target = rec.get('target', 'workspace')
+    title = rec.get('title', 'Untitled task')
+    ticket_title = f"[{target}] {title}" if not title.startswith(f"[{target}]") else title
+
+    labels = ['monag', f'tier:{tier}']
+    if rec.get('origin'):
+        labels.append(f"origin:{rec['origin']}")
+    for r in rec.get('matched_risks', []):
+        labels.append(f"risk:{r}")
+
+    return {
+        'title': ticket_title,
+        'description': '\n\n'.join(desc_lines),
+        'priority': priority,
+        'labels': labels,
+        'tier': tier,
+        'target_repo': target,
+        'score': rec.get('score', 0),
+        'satisfied_when': rec.get('satisfied_when'),
+        'source': 'monag',
+    }
+
+
+def export_planfile_tickets(advisory_data: dict[str, Any], tier: str | None = None) -> dict[str, Any]:
+    """Format all (or filtered) recommendations as a Planfile-importable JSON dict."""
+    recs = advisory_data.get('recommendations', [])
+    if tier and tier.lower() != 'all':
+        recs = [r for r in recs if r.get('tier') == tier.lower()]
+    tickets = [to_planfile_ticket(r) for r in recs]
+    return {
+        'schema': 'planfile.tickets/v1',
+        'source': 'monag',
+        'generated_at': datetime.now(timezone.utc).isoformat(),
+        'count': len(tickets),
+        'tickets': tickets,
+    }
+
+
+def feed_to_planfile(advisory_data: dict[str, Any], root: Path, sprint: str = 'current',
+                     tier: str | None = None) -> dict[str, Any]:
+    """Directly invoke `planfile ticket import --source monag` via subprocess and stdin."""
+    export_obj = export_planfile_tickets(advisory_data, tier=tier)
+    tickets = export_obj.get('tickets', [])
+    if not tickets:
+        return {'ok': True, 'count': 0, 'message': 'No recommendations to import.'}
+
+    import shutil
+    planfile_bin = shutil.which('planfile')
+    if not planfile_bin:
+        return {'ok': False, 'error': 'planfile CLI not found on PATH'}
+
+    cmd = [planfile_bin, 'ticket', 'import', '--source', 'monag', '--sprint', sprint]
+    input_data = json.dumps(export_obj)
+    try:
+        proc = subprocess.run(cmd, input=input_data, text=True, capture_output=True,
+                              cwd=str(root), timeout=30)
+        if proc.returncode == 0:
+            return {
+                'ok': True,
+                'count': len(tickets),
+                'stdout': proc.stdout.strip(),
+                'stderr': proc.stderr.strip(),
+            }
+        else:
+            return {
+                'ok': False,
+                'error': f"planfile exit code {proc.returncode}: {proc.stderr.strip() or proc.stdout.strip()}",
+            }
+    except Exception as exc:
+        return {'ok': False, 'error': str(exc)}
+
+
+def collect_workspace_metrics(root: Path, depth: int = 2) -> dict[str, Any]:
+    """Fast local discovery of overall open PRs and active worktrees count."""
+    total_wts = 0
+    repos_with_wt = 0
+    total_prs = 0
+
+    try:
+        from . import audit
+        mode, paths, _ = audit.targets(root, depth=depth)
+        wt_info = audit.collect_worktrees(paths)
+        total_wts = len(wt_info.get('worktrees', []))
+        repos_with_wt = wt_info.get('repos_with_worktrees', 0)
+    except Exception:
+        pass
+
+    try:
+        from . import prs
+        prs_data = prs.scan(root, depth=depth, pr_limit=200, unpushed_only=False, all_repos=False)
+        total_prs = len(prs_data.get('open_prs', []))
+    except Exception:
+        pass
+
+    return {
+        'total_open_prs': total_prs,
+        'total_worktrees': total_wts,
+        'repos_with_worktrees': repos_with_wt,
+    }
+
+
 def advise(root: Path, depth: int = 2, issue_limit: int = 200,
            radar: bool = False, hygiene: bool = False,
            reflex_source: list[str] | None = None,
            state_dir: Path | None = None, limit: int = 15,
            export_data: dict[str, Any] | None = None,
-           tier: str | None = None) -> dict[str, Any]:
+           tier: str | None = None,
+           include_metrics: bool = True,
+           open_prs_count: int | None = None,
+           worktrees_count: int | None = None,
+           repos_with_worktrees: int | None = None) -> dict[str, Any]:
     """Generate prioritized next actions and architectural guidelines."""
     started = time.monotonic()
     if export_data is None:
@@ -445,6 +575,19 @@ def advise(root: Path, depth: int = 2, issue_limit: int = 200,
 
     capped = filtered[:limit]
 
+    metrics = {
+        'total_open_prs': open_prs_count if open_prs_count is not None else 0,
+        'total_worktrees': worktrees_count if worktrees_count is not None else 0,
+        'repos_with_worktrees': repos_with_worktrees if repos_with_worktrees is not None else 0,
+    }
+    if include_metrics and (open_prs_count is None or worktrees_count is None):
+        discovered = collect_workspace_metrics(root, depth=depth)
+        if open_prs_count is None:
+            metrics['total_open_prs'] = discovered['total_open_prs']
+        if worktrees_count is None:
+            metrics['total_worktrees'] = discovered['total_worktrees']
+            metrics['repos_with_worktrees'] = discovered['repos_with_worktrees']
+
     duration = round(time.monotonic() - started, 2)
     tier_suffix = f" (filtr tier: {active_tier})" if active_tier != 'all' else ""
     summary_text = (
@@ -460,6 +603,7 @@ def advise(root: Path, depth: int = 2, issue_limit: int = 200,
         'summary': summary_text,
         'tier_filter': active_tier,
         'readings': readings,
+        'metrics': metrics,
         'recommendations': capped,
         'total_candidates': len(candidates),
         'reflex': {
@@ -488,6 +632,8 @@ def markdown(advisory_data: dict[str, Any]) -> str:
     ]
 
     readings_env = advisory_data.get('readings')
+    floor_val = 0
+    mission_val = 0
     if readings_env and isinstance(readings_env, dict):
         r_map = readings_env.get('readings', {})
         floor_val = r_map.get('floor_friction_count', {}).get('value', 0)
@@ -507,7 +653,27 @@ def markdown(advisory_data: dict[str, Any]) -> str:
                      f"użyto standardowej heurystyki priorytetów.*")
         lines.append("")
 
+    # Executive Overview Table with total PRs and Worktrees
+    metrics = advisory_data.get('metrics', {})
+    prs_val = metrics.get('total_open_prs', 0)
+    wt_val = metrics.get('total_worktrees', 0)
+    repos_wt_val = metrics.get('repos_with_worktrees', 0)
     recs = advisory_data.get('recommendations', [])
+    hygiene_val = len([r for r in recs if r.get('tier') == TIER_HYGIENE])
+
+    tier_summary = f"{floor_val} floor, {mission_val} mission, {hygiene_val} hygiene"
+    wt_repr = f"{wt_val} ({repos_wt_val} repo)" if repos_wt_val else str(wt_val)
+    overview_rows = [[
+        str(prs_val),
+        wt_repr,
+        tier_summary,
+        str(advisory_data.get('total_candidates', len(recs))),
+    ]]
+    lines.append("## Stan Workspace (PRs & Worktrees)")
+    lines.append("")
+    lines.append(presentation.table(['Otwarte PR', 'Aktywne Worktrees', 'Rekomendacje Tiers', 'Kandydaci Razem'], overview_rows))
+    lines.append("")
+
     if not recs:
         lines.append("_Brak rekomendowanych zadań. Workspace jest w spójnym stanie._\n")
         return '\n'.join(lines)
@@ -524,6 +690,8 @@ def markdown(advisory_data: dict[str, Any]) -> str:
             risks_str,
         ])
 
+    lines.append("## Rekomendowane Zadania")
+    lines.append("")
     lines.append(presentation.table(['Tier', 'Score', 'Projekt', 'Zadanie', 'Wykryte ryzyka (Reflex)'], table_rows))
     lines.append("")
     lines.append("## Szczegółowe wytyczne dla kolejnych zadań")
@@ -553,4 +721,5 @@ def markdown(advisory_data: dict[str, Any]) -> str:
     lines.append("*Wygenerowano przez monag advise na bazie faktów kodu, statusu zadań, Priority DSL i śladów reflex.*")
     lines.append("")
     return '\n'.join(lines)
+
 

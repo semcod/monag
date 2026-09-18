@@ -110,6 +110,11 @@ TOOLS = [
                     'enum': ['all', 'floor', 'mission', 'hygiene', 'backlog'],
                     'default': 'all',
                 },
+                'emit_planfile': {
+                    'type': 'boolean',
+                    'description': 'Output tickets formatted for planfile ticket import instead of markdown',
+                    'default': False,
+                },
             },
         },
     },
@@ -186,6 +191,9 @@ def handle_tool_call(name, arguments, root, depth=2):
         data = advise.advise(root, depth=depth, limit=int(arguments.get('limit', 10)),
                              radar=bool(arguments.get('radar', False)),
                              tier=arguments.get('tier'))
+        if arguments.get('emit_planfile'):
+            payload = advise.export_planfile_tickets(data, tier=arguments.get('tier'))
+            return [{'type': 'text', 'text': json.dumps(payload, ensure_ascii=False, indent=2)}]
         return [{'type': 'text', 'text': advise.markdown(data)}]
 
     else:
