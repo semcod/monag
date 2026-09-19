@@ -1,0 +1,93 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-068",
+  "summary": "adopt wellmanifest docs standard and deduplication",
+  "workstream": "integration",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-068/**",
+    ".governance/manifest.json",
+    ".governance/docs.json",
+    ".governance/managed-copies.json",
+    "docs/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "CHANGELOG.md"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "59c450d4e0d2c6f6ca3c0ee9d8dd85d42ccb70e5",
+    "targetBranch": "main",
+    "outcome": "Adopt wellmanifest/docs standard, add .governance/docs.json and .governance/managed-copies.json, and conform docs to validation standards.",
+    "nonGoals": [
+      "Do not modify core runtime CLI interfaces.",
+      "Do not delete existing documentation without preservation."
+    ],
+    "complexity": "M",
+    "estimatedMinutes": 20,
+    "budgets": {
+      "maxImplementationFiles": 9,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Pin wellmanifest/docs in .governance/docs.json, register managed copies in .governance/managed-copies.json, declare path ownership in .governance/manifest.json, and format docs/README.md and information docs to pass docs check.",
+      "components": [
+        {
+          "name": "governance",
+          "paths": [
+            ".governance/manifest.json",
+            ".governance/docs.json",
+            ".governance/managed-copies.json",
+            "CHANGELOG.md"
+          ]
+        },
+        {
+          "name": "documentation",
+          "paths": [
+            "docs/README.md",
+            "docs/information/nl-dsl-llm.md"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the delivery commit through protected review."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python3 -c \"import json; print('docs config verified')\""
+        ],
+        "evidence": "Docs adoption and managed copies configuration verified."
+      },
+      {
+        "criterion": "AC-04",
+        "commands": [
+          "./project/governance-check.sh"
+        ],
+        "evidence": "GOV-PASS: passed (0 errors, 0 warnings)"
+      }
+    ]
+  }
+}

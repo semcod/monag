@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Docs
+- Adopt wellmanifest/docs standard with .governance/docs.json and .governance/managed-copies.json (ticket-068)
+- Conform docs/README.md and docs/information/nl-dsl-llm.md to schema and deduplication standard
+
 ## [0.3.2] - 2026-09-19
 
 ### Docs
