@@ -10,7 +10,7 @@
   "created": "2026-09-18",
   "updated": "2026-09-18",
   "review_after": "2026-10-16",
-  "source_revision": "a582b13",
+  "source_revision": "a582b1307072a7cad86b3fca11662d0a8debb81a",
   "affected_repositories": [
     "semcod/monag"
   ],
@@ -41,8 +41,8 @@ aggregation across statements, mutation of any state, or network observation
 beyond what the rule engine already performs. The LLM is a translation aid
 only; it never selects data sources beyond the six declared domains.
 
-<!-- docs:section contract -->
-## Normative clauses
+<!-- docs:section content -->
+## Content
 
 ### 1. Resolution order
 
@@ -97,12 +97,24 @@ instruct the model to answer either with one grammar-conforming line or with
   MUST NOT retry providers, MUST NOT cache translations between processes, and
   MUST NOT fall back from a failed LLM translation to a guessed query.
 
-<!-- docs:section reference -->
-## Reference implementation
+### 6. Reference implementation
 
 `src/monag/dsl_llm.py` implements this contract (`resolve`, `execute`).
 `monag query`, `monag shell`, panel `/api/query` and the MCP `monag_query`
 tool route through it; conformance tests live in `tests/test_dsl_llm.py`.
+
+<!-- docs:section limitations -->
+## Limitations
+
+The contract applies only to translation into canonical queries for the six declared domains
+(`prs`, `audit`, `status`, `resume`, `usage`, `catalog`). It does not mutate repository state
+or access private network endpoints beyond the local execution boundary.
+
+<!-- docs:section next_actions -->
+## Next actions
+
+Maintain integration with `semcod/algocode` for AST-level symbol inspection and duplicate
+detection in query generation, and monitor provider timeouts in production.
 
 <!-- docs:section evidence -->
 ## Evidence

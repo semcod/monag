@@ -84,6 +84,8 @@
           ".governance/required-checks.json",
           ".governance/ticket-allocation.json",
           ".governance/ticket-activity.override.json",
+          ".governance/docs.json",
+          ".governance/managed-copies.json",
           ".subactor/manifest.json",
           "AGENTS.md",
           ".planfile/**",
