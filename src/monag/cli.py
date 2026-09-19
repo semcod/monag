@@ -720,12 +720,17 @@ def main(argv=None):
                     return 0
                 if getattr(args, 'feed_planfile', False):
                     feed_res = triage.feed_to_planfile(data, root=root, sprint=getattr(args, 'sprint', 'current'))
-                    if feed_res.get('success'):
-                        print(f"Planfile: wygenerowano {feed_res.get('tasks_count', 0)} zadań dla sprintu '{args.sprint}'.")
-                        return 0
+                    if output_format == 'json':
+                        print(json.dumps(feed_res, ensure_ascii=False, indent=2))
                     else:
-                        print(f"Planfile feed FAILED: {feed_res.get('reason')}", file=sys.stderr)
-                        return 1
+                        print(f"Planfile: potwierdzono zapis {feed_res.get('tasks_count', 0)} ticketów dla sprintu '{args.sprint}'.")
+                        for ticket in feed_res.get('tickets', []):
+                            print(f"  {ticket['repository']}: {ticket['id']}")
+                        for error in feed_res.get('errors', []):
+                            print(f"  {error['repository']}: {error['error']}", file=sys.stderr)
+                        if not feed_res.get('success'):
+                            print(f"Planfile feed FAILED: {feed_res.get('reason')}", file=sys.stderr)
+                    return 0 if feed_res.get('success') else 1
                 if output_format == 'json':
                     print(json.dumps(data, ensure_ascii=False, indent=2))
                 else:

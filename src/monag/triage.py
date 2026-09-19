@@ -7,6 +7,9 @@ and synthesizing read-only inspection steps. Remote Issues and CI are not scanne
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
+import json
+import shutil
 from pathlib import Path
 import shlex
 import subprocess
@@ -445,19 +448,64 @@ def export_planfile_tasks(report: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def feed_to_planfile(report: Dict[str, Any], root: Path, sprint: str = "current") -> Dict[str, Any]:
-    """Ingest guidance steps into workspace Planfile backlog/sprint."""
+    """Persist project-local inspection tickets through the installed Planfile CLI."""
     tasks = export_planfile_tasks(report)
-    planfile_dir = root / ".planfile"
-    if not planfile_dir.is_dir():
-        planfile_dir = root / "semcod" / "monag" / ".planfile"
-
-    if not planfile_dir.is_dir():
-        return {"success": False, "reason": "No .planfile directory found", "tasks_count": len(tasks)}
-
-    sprint_file = planfile_dir / "sprints" / f"{sprint}.yaml"
-    return {
-        "success": True,
-        "target": str(sprint_file),
-        "tasks_count": len(tasks),
-        "tasks": tasks,
-    }
+    result = {"success": True, "tasks_count": 0, "requested_count": len(tasks),
+              "tickets": [], "errors": [], "remote_sync_performed": False}
+    if not tasks:
+        return result
+    binary = shutil.which("planfile")
+    if not binary:
+        return dict(result, success=False, reason="planfile CLI not found on PATH")
+    root = root.resolve()
+    for task in tasks:
+        repository = task["repository"]
+        try:
+            relative = Path(repository)
+            if not repository or relative.is_absolute() or ".." in relative.parts:
+                raise ValueError("invalid project path")
+            project = (root / relative).resolve()
+            if (root / ".git").exists() and repository == f"{root.parent.name}/{root.name}":
+                project = root
+            if not project.is_relative_to(root):
+                raise ValueError("project escapes scan root")
+            if not (project / ".git").exists() or not (project / ".planfile").is_dir():
+                raise ValueError("owning project Git checkout and .planfile are required")
+            digest = hashlib.sha256(json.dumps(
+                [repository, task["title"], task["command"]], ensure_ascii=False
+            ).encode()).hexdigest()[:32]
+            label = "dedupe:monag-" + digest
+            description = "\n".join([task["description"], task["command"], *task["guardrails"]])
+            description = description.replace("<primary>", "registered primary checkout")
+            priority = {"P0": "critical", "P1": "high"}.get(task["priority"], "normal")
+            create = subprocess.run(
+                [binary, "ticket", "create", "--priority", priority, "--sprint", sprint,
+                 "--source", "monag-triage", "--label", label,
+                 "--description", description, "--", task["title"]],
+                cwd=str(project), capture_output=True, text=True, timeout=30,
+            )
+            if create.returncode:
+                raise ValueError(f"Planfile creation failed (exit {create.returncode})")
+            readback = subprocess.run(
+                [binary, "ticket", "list", "--sprint", "all", "--label", label, "--format", "json"],
+                cwd=str(project), capture_output=True, text=True, timeout=30,
+            )
+            if readback.returncode:
+                raise ValueError(f"Planfile readback failed (exit {readback.returncode})")
+            records = json.loads(readback.stdout)
+            if not isinstance(records, list):
+                raise ValueError("Planfile readback must be a ticket list")
+            matches = [row for row in records if isinstance(row, dict)
+                       and label in row.get("labels", []) and row.get("id")
+                       and row.get("status") not in {"done", "canceled"}]
+            if len(matches) != 1:
+                raise ValueError("Planfile did not return one persisted dedupe owner")
+            result["tickets"].append({"repository": repository, "id": matches[0]["id"],
+                                      "project": str(project)})
+            result["tasks_count"] += 1
+        except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+            result["errors"].append({"repository": repository, "error": str(error)})
+    result["success"] = not result["errors"]
+    if result["errors"]:
+        result["reason"] = "Some tickets could not be persisted or verified; inspect errors and retry safely"
+    return result

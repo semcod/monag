@@ -134,7 +134,7 @@ def test_guidance_synthesis_and_markdown():
     assert "🛡️ Safe" not in md
 
 
-def test_planfile_export_and_feed(tmp_path):
+def test_planfile_export_and_feed(tmp_path, monkeypatch):
     """Verify exporting guidance steps to Planfile format."""
     mock_report = {
         "guidance_steps": [
@@ -156,12 +156,11 @@ def test_planfile_export_and_feed(tmp_path):
     assert tasks[0]["repository"] == "semcod/algocode"
     assert tasks[0]["priority"] == "P1"
 
-    # Feed to planfile test
-    planfile_dir = tmp_path / ".planfile" / "sprints"
-    planfile_dir.mkdir(parents=True)
-    res = triage.feed_to_planfile(mock_report, root=tmp_path, sprint="current")
-    assert res["success"]
-    assert res["tasks_count"] == 1
+    monkeypatch.setattr(triage.shutil, "which", lambda _: None)
+    result = triage.feed_to_planfile(mock_report, root=tmp_path)
+    assert not result["success"]
+    assert result["tasks_count"] == 0
+    assert result["requested_count"] == 1
 
 
 def test_advise_holistic_delegation(tmp_path):
@@ -259,3 +258,67 @@ def test_suggested_inspection_command_quotes_checkout_path():
     path = "/workspace/a $(touch bad); repo"
     result = triage.synthesize_triage_action({"path": path}, "", "org/repo", {})
     assert shlex.split(result["suggested_command"]) == ["git", "-C", path, "status", "--short"]
+
+
+
+def feed_fixture(*repositories):
+    return {"guidance_steps": [{"category": triage.CATEGORY_CORE_FOUNDATION,
+        "repo": repository, "title": "Inspect local evidence", "action": "Review ownership",
+        "command": "git status --short", "guardrails": [], "score": 1200}
+        for repository in repositories]}
+
+
+def test_feed_routes_projects_and_reads_back_ids(tmp_path, monkeypatch):
+    import subprocess
+    monkeypatch.setattr(triage.shutil, "which", lambda _: "/bin/planfile-fixture")
+    for name in ["one", "two"]:
+        root = tmp_path / "org" / name
+        (root / ".git").mkdir(parents=True)
+        (root / ".planfile").mkdir()
+    stored = {}
+    def native(args, cwd, **kwargs):
+        assert "--sync" not in args
+        label = args[args.index("--label") + 1]
+        if args[2] == "create":
+            stored.setdefault((cwd, label), {"id": "PLF-001", "labels": [label], "status": "open"})
+            return subprocess.CompletedProcess(args, 0, "Created", "")
+        return subprocess.CompletedProcess(args, 0, json.dumps([stored[(cwd, label)]]), "")
+    monkeypatch.setattr(triage.subprocess, "run", native)
+    for _ in range(2):
+        result = triage.feed_to_planfile(feed_fixture("org/one", "org/two"), tmp_path)
+        assert result["success"]
+        assert result["tasks_count"] == 2
+        assert {row["repository"] for row in result["tickets"]} == {"org/one", "org/two"}
+    assert len(stored) == 2
+
+
+def test_feed_rejects_missing_and_escaping_projects(tmp_path, monkeypatch):
+    monkeypatch.setattr(triage.shutil, "which", lambda _: "/bin/planfile-fixture")
+    with mock.patch.object(triage.subprocess, "run") as run:
+        result = triage.feed_to_planfile(feed_fixture("org/missing", "../outside", "/absolute"), tmp_path)
+    assert not result["success"]
+    assert len(result["errors"]) == 3
+    assert result["tasks_count"] == 0
+    run.assert_not_called()
+
+
+def test_feed_cannot_claim_success_from_command_exit_alone(tmp_path, monkeypatch):
+    import subprocess
+    monkeypatch.setattr(triage.shutil, "which", lambda _: "/bin/planfile-fixture")
+    (tmp_path / "org/repo/.git").mkdir(parents=True)
+    (tmp_path / "org/repo/.planfile").mkdir()
+    with mock.patch.object(triage.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "[]", "")):
+        result = triage.feed_to_planfile(feed_fixture("org/repo"), tmp_path)
+    assert not result["success"]
+    assert result["tasks_count"] == 0
+    assert "persisted dedupe owner" in result["errors"][0]["error"]
+
+
+def test_feed_cli_json_reports_partial_failure(tmp_path, capsys):
+    from monag import cli
+    result = {"success": False, "tasks_count": 1, "tickets": [{"repository": "org/repo", "id": "PLF-001"}],
+              "errors": [{"repository": "org/missing", "error": "missing store"}]}
+    with mock.patch.object(triage, "run_holistic_triage", return_value={}):
+        with mock.patch.object(triage, "feed_to_planfile", return_value=result):
+            assert cli.main(["--root", str(tmp_path), "--json", "triage", "--feed-planfile"]) == 1
+    assert json.loads(capsys.readouterr().out) == result
