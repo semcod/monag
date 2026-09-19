@@ -9,6 +9,7 @@ import subprocess
 import time
 
 from .agents import ALIASES, identify
+from .cache import run_cached_gh
 
 AGENTS = set(ALIASES)
 SKIP = {'.git', '.worktrees', '.subactor', 'node_modules', 'venv', '.venv', '__pycache__', 'build', 'dist'}
@@ -25,6 +26,10 @@ def inside(path, root):
 def command(args, cwd=None, timeout=8):
     env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
     env.update(GIT_OPTIONAL_LOCKS='0', GIT_TERMINAL_PROMPT='0', GH_PROMPT_DISABLED='1')
+    if args and args[0] == 'gh':
+        cached_result = run_cached_gh(args, cwd=cwd, timeout=timeout, env=env)
+        if cached_result is not None:
+            return cached_result
     try:
         p = subprocess.run(args, cwd=cwd, env=env, stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE, timeout=timeout)
@@ -34,7 +39,8 @@ def command(args, cwd=None, timeout=8):
                     'rev-parse', 'status', 'log', 'show', 'worktree', 'rev-list', 'config'}:
                 operation += ' ' + args[1]
             return '', f'{operation} failed (exit {p.returncode})'
-        return p.stdout.decode('utf-8', 'replace'), None
+        stdout = p.stdout.decode('utf-8', 'replace') if isinstance(p.stdout, (bytes, bytearray)) else str(p.stdout or '')
+        return stdout, None
     except (OSError, subprocess.TimeoutExpired) as e:
         return '', f'{args[0]}: {type(e).__name__}'
 
