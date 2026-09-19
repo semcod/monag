@@ -59,6 +59,39 @@ copies without renaming or deleting them. Matching HEAD alone, matching paths,
 or matching patch IDs is insufficient. An unmatched intermediate commit or
 later new work still routes to reconciliation. Missing history fails closed.
 
+### Stale carrier of an integrated ticket
+
+Blocker `integrated-ticket-carrier` names an active-projected ticket whose
+carrier is dirty in a checkout while its directory is already on the observed
+target and no `ticket/NNN` branch lies outside that target. A typical source is
+an allocation-time copy left in a primary checkout that is behind the target.
+The conservative `status-projection` activity is unchanged, so the copy still
+counts toward the workstream limit; admission routes to RECONCILE instead of an
+unexplained SERIALIZE. Resolve it without discarding unknown work:
+
+1. Compare each dirty carrier with the target version and confirm no process or
+   session is still editing it.
+2. Store a content-addressed, secret-scanned snapshot of every dirty file in
+   ignored receipt storage, recording base HEAD and target SHA.
+3. Recheck the file digests, restore only the snapshotted carrier paths and
+   fast-forward the checkout; leave unrelated dirty work in place.
+4. Reobserve admission. A differing carrier that records real continuation work
+   needs a new or reused ticket, not a restore.
+
+### Writes in the selected checkout
+
+The selected checkout of REUSE_EXISTING is not a competing peer, yet another
+writer may have left uncommitted changes in it. Every registered checkout
+reports `dirtyNewestModifiedAt`, the newest modification time of its dirty
+paths: recency evidence only, never writer identity or authority. When dirty
+paths of the selected checkout overlap the requested scope, `requiredBeforeWrite`
+asks the caller to confirm they belong to this session. A caller that observed
+the checkout earlier passes that report's `dirtyDigest` with
+`--ticket ticket-NNN --expect-dirty-digest <sha256>`; any change since then adds
+blocker `selected-checkout-changed` and removes REUSE_EXISTING. This is a
+clone-local compare-and-swap on content, not a lease or cross-clone lock.
+Disjoint dirty work of another writer may continue beside authorized work.
+
 Registered checkout observations, dirty paths, active scopes and WIP limits
 are unchanged. Historical content inclusion is not current behavior, owner
 consent, a merge receipt, ticket closure or permission to discard history.

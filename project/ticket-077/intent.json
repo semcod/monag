@@ -1,0 +1,111 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-077",
+  "summary": "Adopt wellmanifest/new-project 0.20.32",
+  "workstream": "governance",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-077/**",
+    "project/TICKETS.md",
+    ".governance/**",
+    "pyproject.toml",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+    ".aider.conf.yml",
+    ".cursor/rules/**",
+    ".github/copilot-instructions.md",
+    "scripts/install-agent-hosts.sh",
+    "project/new-ticket.sh"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md",
+    ".env"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "fb5259da3fb739cb0d138bd9008d422b59232381",
+    "targetBranch": "main",
+    "standardAdoption": {
+      "sourceRepository": "wellmanifest/new-project",
+      "fromRevision": "2b016654cff1a1ccef2c0d6126a9c2550ae6b37a",
+      "toRevision": "b6ba9c21a65a6a5648ecf904b64c3b75295e136f"
+    },
+    "outcome": "This repository runs the verified wellmanifest/new-project 0.20.32 standard with synchronized pyproject.toml packaging pin, repaired pytest pythonpath including repository root, and harmonized coordination workstreams.",
+    "nonGoals": [
+      "No change to monitor or CLI behavior.",
+      "No release and no registry publish."
+    ],
+    "complexity": "L",
+    "estimatedMinutes": 60,
+    "budgets": {
+      "maxImplementationFiles": 15,
+      "maxAffectedComponents": 5,
+      "maxPublicInterfaceChanges": 3,
+      "maxRuntimeDependencies": 3
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Adopt standard 0.20.32 using create_adoption_lock.py --upgrade, update pyproject.toml [tool.wellmanifest] pin to 0.20.32 and revision b6ba9c21, add repository root '.' to pythonpath in pytest options, harmonize coordination workstream ownership, and verify zero drift across all test suites and governance gates.",
+      "components": [
+        {
+          "name": "governance-instance",
+          "paths": [
+            ".governance/**",
+            "project/ticket-077/**",
+            "project/TICKETS.md"
+          ]
+        },
+        {
+          "name": "packaging-pin",
+          "paths": [
+            "pyproject.toml"
+          ]
+        },
+        {
+          "name": "managed-guidance",
+          "paths": [
+            "AGENTS.md",
+            "CLAUDE.md",
+            "GEMINI.md",
+            ".aider.conf.yml",
+            ".cursor/rules/**",
+            ".github/copilot-instructions.md",
+            "scripts/install-agent-hosts.sh",
+            "project/new-ticket.sh"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert commit to restore 0.20.31 governance files and packaging pin."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python3 scripts/create_adoption_lock.py --target-root . --source-revision b6ba9c21a65a6a5648ecf904b64c3b75295e136f --upgrade",
+          "./project/governance-check.sh --base fb5259da3fb739cb0d138bd9008d422b59232381 --head HEAD",
+          "uv run --no-project --with pytest pytest -q"
+        ],
+        "evidence": "Pending exact-head publication."
+      }
+    ]
+  }
+}

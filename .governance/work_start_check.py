@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 sys.dont_write_bytecode = True
-from ticket_activity import ActivityError, resolve as resolve_activity
+from ticket_activity import ActivityError, delivery_landed, resolve as resolve_activity
 from ticket_input import configured_mode, load_input, primary_database
 from worktree_overlap_check import globs_may_overlap, path_ignored
 
@@ -154,6 +154,26 @@ def dirty_observation(root):
     return material(sorted(paths)), digest({"status": status, "files": hashes}), sorted(paths)
 
 
+def dirty_modified(root, paths):
+    """Newest modification time of dirty paths: a recency observation, never writer identity."""
+    newest = None
+    for rel in paths:
+        try:
+            stamp = (root / rel).lstat().st_mtime
+        except OSError:
+            continue
+        newest = stamp if newest is None or stamp > newest else newest
+    return None if newest is None else datetime.fromtimestamp(newest, timezone.utc).isoformat(timespec="seconds")
+
+
+def landed(path, ticket, target):
+    """Whether the ticket directory is on the observed target and no ticket branch is outside it."""
+    try:
+        return delivery_landed(path, path / "project" / ticket, target)
+    except subprocess.SubprocessError as error:
+        raise ObservationError("Target ancestry observation failed") from error
+
+
 def remote_heads(root):
     """Read advertisements, never fetch or print URLs/credential diagnostics."""
     result = {}
@@ -256,7 +276,7 @@ def publication_observation(root, entries, target):
 
 
 def inspect(root, workstream, requested_paths=(), ticket=None, storage=None,
-            observe_publication=False):
+            observe_publication=False, expected_dirty_digest=None):
     root = Path(git(root, "rev-parse", "--show-toplevel").strip()).resolve()
     manifest = manifest_at(root)
     coordination = manifest["coordination"]
@@ -336,6 +356,7 @@ def inspect(root, workstream, requested_paths=(), ticket=None, storage=None,
         entries.append({"path": str(path.resolve()), "branch": branch or None,
                         "headSha": head, "ahead": ahead, "behind": behind,
                         "dirtyPaths": dirty, "allDirtyPaths": all_dirty, "dirtyDigest": dirty_hash,
+                        "dirtyNewestModifiedAt": dirty_modified(path, all_dirty),
                         "pending": pending, "ticket": ticket_id,
                         "workstream": intent.get("workstream") if intent else None,
                         "allowedPaths": material(intent["allowedPaths"]) if intent else [],
@@ -389,7 +410,14 @@ def inspect(root, workstream, requested_paths=(), ticket=None, storage=None,
             unassigned[key] = True
             if resolution.active and intent.get("workstream") == workstream:
                 active_tickets.add(key)
-            if resolution.active and (intersects(requested, scope) or (not scope and intent.get("workstream") == workstream)):
+            relevant = intersects(requested, scope) or intent.get("workstream") == workstream
+            if resolution.active and mode == "files" and relevant and landed(path, key, target_sha):
+                # A dirty carrier copy of a ticket already on the observed target
+                # still projects activity (the conservative default is kept).
+                # Name it instead of silently holding the workstream limit.
+                blockers.append({"path": str(path), "branch": entry["branch"], "ticket": key,
+                                 "active": resolution.active, "reason": "integrated-ticket-carrier"})
+            elif resolution.active and (intersects(requested, scope) or (not scope and intent.get("workstream") == workstream)):
                 blockers.append({"path": str(path), "branch": entry["branch"], "ticket": key,
                                  "active": resolution.active, "reason": "unassigned-ticket"})
     for entry in entries:
@@ -426,9 +454,26 @@ def inspect(root, workstream, requested_paths=(), ticket=None, storage=None,
                 continue
             blockers.append({"path": None, "branch": ref, "ticket": None,
                              "active": False, "reason": "unassigned-branch-delta"})
+    required = ["current intent and session authority", "verified owner or accepted handoff",
+                "controller lease CAS and fencing", "fresh preflight and governance gate"]
+    if selected:
+        # The selected checkout is excluded from peer contention, yet another
+        # writer may have left uncommitted changes in it. Recency is evidence
+        # only; the opt-in digest CAS detects any change since the caller's
+        # previous observation.
+        overlap = [p for p in selected["dirtyPaths"] if path_ignored(p, tuple(requested))]
+        if expected_dirty_digest is not None and expected_dirty_digest != selected["dirtyDigest"]:
+            blockers.append({"path": selected["path"], "branch": selected["branch"],
+                             "ticket": selected["ticket"], "active": selected["active"],
+                             "reason": "selected-checkout-changed"})
+        elif expected_dirty_digest is None and overlap:
+            required.append(f"confirm that {len(overlap)} uncommitted requested path(s) in the selected checkout "
+                            f"(newest {selected['dirtyNewestModifiedAt']}) belong to this session, then pass "
+                            f"--expect-dirty-digest {selected['dirtyDigest']}")
     route = "NEW_TICKET_CANDIDATE"
     if blockers:
-        route = ("RECONCILE" if any(b["ticket"] is None or b["reason"] == "unassigned-ticket" for b in blockers) else
+        route = ("RECONCILE" if any(b["ticket"] is None or b["reason"] in {"unassigned-ticket", "integrated-ticket-carrier"}
+                                    for b in blockers) else
                  "ASSIST_READ_ONLY" if any(b["active"] for b in blockers) else "HANDOFF_REQUIRED")
     elif selected:
         route = "REUSE_EXISTING"
@@ -442,8 +487,7 @@ def inspect(root, workstream, requested_paths=(), ticket=None, storage=None,
                "requestedTicket": ticket, "route": route, "diagnostic": None,
                "worktrees": entries, "uncheckedBranches": branches, "blockers": blockers,
                "activeTicketCount": len(active_tickets), "workstreamLimit": limit,
-               "requiredBeforeWrite": ["current intent and session authority", "verified owner or accepted handoff",
-                                       "controller lease CAS and fencing", "fresh preflight and governance gate"],
+               "requiredBeforeWrite": required,
                "observationDigest": ""}
     storage_digest = digest({key: {"revision": row["revision"],
                                   "files": {name: hashlib.sha256(value[0]).hexdigest()
@@ -476,10 +520,16 @@ def main(argv=None):
     parser.add_argument("--storage", choices=["files", "sqlite"])
     parser.add_argument("--observe-publication", action="store_true",
                         help="Read origin refs twice without fetching; distinguish remote code from integration/release authority.")
+    parser.add_argument("--expect-dirty-digest", metavar="SHA256",
+                        help="With --ticket: dirtyDigest of the selected checkout from this session's previous observation; "
+                             "a mismatch blocks reuse (clone-local CAS, not a lease).")
     args = parser.parse_args(argv)
+    if args.expect_dirty_digest is not None and (
+            not args.ticket or not re.fullmatch(r"[0-9a-f]{64}", args.expect_dirty_digest)):
+        parser.error("--expect-dirty-digest requires --ticket and a lowercase SHA-256 digest")
     try:
         payload = inspect(args.root, args.workstream, args.path, args.ticket, args.storage,
-                          args.observe_publication)
+                          args.observe_publication, args.expect_dirty_digest)
     except (ObservationError, ActivityError, KeyError, TypeError, ValueError, OSError, StopIteration):
         # No exception content: remote URLs or secret-bearing input never leak.
         print(json.dumps({"schema": SCHEMA, "readOnly": True, "grantsAuthority": False,
