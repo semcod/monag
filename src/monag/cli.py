@@ -351,6 +351,17 @@ def main(argv=None):
                                help='directly feed recommendations into Planfile backlog via planfile ticket import')
     advise_parser.add_argument('--sprint', default='current',
                                help='target sprint for --feed-planfile (default: current)')
+    advise_parser.add_argument('--holistic', action='store_true',
+                               help='run holistic multi-org algorithmic triage and guidance engine (algocode + collision detection)')
+    triage_parser = sub.add_parser('triage', help='holistic algorithmic multi-org workspace triage and guidance (algocode)')
+    triage_parser.add_argument('--limit', type=int, default=15,
+                               help='maximum guidance steps to display (default: 15)')
+    triage_parser.add_argument('--emit-planfile', action='store_true',
+                               help='export guidance steps as Planfile-importable JSON tickets')
+    triage_parser.add_argument('--feed-planfile', action='store_true',
+                               help='directly feed guidance steps into Planfile backlog/sprint')
+    triage_parser.add_argument('--sprint', default='current',
+                               help='target sprint for --feed-planfile (default: current)')
     quality = sub.add_parser('quality', help='read-only semcod/regix quality gate for ONE repository '
                                              '(--root must be a Git checkout, not a workspace); '
                                              'costs roughly a minute per run, never a write command')
@@ -694,8 +705,33 @@ def main(argv=None):
                         print(f"Cron install FAILED: {cron_result['error']}",
                               file=sys.stderr, flush=True)
             return 0 if result['ok'] else 1
-        if args.mode == 'advise':
+        if args.mode in ('advise', 'triage'):
             from . import advise
+            holistic = getattr(args, 'holistic', False) or (args.mode == 'triage')
+            if holistic:
+                from . import triage
+                if output_format != 'json' and sys.stderr.isatty():
+                    print('MONAG: executing holistic algorithmic multi-org workspace triage...',
+                          file=sys.stderr, flush=True)
+                data = triage.run_holistic_triage(root, depth=args.depth, limit=args.limit)
+                if getattr(args, 'emit_planfile', False):
+                    tasks = triage.export_planfile_tasks(data)
+                    print(json.dumps(tasks, ensure_ascii=False, indent=2))
+                    return 0
+                if getattr(args, 'feed_planfile', False):
+                    feed_res = triage.feed_to_planfile(data, root=root, sprint=getattr(args, 'sprint', 'current'))
+                    if feed_res.get('success'):
+                        print(f"Planfile: wygenerowano {feed_res.get('tasks_count', 0)} zadań dla sprintu '{args.sprint}'.")
+                        return 0
+                    else:
+                        print(f"Planfile feed FAILED: {feed_res.get('reason')}", file=sys.stderr)
+                        return 1
+                if output_format == 'json':
+                    print(json.dumps(data, ensure_ascii=False, indent=2))
+                else:
+                    display_report(triage.triage_markdown(data))
+                return 0
+
             if output_format != 'json' and sys.stderr.isatty():
                 print('MONAG: generating architectural guidance and next task recommendations...',
                       file=sys.stderr, flush=True)

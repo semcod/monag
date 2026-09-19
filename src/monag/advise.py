@@ -523,8 +523,13 @@ def advise(root: Path, depth: int = 2, issue_limit: int = 200,
            include_metrics: bool = True,
            open_prs_count: int | None = None,
            worktrees_count: int | None = None,
-           repos_with_worktrees: int | None = None) -> dict[str, Any]:
+           repos_with_worktrees: int | None = None,
+           holistic: bool = False) -> dict[str, Any]:
     """Generate prioritized next actions and architectural guidelines."""
+    if holistic:
+        from . import triage
+        return triage.run_holistic_triage(root=root, depth=depth, limit=limit)
+
     started = time.monotonic()
     if export_data is None:
         export_data = export.scan(root, depth=depth, issue_limit=issue_limit,
@@ -621,6 +626,10 @@ def advise(root: Path, depth: int = 2, issue_limit: int = 200,
 
 def markdown(advisory_data: dict[str, Any]) -> str:
     """Format advisory recommendations as GitHub Flavored Markdown."""
+    if advisory_data.get('schema') == 'monag.triage/v1':
+        from . import triage
+        return triage.triage_markdown(advisory_data)
+
     lines = [
         "# MONAG Architectural Advisory & Task Guidance",
         "",

@@ -1,0 +1,90 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-069",
+  "summary": "feat(advise): Holistic algorithmic workspace triage and step-by-step guidance engine",
+  "workstream": "application",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-069/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/advise.py",
+    "src/monag/cli.py",
+    "src/monag/triage.py",
+    "tests/test_advise.py",
+    "tests/test_triage.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "8932ae3391e49e7b4f1d382c395b2a65c86f4dc1",
+    "targetBranch": "main",
+    "outcome": "Implement monag.triage / monag advise --holistic multi-org triage and guidance engine.",
+    "nonGoals": [
+      "Do not remove existing non-holistic advise behavior."
+    ],
+    "complexity": "M",
+    "estimatedMinutes": 30,
+    "budgets": {
+      "maxImplementationFiles": 5,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 1,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Implement monag.triage module, integrate with advise and cli, add unit tests.",
+      "components": [
+        {
+          "name": "triage",
+          "paths": [
+            "src/monag/triage.py",
+            "src/monag/advise.py",
+            "src/monag/cli.py"
+          ]
+        },
+        {
+          "name": "tests",
+          "paths": [
+            "tests/test_triage.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert delivery commit."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "pytest tests/test_triage.py"
+        ],
+        "evidence": "Triage tests pass"
+      },
+      {
+        "criterion": "AC-04",
+        "commands": [
+          "./project/governance-check.sh"
+        ],
+        "evidence": "GOV-PASS"
+      }
+    ]
+  }
+}
