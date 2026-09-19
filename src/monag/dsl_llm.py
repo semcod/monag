@@ -113,10 +113,10 @@ def resolve(text, command=None, timeout=None):
     answer = run_provider(SYSTEM_PROMPT + '\nRequest: ' + raw, command, timeout)
     line = extract_observe_line(answer)
     if line is None or line.lower() == 'observe none':
-        return None, provenance('none', None, raw)
+        return None, dict(provenance('none', None, raw), attempted_engine='llm')
     query = dsl.parse_dsl(line)
     if query is None:
-        return None, provenance('none', None, raw)
+        return None, dict(provenance('none', None, raw), attempted_engine='llm')
     query.raw_input = raw
     return query, provenance('llm', query.to_dsl(), raw)
 

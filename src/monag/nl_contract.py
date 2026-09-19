@@ -131,7 +131,8 @@ def execute(value, root, *, direct=False, allow_llm_fallback=True, locale=None, 
                 prov = dsl_llm.provenance('rule', query.to_dsl() if query else None, value)
             else:
                 query, prov = dsl_llm.resolve(value, command=None if allow_llm_fallback else '')
-                source = 'llm_fallback' if prov['engine'] == 'llm' else 'nl_fast_path'
+                source = ('llm_fallback' if prov['engine'] == 'llm' or
+                          prov.get('attempted_engine') == 'llm' else 'nl_fast_path')
             if query is None:
                 raise ValueError('Unrecognized or invalid observation command')
         validate_query(query)

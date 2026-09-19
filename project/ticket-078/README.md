@@ -23,4 +23,4 @@ The immutable source, supported schema profile and invocation examples are retur
 
 ## Validation
 
-Full application run: 361 tests and 30 subtests passed. Twelve focused conformance tests pass, including an additional CLI compatibility case. The pinned normative command/result schemas independently validate real success and error envelopes; the advertised observation schema is valid JSON Schema. Ruff on all changed Python files and governance pass. Protected review and installed-runtime validation remain external delivery receipts.
+Final full application run: 362 tests and 30 subtests passed, including twelve conformance tests covering CLI compatibility and rejected LLM translation provenance. The pinned normative command/result schemas independently validate real success and error envelopes; the advertised observation schema is valid JSON Schema. Ruff on all changed Python files and governance pass. Protected review and installed-runtime validation remain external delivery receipts.

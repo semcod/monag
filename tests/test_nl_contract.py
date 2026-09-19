@@ -108,7 +108,10 @@ class ContractTests(unittest.TestCase):
                 self.assertEqual(enabled['structuredContent']['meta']['sourceLayer'], 'llm_fallback')
                 provider.assert_called_once()
             with patch.object(dsl_llm, 'run_provider', return_value='OBSERVE catalog EXTRA'):
-                self.assertTrue(self.tool('nl_ask', {'query': 'qqzz_unknown_123'})['isError'])
+                rejected = self.tool('nl_ask', {'query': 'qqzz_unknown_123'})
+                self.assertTrue(rejected['isError'])
+                self.assertEqual(rejected['structuredContent']['meta']['sourceLayer'], 'llm_fallback')
+                self.assertEqual(rejected['structuredContent']['meta']['provenance']['engine'], 'none')
 
     def test_observer_exception_is_execution_error(self):
         with patch('monag.catalog.scan', side_effect=OSError('fixture failure')):
