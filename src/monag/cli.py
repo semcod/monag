@@ -277,6 +277,8 @@ def main(argv=None):
     query_parser = sub.add_parser('query', aliases=['ask'],
                                   help='execute a natural language query or OBSERVE DSL command')
     query_parser.add_argument('query', nargs='+', help='natural language query phrase or OBSERVE DSL command')
+    dsl_parser = sub.add_parser('dsl', help='execute one validated OBSERVE statement')
+    dsl_parser.add_argument('query', nargs='+', help='canonical OBSERVE DSL')
     sub.add_parser('catalog', help='read-only, local-only catalog of what each repository under --root '
                                    'declares itself to be (description, stack, entry points)')
     export_parser = sub.add_parser('export', help='read-only staging list of candidate work items '
@@ -594,7 +596,19 @@ def main(argv=None):
             from . import mcp
             mcp.run_stdio_server(root, depth=args.depth)
             return 0
-        if args.mode in ('query', 'ask'):
+        if args.mode in ('ask', 'dsl'):
+            from . import nl_contract
+            result = nl_contract.execute(' '.join(args.query), root,
+                                         direct=args.mode == 'dsl', depth=args.depth,
+                                         registry=registry)
+            if output_format == 'json':
+                print(json.dumps(result, ensure_ascii=True))
+            elif result['success']:
+                display_report(result['meta']['markdown'])
+            else:
+                print(result['errors'][0]['message'], file=sys.stderr)
+            return 0 if result['success'] else 1
+        if args.mode == 'query':
             from . import dsl_llm
             query_str = ' '.join(args.query)
             res = dsl_llm.execute(query_str, root, depth=args.depth, registry=registry)
@@ -606,7 +620,7 @@ def main(argv=None):
                 else:
                     print(f"Error: {res.get('error')}", file=sys.stderr)
                     return 1
-            return 0
+            return 0 if res.get('status') == 'ok' else 1
         if args.mode == 'catalog':
             from . import catalog
             if output_format != 'json' and sys.stderr.isatty():
