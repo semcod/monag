@@ -1,10 +1,9 @@
 """Unit tests for monag.triage — holistic multi-org algorithmic triage and guidance."""
-from pathlib import Path
 import json
 import pytest
 from unittest import mock
 
-from monag import triage, advise, cli
+from monag import triage, advise
 
 
 def test_classify_candidate_tiers():
@@ -52,8 +51,9 @@ def test_classify_candidate_tiers():
     assert score < 800
 
 
-def test_agent_collision_detection(tmp_path):
+def test_agent_collision_detection(tmp_path, monkeypatch):
     """Verify running agent collision detection from leases and algocode."""
+    monkeypatch.setattr(triage, "_find_algocode_runner", lambda: None)
     repo_dir = tmp_path / "test_repo"
     repo_dir.mkdir()
     leases_dir = repo_dir / ".subactor" / "leases"
@@ -76,7 +76,10 @@ def test_agent_collision_detection(tmp_path):
     }), encoding="utf-8")
 
     info_collision = triage.check_agent_collision(repo_dir)
-    assert info_collision["has_collision"]
+    assert not info_collision["has_collision"]
+    assert info_collision["blocking"]
+    assert info_collision["active_lease_count"] == 1
+    assert not info_collision["ownership_verified"]
     assert "active-worker-agent" in info_collision["active_owners"]
 
     # Candidate score should reflect collision penalty
@@ -114,7 +117,7 @@ def test_guidance_synthesis_and_markdown():
                 "title": "Merge PR #78",
                 "score": 1350,
                 "action": "Verify and merge PR #78 in semcod/monag",
-                "command": "gh pr merge 78 --repo semcod/monag --squash --admin",
+                "command": "gh pr view 78 --repo semcod/monag",
                 "collision_safe": False,
                 "guardrails": ["CAUTION: Running agent lease held by active-agent."],
             },
@@ -125,9 +128,10 @@ def test_guidance_synthesis_and_markdown():
     assert "# MONAG Holistic Algorithmic Workspace Triage" in md
     assert "Step 1: [IMMEDIATE BLOCKER] `semcod/fixos`" in md
     assert "Step 2: [CORE FOUNDATION] `semcod/monag`" in md
-    assert "gh pr merge 78" in md
-    assert "⚠️ Collision Risk" in md
-    assert "🛡️ Safe" in md
+    assert "gh pr view 78" in md
+    assert "⚠️ Declared conflict" in md
+    assert "Ownership unverified" in md
+    assert "🛡️ Safe" not in md
 
 
 def test_planfile_export_and_feed(tmp_path):
@@ -167,3 +171,91 @@ def test_advise_holistic_delegation(tmp_path):
         res = advise.advise(tmp_path, holistic=True)
         assert res["schema"] == triage.SCHEMA
         mock_triage.assert_called_once()
+
+
+@pytest.mark.parametrize("phase", ["released", "closed", "merged", "cancelled"])
+def test_terminal_change_lease_is_not_active(tmp_path, monkeypatch, phase):
+    monkeypatch.setattr(triage, "_find_algocode_runner", lambda: None)
+    directory = tmp_path / ".subactor" / "leases"
+    directory.mkdir(parents=True)
+    (directory / "ticket.json").write_text(json.dumps({
+        "schema": "wellmanifest.change-lease/v1", "phase": phase,
+        "ownerActor": "old-owner", "leaseRevision": 3, "fencingToken": 5,
+    }))
+    result = triage.check_agent_collision(tmp_path)
+    assert result["active_lease_count"] == 0
+    assert not result["blocking"]
+    assert not result["ownership_verified"]
+    assert result["lease_evidence"][0]["lease_fencing_token"] == 5
+
+
+@pytest.mark.parametrize("data", ["{broken", '{"schema":"future/v9"}',
+    '{"schema":"wellmanifest.change-lease/v1","phase":"expired"}'])
+def test_unknown_or_expired_lease_blocks_without_transfer(tmp_path, monkeypatch, data):
+    monkeypatch.setattr(triage, "_find_algocode_runner", lambda: None)
+    directory = tmp_path / ".subactor" / "leases"
+    directory.mkdir(parents=True)
+    (directory / "ticket.json").write_text(data)
+    result = triage.check_agent_collision(tmp_path)
+    assert result["blocking"]
+    assert result["unknown_lease_count"] == 1
+    assert not result["has_collision"]
+    assert not result["ownership_verified"]
+
+
+def test_missing_checks_and_ownership_never_authorize_mutations():
+    candidate = {"origin": "prs-open-pr", "pr_number": 78}
+    _, unknown = triage.classify_candidate(candidate, "semcod/monag", {})
+    _, passed = triage.classify_candidate(dict(candidate, checks_passed=True), "semcod/monag", {})
+    assert passed > unknown
+    for item in [candidate, {"issue_number": 9, "triage_status": "ALREADY_RESOLVED"}]:
+        action = triage.synthesize_triage_action(item, triage.CATEGORY_CORE_FOUNDATION, "semcod/monag", {})
+        assert " view " in action["suggested_command"]
+        assert "--admin" not in action["suggested_command"]
+        assert " merge " not in action["suggested_command"]
+        assert " close " not in action["suggested_command"]
+
+
+def test_local_scan_respects_depth_and_observes_linked_worktree(tmp_path, monkeypatch):
+    import subprocess
+    monkeypatch.setattr(triage, "_find_algocode_runner", lambda: None)
+    repo = tmp_path / "org" / "repo"
+    repo.mkdir(parents=True)
+    def git(*args):
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+    git("init")
+    git("-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--allow-empty", "-m", "seed")
+    linked = repo / ".worktrees" / "ticket-001--fixture"
+    git("worktree", "add", "-b", "ticket/001-fixture", str(linked))
+    original_run = subprocess.run
+    calls = []
+    def local_only(args, **kwargs):
+        calls.append(args)
+        assert args[0] == "git"
+        return original_run(args, **kwargs)
+    monkeypatch.setattr(triage.subprocess, "run", local_only)
+    assert triage.run_holistic_triage(tmp_path, depth=1)["discovered_repos_count"] == 0
+    report = triage.run_holistic_triage(tmp_path, depth=2, scan_issues=True)
+    assert report["discovered_repos_count"] == 1
+    assert report["github_api_requests"] == 0
+    assert report["issue_scan_performed"] is False
+    assert report["collision_count"] == 0
+    assert report["recommendations"][0]["origin"] == "worktree-observed"
+    assert "active" not in report["recommendations"][0]["title"].lower()
+    assert report["guidance_steps"][0]["collision_safe"] is None
+    assert not report["guidance_steps"][0]["ownership_verified"]
+    leases = repo / ".subactor" / "leases"
+    leases.mkdir(parents=True)
+    (leases / "claim.json").write_text('{"status":"active","owner":"primary-owner"}')
+    linked_report = triage.run_holistic_triage(linked)
+    assert linked_report["discovered_repos_count"] == 1
+    assert linked_report["lease_blocked_repo_count"] == 1
+    assert triage.check_agent_collision(linked)["active_owners"] == ["primary-owner"]
+    assert calls
+
+
+def test_suggested_inspection_command_quotes_checkout_path():
+    import shlex
+    path = "/workspace/a $(touch bad); repo"
+    result = triage.synthesize_triage_action({"path": path}, "", "org/repo", {})
+    assert shlex.split(result["suggested_command"]) == ["git", "-C", path, "status", "--short"]

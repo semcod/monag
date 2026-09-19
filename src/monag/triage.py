@@ -1,21 +1,18 @@
 """Holistic algorithmic workspace triage and guidance engine.
 
 Integrates semcod/algocode and monag discovery across multi-organization
-workspaces (e.g. semcod, wellmanifest, tellmesh), detecting running agent collisions,
-evaluating issue backlogs, and synthesizing deterministic step-by-step guidance.
+workspaces (e.g. semcod, wellmanifest, tellmesh), recording local ownership claims
+and synthesizing read-only inspection steps. Remote Issues and CI are not scanned.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-import json
-import os
 from pathlib import Path
-import re
+import shlex
 import subprocess
 import sys
 import time
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Tuple
 
 SCHEMA = "monag.triage/v1"
 
@@ -71,48 +68,60 @@ def _find_algocode_runner() -> str | None:
     return None
 
 
-def collect_active_leases(repo_path: Path) -> List[Dict[str, Any]]:
-    """Collect active change leases from .subactor/leases/ in repo."""
-    leases = []
-    leases_dir = repo_path / ".subactor" / "leases"
-    if not leases_dir.is_dir():
-        return leases
-
-    for p in leases_dir.glob("*.json"):
+def _lease_evidence(repo_path: Path) -> List[Dict[str, Any]]:
+    from .fleet import lease_observation
+    if (repo_path / ".git").is_file():
         try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-            status = data.get("status", "")
-            phase = data.get("phase", "")
-            # Active if status is active or phase is not released
-            if status == "active" or (phase and phase != "released"):
-                leases.append(data)
-        except Exception:
-            continue
-    return leases
+            inventory = subprocess.run(
+                ["git", "worktree", "list", "--porcelain", "-z"],
+                cwd=str(repo_path), capture_output=True, text=True, timeout=3,
+            )
+            first = inventory.stdout.split("\0", 1)[0]
+            if inventory.returncode or not first.startswith("worktree "):
+                raise ValueError("primary checkout unavailable")
+            repo_path = Path(first.removeprefix("worktree "))
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return [{"lease_kind": "invalid", "lease_status": "unknown", "path": str(repo_path)}]
+    directory = repo_path / ".subactor" / "leases"
+    try:
+        paths = sorted(directory.glob("*.json")) if directory.is_dir() else []
+    except OSError:
+        return [{"lease_kind": "invalid", "lease_status": "unknown", "path": str(directory)}]
+    return [dict(lease_observation(path), path=str(path)) for path in paths]
+
+
+def collect_active_leases(repo_path: Path) -> List[Dict[str, Any]]:
+    """Return observed ownership claims, never proof of a running process."""
+    active = {"active", "claimed", "editing", "in_progress", "validating",
+              "publication_frozen", "dispatching", "approved"}
+    return [row for row in _lease_evidence(repo_path) if row["lease_status"] in active]
 
 
 def check_agent_collision(repo_path: Path, ticket: str | None = None) -> Dict[str, Any]:
-    """Check if repository has active running agent leases or conflict signals."""
-    active_leases = collect_active_leases(repo_path)
-    runner = _find_algocode_runner()
+    """Separate lease blockers and declared scope overlap from write authority."""
+    evidence = _lease_evidence(repo_path)
+    active = {"active", "claimed", "editing", "in_progress", "validating",
+              "publication_frozen", "dispatching", "approved"}
+    terminal = {"released", "closed", "merged", "cancelled", "canceled", "complete", "completed", "done"}
+    leases = [row for row in evidence if row["lease_status"] in active]
+    unknown = [row for row in evidence if row["lease_status"] not in active | terminal]
     conflict_report: Dict[str, Any] = {}
-
-    if runner == "import":
+    if _find_algocode_runner() == "import":
         try:
             import algocode.engine as algo
             conflict_report = algo.check_conflict(repo_root=repo_path)
         except Exception:
-            conflict_report = {}
-
-    has_collision = len(active_leases) > 0 or conflict_report.get("has_conflict", False)
-    active_owners = [l.get("owner") or l.get("ownerActor") for l in active_leases if l.get("owner") or l.get("ownerActor")]
-
+            pass
     return {
-        "has_collision": has_collision,
-        "active_lease_count": len(active_leases),
-        "active_owners": sorted(set(filter(None, active_owners))),
+        "has_collision": bool(conflict_report.get("has_conflict", False)),
+        "conflict_basis": "declared scopes; process activity unverified",
+        "active_lease_count": len(leases),
+        "active_owners": sorted({row["lease_owner"] for row in leases if isinstance(row.get("lease_owner"), str)}),
+        "lease_evidence": evidence,
+        "unknown_lease_count": len(unknown),
         "algocode_conflicts": conflict_report.get("conflicts", []),
-        "blocking": conflict_report.get("blocking", False) or len(active_leases) > 0,
+        "blocking": bool(conflict_report.get("blocking", False) or leases or unknown),
+        "ownership_verified": False,
     }
 
 
@@ -148,9 +157,9 @@ def classify_candidate(
 
     # 2. Core Foundation
     is_core = repo_name in CORE_REPOSITORIES or any(repo_name.endswith("/" + c.split("/")[-1]) for c in CORE_REPOSITORIES)
-    if is_core and (origin in ("prs-open-pr", "prs-ahead-commits", "worktree-active") or "adopt" in title or "docs" in title):
+    if is_core and (origin in ("prs-open-pr", "prs-ahead-commits", "worktree-active", "worktree-observed") or "adopt" in title or "docs" in title):
         score = CATEGORY_BASE_SCORES[CATEGORY_CORE_FOUNDATION]
-        if origin == "prs-open-pr" and candidate.get("checks_passed", True):
+        if origin == "prs-open-pr" and candidate.get("checks_passed") is True:
             score += 150  # green PRs ready to merge get immediate elevation
         return CATEGORY_CORE_FOUNDATION, score
 
@@ -181,7 +190,7 @@ def classify_candidate(
         score += 40
 
     # If collision risk present, apply penalty to prevent stomping
-    if collision_info.get("has_collision"):
+    if collision_info.get("blocking") or collision_info.get("has_collision"):
         score -= 200
 
     return CATEGORY_STRATEGIC_ARCHITECTURE, score
@@ -196,41 +205,28 @@ def synthesize_triage_action(
     """Generate exact action, suggested command, and guardrails."""
     title = candidate.get("title", "")
     origin = candidate.get("origin", "")
-    url = candidate.get("url", "")
     issue_num = candidate.get("issue_number")
     pr_num = candidate.get("pr_number")
 
-    guardrails = []
-    if collision_info.get("has_collision"):
-        owners = ", ".join(collision_info.get("active_owners", [])) or "active lease"
-        guardrails.append(f"CAUTION: Running agent lease held by ({owners}). Do NOT edit overlapping files.")
-
-    guardrails.append("Require 100% green tests before commit or merge (Prymat Zielonych Testów).")
-    guardrails.append("Use Wellmanifest Worktrees v5 (<primary>/.worktrees/ticket-NNN--slug).")
-
-    if category == CATEGORY_IMMEDIATE_BLOCKER:
-        action = f"Mitigate critical blocker in {repo_name}: {title}"
-        suggested_command = f"fixos run --repo {repo_name}" if "disk" in title or "health" in title else f"git -C {repo_name} status"
-    elif category == CATEGORY_CORE_FOUNDATION:
-        if origin == "prs-open-pr" and pr_num:
-            action = f"Verify and merge PR #{pr_num} in core repo {repo_name}"
-            suggested_command = f"gh pr merge {pr_num} --repo {repo_name} --squash --admin"
-        else:
-            action = f"Advance core foundational task in {repo_name}: {title}"
-            suggested_command = f"monag advise --root {repo_name}"
-    elif category == CATEGORY_STRATEGIC_ARCHITECTURE:
-        action = f"Implement architectural task in {repo_name}: {title}"
-        suggested_command = f"algocode triage {repo_name}"
-    else:  # code_smell_hygiene
-        if candidate.get("triage_status") == "ALREADY_RESOLVED" and issue_num:
-            action = f"Close reconciled issue #{issue_num} in {repo_name}"
-            suggested_command = f"gh issue close {issue_num} --repo {repo_name} --comment 'Reconciled in recent git commit.'"
-        elif candidate.get("triage_status") == "DUPLICATE" and issue_num:
-            action = f"Consolidate duplicate issue #{issue_num} in {repo_name}"
-            suggested_command = f"gh issue comment {issue_num} --repo {repo_name} --body 'Consolidated duplicate.'"
-        else:
-            action = f"Resolve quality/code-smell item in {repo_name}: {title}"
-            suggested_command = f"prefact run --repo {repo_name}"
+    guardrails = [
+        "Verify ticket ownership, exact scope and current lease fencing before writing.",
+        "A missing, expired or historical lease never authorizes takeover.",
+        "Use Wellmanifest Worktrees v5 (<primary>/.worktrees/ticket-NNN--slug).",
+        "Publication requires current required checks and the configured protected delivery process.",
+    ]
+    if collision_info.get("blocking") or collision_info.get("has_collision"):
+        owners = ", ".join(collision_info.get("active_owners", [])) or "unresolved owner"
+        guardrails.append(f"Ownership or declared scope needs reconciliation ({owners}); do not edit overlapping files.")
+    repo_arg = shlex.quote(repo_name)
+    path_arg = shlex.quote(str(candidate.get("path") or repo_name))
+    suggested_command = f"git -C {path_arg} status --short"
+    action = f"Inspect ticket, checkout and ownership evidence in {repo_name}: {title}"
+    if origin == "prs-open-pr" and str(pr_num or "").isdigit():
+        action = f"Inspect current PR #{pr_num} before protected publication in {repo_name}"
+        suggested_command = f"gh pr view {int(pr_num)} --repo {repo_arg} --json number,state,headRefOid,mergeable,statusCheckRollup"
+    elif issue_num and str(issue_num).isdigit():
+        action = f"Verify requirements and resolution evidence for issue #{issue_num} in {repo_name}"
+        suggested_command = f"gh issue view {int(issue_num)} --repo {repo_arg}"
 
     return {
         "action": action,
@@ -247,25 +243,28 @@ def run_holistic_triage(
     scan_issues: bool = True,
     extra_candidates: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
-    """Execute holistic multi-org triage across all repositories under root."""
+    """Inspect local repositories; scan_issues is reserved and performs no API calls."""
+    root = root.resolve()
     started = time.monotonic()
     discovered_repos: List[Tuple[str, Path]] = []
 
-    # 1. Discover all repositories across multi-org root
-    if (root / ".git").is_dir():
-        discovered_repos.append((root.name, root))
-    else:
-        # Multi-org discovery (e.g. ~/github/*/*)
-        for org_dir in sorted(root.iterdir()):
-            if not org_dir.is_dir() or org_dir.name.startswith("."):
-                continue
-            if (org_dir / ".git").is_dir():
-                discovered_repos.append((org_dir.name, org_dir))
-            else:
-                for repo_dir in sorted(org_dir.iterdir()):
-                    if repo_dir.is_dir() and (repo_dir / ".git").is_dir():
-                        repo_name = f"{org_dir.name}/{repo_dir.name}"
-                        discovered_repos.append((repo_name, repo_dir))
+    errors = []
+    def visit(path: Path, level: int) -> None:
+        if (path / ".git").exists():
+            name = str(path.relative_to(root)) if path != root else f"{path.parent.name}/{path.name}"
+            discovered_repos.append((name, path))
+            return
+        if level >= depth:
+            return
+        try:
+            children = sorted(path.iterdir())
+        except OSError as error:
+            errors.append(f"{path}: {type(error).__name__}")
+            return
+        for child in children:
+            if child.is_dir() and not child.is_symlink() and not child.name.startswith("."):
+                visit(child, level + 1)
+    visit(root, 0)
 
     all_raw_candidates: List[Dict[str, Any]] = list(extra_candidates or [])
 
@@ -292,12 +291,12 @@ def run_holistic_triage(
                         "origin": "prs-ahead-commits",
                         "repo": repo_name,
                         "path": str(repo_path),
-                        "title": f"{ahead} unpushed commit(s) on main/current branch",
+                        "title": f"{ahead} commit(s) ahead of local upstream ref; remote state unverified",
                         "priority": "high",
                         "ahead_count": ahead,
                     })
-        except Exception:
-            pass
+        except Exception as error:
+            errors.append(f"{repo_path}: upstream comparison: {type(error).__name__}")
 
         # Check for worktrees
         try:
@@ -310,18 +309,20 @@ def run_holistic_triage(
             )
             if wt_proc.returncode == 0:
                 lines = wt_proc.stdout.splitlines()
-                wt_paths = [l.split(" ", 1)[1] for l in lines if l.startswith("worktree ") and l.split(" ", 1)[1] != str(repo_path)]
+                wt_paths = [line.split(" ", 1)[1] for line in lines if line.startswith("worktree ") and line.split(" ", 1)[1] != str(repo_path)]
                 for wt in wt_paths:
                     wt_name = Path(wt).name
                     all_raw_candidates.append({
-                        "origin": "worktree-active",
+                        "origin": "worktree-observed",
                         "repo": repo_name,
                         "path": wt,
-                        "title": f"Active worktree: {wt_name}",
+                        "title": f"Registered worktree to inspect: {wt_name}",
                         "priority": "medium",
                     })
-        except Exception:
-            pass
+            else:
+                errors.append(f"{repo_path}: worktree inventory failed (exit {wt_proc.returncode})")
+        except (OSError, subprocess.TimeoutExpired) as error:
+            errors.append(f"{repo_path}: worktree inventory: {type(error).__name__}")
 
     # 3. Algorithmic categorization, ranking, and step synthesis
     categorized_items: List[Dict[str, Any]] = []
@@ -362,7 +363,8 @@ def run_holistic_triage(
             "score": item["score"],
             "action": item["action"],
             "command": item["suggested_command"],
-            "collision_safe": not item["collision"].get("has_collision", False),
+            "collision_safe": False if item["collision"].get("has_collision") else None,
+            "ownership_verified": False,
             "guardrails": item["guardrails"],
         })
 
@@ -376,6 +378,11 @@ def run_holistic_triage(
         "discovered_repos_count": len(discovered_repos),
         "total_candidates": len(all_raw_candidates),
         "collision_count": sum(1 for c in collisions_by_repo.values() if c.get("has_collision")),
+        "lease_blocked_repo_count": sum(1 for c in collisions_by_repo.values() if c.get("blocking")),
+        "issue_scan_performed": False,
+        "github_api_requests": 0,
+        "evidence_scope": "local Git, lease and declared scope observations",
+        "errors": errors,
         "recommendations": capped_items,
         "guidance_steps": guidance_steps,
     }
@@ -389,7 +396,8 @@ def triage_markdown(report: Dict[str, Any]) -> str:
         f"- **Root**: `{report.get('root')}`",
         f"- **Discovered Repositories**: {report.get('discovered_repos_count')}",
         f"- **Total Candidates Evaluated**: {report.get('total_candidates')}",
-        f"- **Active Agent Collisions Detected**: {report.get('collision_count')}",
+        f"- **Declared Scope Conflicts**: {report.get('collision_count')}",
+        "- **Evidence**: local scan; running writers and GitHub publication are not established.",
         f"- **Generated At**: {report.get('generated_at')}",
         "",
         "## Deterministic Step-by-Step Guidance Plan",
@@ -398,19 +406,19 @@ def triage_markdown(report: Dict[str, Any]) -> str:
 
     steps = report.get("guidance_steps", [])
     if not steps:
-        lines.append("*No pending tasks or blockers found across discovered repositories.*")
+        lines.append("*No candidates found in the inspected local evidence; remote Issues were not scanned.*")
         return "\n".join(lines)
 
     for s in steps:
         cat_tag = s["category"].upper().replace("_", " ")
-        safety = "🛡️ Safe" if s["collision_safe"] else "⚠️ Collision Risk"
+        safety = "Ownership verified" if s.get("ownership_verified") else ("⚠️ Declared conflict" if s.get("collision_safe") is False else "Ownership unverified")
         lines.append(f"### Step {s['step']}: [{cat_tag}] `{s['repo']}` — {s['title']}")
         lines.append(f"- **Score**: `{s['score']}` | **Status**: {safety}")
         lines.append(f"- **Action**: {s['action']}")
-        lines.append(f"- **Suggested Command**:")
-        lines.append(f"  ```sh")
+        lines.append("- **Suggested Command**:")
+        lines.append("  ```sh")
         lines.append(f"  {s['command']}")
-        lines.append(f"  ```")
+        lines.append("  ```")
         if s["guardrails"]:
             lines.append("- **Guardrails**:")
             for g in s["guardrails"]:
