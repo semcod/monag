@@ -1,0 +1,72 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-071",
+  "summary": "Isolate merge CLI regression from host home directory",
+  "workstream": "application",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-071/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "tests/test_prs.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "8932ae3391e49e7b4f1d382c395b2a65c86f4dc1",
+    "targetBranch": "main",
+    "outcome": "Make the existing merge CLI regression independent of host HOME for PLF-013 / Issue79.",
+    "nonGoals": [
+      "No changes to other active tickets, credentials, publication policy or dependencies."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 30,
+    "budgets": {
+      "maxImplementationFiles": 2,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Keep the change in its existing module and existing test boundaries.",
+      "components": [
+        {
+          "name": "merge-cli-test",
+          "paths": [
+            "tests/test_prs.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the bounded follow-up commit through protected publication."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "python -m pytest -q",
+          "./project/governance-check.sh"
+        ],
+        "evidence": "Exact worktree test logs and governance output in host recovery storage."
+      }
+    ]
+  }
+}

@@ -319,7 +319,7 @@ class PrsTests(unittest.TestCase):
                 'via': 'browser_cdp',
                 'output': 'Merged',
             }
-            code = main(['merge', 'semcod/monag#56', '--browser'])
+            code = main(['--root', str(self.root), 'merge', 'semcod/monag#56', '--browser'])
             self.assertEqual(code, 0)
             mock_merge.assert_called_once_with('semcod/monag#56', method='squash', admin_bypass=True, use_browser=True)
             self.assertIn('semcod/monag', stdout.getvalue())
@@ -329,4 +329,3 @@ class PrsTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
