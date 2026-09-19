@@ -31,13 +31,13 @@ monag = "monag.cli:main"
 where = ["src"]
 
 [tool.wellmanifest]
-standard = "0.20.31"
-revision = "2b016654cff1a1ccef2c0d6126a9c2550ae6b37a"
+standard = "0.20.32"
+revision = "b6ba9c21a65a6a5648ecf904b64c3b75295e136f"
 gate = "project/governance-check.sh"
 
 [tool.pytest.ini_options]
 addopts = "-p wellmanifest_governance"
-pythonpath = ["src", "tests"]
+pythonpath = [".", "src", "tests"]
 
 [tool.costs]
 # AI Cost tracking configuration

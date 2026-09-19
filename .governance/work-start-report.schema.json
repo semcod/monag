@@ -104,6 +104,7 @@
               "behind",
               "dirtyPaths",
               "dirtyDigest",
+              "dirtyNewestModifiedAt",
               "pending",
               "ticket",
               "workstream",
@@ -145,6 +146,13 @@
               },
               "dirtyDigest": {
                 "type": "string"
+              },
+              "dirtyNewestModifiedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
               },
               "pending": {
                 "type": "boolean"
@@ -266,7 +274,9 @@
                   "scope-reservation",
                   "pending-delta",
                   "unassigned-branch-delta",
-                  "unassigned-ticket"
+                  "unassigned-ticket",
+                  "integrated-ticket-carrier",
+                  "selected-checkout-changed"
                 ]
               }
             }
