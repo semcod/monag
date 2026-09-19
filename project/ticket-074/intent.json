@@ -1,0 +1,81 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-074",
+  "summary": "Make packaged GitHub cache reliable and preserve failures",
+  "workstream": "integration",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-074/**",
+    "pyproject.toml",
+    "src/monag/cache.py",
+    "tests/test_procache_integration.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "08215f3bbf3c29b2642c9f9acb9acf90fbec42af",
+    "targetBranch": "main",
+    "outcome": "Install the pinned GitHub read cache dependency and preserve terminal cache errors without duplicate external requests.",
+    "nonGoals": [
+      "No change to mutation behavior or other consumer runtimes."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 45,
+    "budgets": {
+      "maxImplementationFiles": 3,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 1
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Require the immutable procache command-boundary fix; guard TTL configuration and return cache execution errors once.",
+      "components": [
+        {
+          "name": "cache",
+          "paths": [
+            "src/monag/cache.py",
+            "pyproject.toml"
+          ]
+        },
+        {
+          "name": "tests",
+          "paths": [
+            "tests/test_procache_integration.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert commit via git."
+    },
+    "runtimeDependencies": [
+      "subactor-procache"
+    ],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python -m pytest -q tests/test_procache_integration.py",
+          "./project/governance-check.sh"
+        ],
+        "evidence": "All tests pass including cache hit and 429 cooldown."
+      }
+    ]
+  }
+}

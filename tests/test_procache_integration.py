@@ -4,16 +4,13 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from pathlib import Path
 from unittest import mock
 
 import pytest
 
 from monag.cache import (
-    PROCACHE_AVAILABLE,
     get_cache_runner,
     reset_cache_runner,
-    run_cached_gh,
 )
 from monag.monitor import command
 from monag.prs import github_open_prs
@@ -33,7 +30,6 @@ def clean_cache_state(tmp_path):
     os.environ.update(old_env)
 
 
-@pytest.mark.skipif(not PROCACHE_AVAILABLE, reason="subactor-procache is not installed")
 class TestProcacheIntegration:
     def test_read_command_is_cached_in_sqlite(self, tmp_path):
         """Repeated read commands must hit cache and invoke subprocess only once."""
@@ -135,3 +131,46 @@ class TestProcacheIntegration:
             command(["gh", "pr", "list", "--repo", "semcod/test-repo", "--json", "number"])
             command(["gh", "pr", "list", "--repo", "semcod/test-repo", "--json", "number"])
             assert call_count == 2, "When procache is disabled, every call goes to subprocess"
+
+
+@pytest.mark.parametrize("value", ["invalid", "nan", "inf", "-1"])
+def test_invalid_ttl_uses_bounded_default(value, monkeypatch):
+    monkeypatch.setenv("MONAG_GITHUB_READ_TTL", value)
+    runner = get_cache_runner()
+    assert runner is not None
+    assert runner.ttl == 30.0
+
+
+def test_timeout_is_reported_without_reexecuting_provider():
+    args = ["gh", "pr", "list", "--repo", "semcod/test-repo", "--json", "number"]
+    with mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired(args, .5)) as run:
+        out, error = command(args, timeout=.5)
+    assert out == ""
+    assert "TimeoutExpired" in error
+    assert run.call_count == 1
+    assert run.call_args.kwargs["timeout"] == .5
+
+
+def test_cache_failure_after_success_does_not_repeat_provider():
+    from procache import SQLiteResponseCache
+    args = ["gh", "pr", "list", "--repo", "semcod/test-repo", "--json", "number"]
+    def load_then_fail(self, key, loader, **kwargs):
+        loader()
+        raise OSError("simulated cache write failure")
+    with mock.patch.object(SQLiteResponseCache, "get_or_set", load_then_fail):
+        with mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args, 0, "[]", "")) as run:
+            out, error = command(args)
+    assert out == ""
+    assert "OSError" in error
+    assert run.call_count == 1
+
+
+def test_explicit_cooldown_exception_never_falls_back():
+    from procache import ProviderCooldownError
+    runner = get_cache_runner()
+    with mock.patch.object(runner, "run", side_effect=ProviderCooldownError("fixture", 30)):
+        with mock.patch("subprocess.run") as run:
+            out, error = command(["gh", "pr", "list", "--repo", "semcod/test-repo"])
+    assert out == ""
+    assert "ProviderCooldownError" in error
+    run.assert_not_called()

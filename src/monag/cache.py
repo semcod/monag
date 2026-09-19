@@ -1,18 +1,14 @@
 """Integration with subactor-procache for read-side GitHub API caching."""
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 from typing import Sequence, Tuple, Optional
 
-try:
-    from procache import CachedReadCommand, SQLiteResponseCache, ProviderCooldownError
-    PROCACHE_AVAILABLE = True
-except ImportError:
-    PROCACHE_AVAILABLE = False
-    CachedReadCommand = None  # type: ignore[assignment,misc]
-    SQLiteResponseCache = None  # type: ignore[assignment,misc]
-    ProviderCooldownError = None  # type: ignore[assignment,misc]
+from procache import CachedReadCommand, SQLiteResponseCache
+
+PROCACHE_AVAILABLE = True
 
 _runner: Optional[CachedReadCommand] = None
 _cache_path: Optional[Path] = None
@@ -24,9 +20,6 @@ def get_cache_runner(
 ) -> Optional[CachedReadCommand]:
     """Return a shared CachedReadCommand runner or None if unavailable/disabled."""
     global _runner, _cache_path
-    if not PROCACHE_AVAILABLE:
-        return None
-
     if os.environ.get("MONAG_DISABLE_PROCACHE") == "1":
         return None
 
@@ -38,11 +31,15 @@ def get_cache_runner(
         cache_root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
         path = cache_root / "subactor" / "github.sqlite3"
 
-    effective_ttl = ttl
-    if effective_ttl is None:
-        effective_ttl = float(
-            os.environ.get("MONAG_GITHUB_READ_TTL", os.environ.get("SUBACTOR_GITHUB_READ_TTL", "30.0"))
-        )
+    # Bad environment input must not crash the CLI or create infinite entries.
+    try:
+        effective_ttl = float(ttl if ttl is not None else os.environ.get(
+            "MONAG_GITHUB_READ_TTL", os.environ.get("SUBACTOR_GITHUB_READ_TTL", "30.0")
+        ))
+        if not math.isfinite(effective_ttl) or effective_ttl < 0:
+            effective_ttl = 30.0
+    except (TypeError, ValueError, OverflowError):
+        effective_ttl = 30.0
 
     try:
         cache = SQLiteResponseCache(path, namespace="github-user")
@@ -84,11 +81,13 @@ def run_cached_gh(
         return None
 
     try:
-        res = runner.run(args, timeout=int(timeout) if timeout else None, env=env)
+        res = runner.run(args, timeout=timeout, env=env)
         if res.returncode != 0:
             operation = " ".join(args[:2]) if len(args) > 1 else args[0]
             err_msg = res.stderr.strip() or f"{operation} failed (exit {res.returncode})"
             return "", err_msg
         return res.stdout, None
-    except Exception:
-        return None
+    except Exception as error:
+        # The provider may already have executed. Returning None would cause
+        # monitor.command to repeat the request and bypass cooldown/failure.
+        return "", f"gh cache: {type(error).__name__}"
