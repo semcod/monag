@@ -1,0 +1,79 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-072",
+  "summary": "Adopt subactor-procache to cache read-side GitHub API commands and minimize rate limits",
+  "workstream": "application",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-072/**",
+    "src/monag/cache.py",
+    "src/monag/monitor.py",
+    "tests/test_procache_integration.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "141765af635e980569e0b99c5df1aecab09c5800",
+    "targetBranch": "main",
+    "outcome": "Integrate subactor-procache to cache read-side gh CLI commands with shared SQLite backing and cooldown on 429.",
+    "nonGoals": [
+      "No breaking changes to CLI output or mutating Git/GitHub commands."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 30,
+    "budgets": {
+      "maxImplementationFiles": 3,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Add a dedicated cache layer using subactor-procache with fallback to direct execution when unavailable.",
+      "components": [
+        {
+          "name": "cache",
+          "paths": [
+            "src/monag/cache.py",
+            "src/monag/monitor.py"
+          ]
+        },
+        {
+          "name": "tests",
+          "paths": [
+            "tests/test_procache_integration.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert commit via git."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python -m pytest -q tests/test_procache_integration.py",
+          "./project/governance-check.sh"
+        ],
+        "evidence": "All tests pass including cache hit and 429 cooldown."
+      }
+    ]
+  }
+}
