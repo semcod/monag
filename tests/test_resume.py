@@ -145,6 +145,25 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(row['agent_pids'], [123])
         self.assertEqual(row['readiness'], 'agent present')
 
+    def test_intent_and_lease_identity_evidence_is_preserved(self):
+        linked = self.repo / '.worktrees/ticket-022--identity'
+        self.git('worktree', 'add', '-b', 'ticket/022-identity', str(linked))
+        intent = linked / 'project/ticket-022/intent.json'
+        intent.parent.mkdir(parents=True)
+        intent.write_text(json.dumps({'ticket': 'ticket-023', 'delivery': {'complexity': 'S'}}))
+        lease = self.repo / '.subactor/leases' / (linked.name + '.json')
+        lease.parent.mkdir(parents=True)
+        lease.write_text(json.dumps({'schema': 'wellmanifest.change-lease/v1',
+                                     'phase': 'editing', 'ticketId': 'ticket-024'}))
+        row = next(r for r in self.scan()['projects'][0]['checkouts'] if r['path'] == str(linked))
+        self.assertEqual(row['ticket_identities'], dict(branch='ticket-022', path='ticket-022',
+                                                       intent='ticket-023', lease='ticket-024'))
+        self.assertEqual(row['intent_ticket'], 'ticket-023')
+        self.assertEqual(row['lease_ticket'], 'ticket-024')
+        self.assertTrue(row['ticket_identity_conflict'])
+        self.assertEqual(row['readiness'], 'inspect errors')
+        self.assertIsNone(resume.ticket_identity({'ticket': 'ticket-023'}))
+
     def test_planfile_priorities_are_preserved_and_ranked(self):
         sprint = self.repo / '.planfile/sprints'
         sprint.mkdir(parents=True)

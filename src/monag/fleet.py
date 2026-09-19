@@ -93,7 +93,7 @@ def base_ref_age_seconds(path, base):
 def lease_observation(lease_path, fallback_status='unknown', now=None):
     """Expose supported lease evidence without granting ownership or takeover."""
     row = dict(lease_status='unknown', lease_schema=None, lease_kind='missing',
-               lease_owner=None, lease_revision=None, lease_fencing_token=None,
+               lease_owner=None, lease_revision=None, lease_fencing_token=None, lease_ticket=None,
                lease_heartbeat_at=None, lease_expires_at=None, lease_expired=None,
                lease_age_seconds=None, lease_stale=False)
     try:
@@ -114,13 +114,13 @@ def lease_observation(lease_path, fallback_status='unknown', now=None):
             return dict(row, lease_kind='invalid')
         row.update(lease_kind='change-lease', lease_status=phase,
                    lease_owner=data.get('ownerActor'), lease_revision=data.get('leaseRevision'),
-                   lease_fencing_token=data.get('fencingToken'))
+                   lease_fencing_token=data.get('fencingToken'), lease_ticket=data.get('ticketId'))
         timestamp = data.get('heartbeatAt')
     elif schema in (None, 'wellmanifest.worktrees/v5'):
         if schema and 'status' not in data:
             return dict(row, lease_kind='layout-only')
         row.update(lease_kind='legacy', lease_status=str(data.get('status', fallback_status)),
-                   lease_owner=data.get('owner'))
+                   lease_owner=data.get('owner'), lease_ticket=data.get('ticketId') or data.get('ticket'))
         timestamp = data.get('heartbeatAt') or data.get('claimedAt')
     else:
         return dict(row, lease_kind='unsupported')

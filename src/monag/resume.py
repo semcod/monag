@@ -321,6 +321,8 @@ def registrations(path):
 
 
 def ticket_identity(value):
+    if not isinstance(value, str):
+        return None
     match = re.match(r'^ticket[-/]((?:[A-Z][A-Z0-9]*-)?\d+)(?=-|/|$)', value)
     return 'ticket-' + match[1] if match else None
 
@@ -370,14 +372,13 @@ def inspect_checkout(record, primary, base, agent_rows, assignments=None):
     row['publication_verified'] = False
     ticket = ticket_identity(record.get('branch', ''))
     path_ticket = ticket_identity(path.name)
-    row.update(ticket=ticket, path_ticket=path_ticket, ticket_identity_conflict=bool(
-        ticket and path_ticket and ticket != path_ticket), complexity='unknown', complexity_source='none')
-    if row['ticket_identity_conflict']:
-        row['errors'].append(f'ticket identity disagreement: branch {ticket}, path {path_ticket}')
+    row.update(ticket=ticket, path_ticket=path_ticket, intent_ticket=None,
+               complexity='unknown', complexity_source='none')
     if ticket:
         intent = path / 'project' / row['ticket'] / 'intent.json'
         try:
             data = json.loads(intent.read_text())
+            row['intent_ticket'] = data.get('ticket')
             complexity = data.get('delivery', {}).get('complexity', 'unknown')
             if complexity in {'XS', 'S', 'M', 'L'}:
                 row.update(complexity=complexity, complexity_source='declared intent')
@@ -385,6 +386,14 @@ def inspect_checkout(record, primary, base, agent_rows, assignments=None):
             pass
         except (OSError, ValueError, AttributeError):
             row['errors'].append('invalid intent')
+    identities = dict(branch=ticket, path=path_ticket,
+                      intent=ticket_identity(row['intent_ticket']),
+                      lease=ticket_identity(row['lease_ticket']))
+    row['ticket_identities'] = identities
+    row['ticket_identity_conflict'] = len({value for value in identities.values() if value}) > 1
+    if row['ticket_identity_conflict']:
+        row['errors'].append('ticket identity disagreement: ' + ', '.join(
+            f'{source} {value}' for source, value in identities.items() if value))
     row['unfinished'] = bool(changed or row['ahead'] or row['errors'] or row['ahead'] is None)
     row['stage'] = ('conflict' if conflict else 'started (tracking changes only)' if changed and not implementation_changes and row['ticket'] else 'modified' if changed else
                     'ancestry delta (publication unknown)' if row['ahead'] else 'no local delta' if row['ahead'] == 0 else 'unknown')
