@@ -24,7 +24,7 @@ SYSTEM_PROMPT = """You translate a user's observation request into the Monag DSL
 
 Grammar (exactly one line, conforming or nothing):
 OBSERVE <domain> [HOURS <n>] [STATE <open|merged|all>] [LIMIT <n>] [UNPUSHED_ONLY] [WORKTREES_ONLY]
-domain := prs | audit | status | resume | usage | catalog
+domain := prs | audit | status | resume | usage | catalog | advise
 
 Domains: prs = pull requests and branches, audit = planfile/GitHub coverage,
 status = agent processes and checkout snapshot, resume = worktree checkouts
@@ -93,6 +93,9 @@ def resolve(text, command=None, timeout=None):
     rule_query = dsl.parse(raw)
     if rule_query is not None:
         return rule_query, provenance('rule', rule_query.to_dsl(), raw)
+
+    if raw.upper().startswith('OBSERVE'):
+        return None, provenance('none', None, raw)
 
     if command is None:
         command = os.environ.get('MONAG_LLM_COMMAND', '')

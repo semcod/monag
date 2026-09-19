@@ -20,14 +20,15 @@ from pathlib import Path
 
 SCHEMA = 'monag.dsl/v1'
 
-VALID_DOMAINS = {'prs', 'pr', 'audit', 'status', 'agents', 'resume', 'usage', 'catalog'}
+VALID_DOMAINS = {'prs', 'pr', 'audit', 'status', 'agents', 'resume', 'usage', 'catalog', 'advise'}
 
 
 class Query:
     """Structured representation of a Monag observation query."""
 
     def __init__(self, target, hours=24.0, state='all', limit=20, unpushed_only=False,
-                 worktrees_only=False, raw_input=None):
+                 worktrees_only=False, raw_input=None, issue_limit=None,
+                 radar=False, tier="all", emit_planfile=False):
         # Normalize target
         if target in {'pr', 'prs'}:
             self.target = 'prs'
@@ -35,12 +36,18 @@ class Query:
             self.target = 'status'
         else:
             self.target = target
-        self.hours = float(hours) if hours is not None else 24.0
-        self.state = state if state in {'open', 'merged', 'all'} else 'all'
-        self.limit = int(limit) if limit is not None else 20
-        self.unpushed_only = bool(unpushed_only)
-        self.worktrees_only = bool(worktrees_only)
+        self.hours = hours if hours is not None else 24.0
+        self.state = state
+        self.limit = limit if limit is not None else 20
+        self.unpushed_only = unpushed_only
+        self.worktrees_only = worktrees_only
+        self.issue_limit = issue_limit
+        self.radar = radar
+        self.tier = tier
+        self.emit_planfile = emit_planfile
         self.raw_input = raw_input or ''
+        from .nl_contract import validate_query
+        validate_query(self)
 
     def to_dsl(self):
         """Serialize query to canonical DSL string."""
@@ -55,6 +62,14 @@ class Query:
             parts.append('UNPUSHED_ONLY')
         if self.worktrees_only:
             parts.append('WORKTREES_ONLY')
+        if self.issue_limit is not None:
+            parts.extend(['ISSUE_LIMIT', str(self.issue_limit)])
+        if self.radar:
+            parts.append('RADAR')
+        if self.tier != 'all':
+            parts.extend(['TIER', self.tier])
+        if self.emit_planfile:
+            parts.append('EMIT_PLANFILE')
         return ' '.join(parts)
 
     def to_dict(self):
@@ -65,6 +80,10 @@ class Query:
             'limit': self.limit,
             'unpushed_only': self.unpushed_only,
             'worktrees_only': self.worktrees_only,
+            'issue_limit': self.issue_limit,
+            'radar': self.radar,
+            'tier': self.tier,
+            'emit_planfile': self.emit_planfile,
             'dsl': self.to_dsl(),
             'raw_input': self.raw_input,
         }
@@ -97,34 +116,28 @@ def parse_dsl(text):
         return None
 
     kwargs = {'target': target, 'raw_input': text}
+    converters = {'HOURS': float, 'LIMIT': int, 'ISSUE_LIMIT': int,
+                  'STATE': str.lower, 'TIER': str.lower}
+    flags = {'UNPUSHED_ONLY', 'WORKTREES_ONLY', 'RADAR', 'EMIT_PLANFILE'}
+    seen = set()
     i = 2
-    while i < len(tokens):
-        key = tokens[i].upper()
-        if key == 'HOURS' and i + 1 < len(tokens):
-            try:
-                kwargs['hours'] = float(tokens[i + 1])
-            except ValueError:
-                pass
-            i += 2
-        elif key == 'STATE' and i + 1 < len(tokens):
-            kwargs['state'] = tokens[i + 1].lower()
-            i += 2
-        elif key == 'LIMIT' and i + 1 < len(tokens):
-            try:
-                kwargs['limit'] = int(tokens[i + 1])
-            except ValueError:
-                pass
-            i += 2
-        elif key == 'UNPUSHED_ONLY':
-            kwargs['unpushed_only'] = True
-            i += 1
-        elif key == 'WORKTREES_ONLY':
-            kwargs['worktrees_only'] = True
-            i += 1
-        else:
-            i += 1
-
-    return Query(**kwargs)
+    try:
+        while i < len(tokens):
+            key = tokens[i].upper()
+            if key in seen:
+                return None
+            seen.add(key)
+            if key in converters and i + 1 < len(tokens):
+                kwargs[key.lower()] = converters[key](tokens[i + 1])
+                i += 2
+            elif key in flags:
+                kwargs[key.lower()] = True
+                i += 1
+            else:
+                return None
+        return Query(**kwargs)
+    except (ValueError, TypeError, OverflowError):
+        return None
 
 
 def parse_natural_language(text):
@@ -141,6 +154,9 @@ def parse_natural_language(text):
         state = 'open'
     elif re.search(r'(scalon|zmergowan|merged)', low):
         state = 'merged'
+
+    if re.search(r'(advise|advice|porad|zaleceni|rekomendac)', low):
+        return Query('advise', raw_input=raw)
 
     # Domain 1: PRs & branches
     if re.search(r'(\bprs?\b|\bpr-[a-z0-9]+\b|pull\s*requests?|ga[łl][ęe]z|branch|\bmerg|scal|nieprzepchni)', low):
@@ -182,10 +198,8 @@ def parse(text):
     if not text or not text.strip():
         return None
     raw = text.strip()
-    if raw.upper().startswith('OBSERVE '):
-        dsl_query = parse_dsl(raw)
-        if dsl_query:
-            return dsl_query
+    if raw.upper().startswith('OBSERVE'):
+        return parse_dsl(raw)
     return parse_natural_language(raw)
 
 
@@ -204,6 +218,8 @@ def execute(query_or_text, root, depth=2, pr_limit=200, issue_limit=200, registr
     else:
         query = query_or_text
 
+    from .nl_contract import validate_query
+    validate_query(query)
     target = query.target
     data = None
     doc = ''
@@ -216,7 +232,7 @@ def execute(query_or_text, root, depth=2, pr_limit=200, issue_limit=200, registr
 
     elif target == 'audit':
         from . import audit
-        data = audit.scan(root, depth=depth, issue_limit=issue_limit,
+        data = audit.scan(root, depth=depth, issue_limit=query.issue_limit or issue_limit,
                           recent_hours=query.hours if query.hours != 24.0 else None,
                           worktrees_hours=query.hours,
                           worktrees_only=query.worktrees_only)
@@ -245,6 +261,17 @@ def execute(query_or_text, root, depth=2, pr_limit=200, issue_limit=200, registr
         from . import catalog
         data = catalog.scan(root, depth=depth)
         doc = catalog.markdown(data, limit=query.limit)
+
+    elif target == 'advise':
+        from . import advise
+        data = advise.advise(root, depth=depth, limit=query.limit,
+                             radar=query.radar, tier=query.tier)
+        if query.emit_planfile:
+            import json
+            data = advise.export_planfile_tickets(data, tier=query.tier)
+            doc = json.dumps(data, ensure_ascii=False, indent=2)
+        else:
+            doc = advise.markdown(data)
 
     return {
         'schema': SCHEMA,
