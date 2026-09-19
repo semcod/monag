@@ -462,6 +462,23 @@ def test_run_daemon_dynamic_config(tmp_path):
         assert mock_send.call_args[0][0] == ['dyn@dev.local']
 
 
+def test_standards_displays_pins_and_escapes_untrusted_observations():
+    text = report.format_section_standards({
+        'repositories': [{'name': 'repo', 'standards': [{
+            'id': 'pack', 'level': 'S3', 'version': '1.2',
+            'revision': 'a' * 40, 'source': 'lock',
+        }]}],
+        'drift': [{'id': '<script>', 'revisions': ['<img>', 'second']}],
+        'errors': ['<script>bad</script>'],
+    })
+    assert 'a' * 40 in text
+    assert 'source=lock' in text
+    assert 'S3' in text
+    assert '<script>' not in text
+    assert '<img>' not in text
+    assert '&lt;script&gt;' in text
+
+
 def test_markdown_overview_table_with_prs_and_wts():
     data = {
         'schema': 'monag.report/v1',

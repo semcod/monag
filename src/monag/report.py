@@ -306,7 +306,9 @@ def format_section_standards(data):
     for repo in repos:
         packs = repo.get('standards', [])
         declared = ', '.join(
-            f"{pack.get('id', '?')} ({pack.get('level', '?')})" for pack in packs
+            f"{pack.get('id', '?')} ({pack.get('level') or '—'}; "
+            f"version={pack.get('version') or '—'}; revision={pack.get('revision') or '—'}; "
+            f"source={pack.get('source') or '—'})" for pack in packs
         ) or '—'
         rows.append([
             repo.get('name', repo.get('path', '')), repo.get('mode', 'missing'),
@@ -317,9 +319,10 @@ def format_section_standards(data):
     if data.get('drift'):
         lines.extend(['', '**Workspace-local pin disagreement (not a release-freshness claim):**'])
         for item in data['drift']:
-            lines.append(f"- `{item['id']}`: {', '.join(item['revisions'])}")
+            lines.append(f"- {presentation.cell(item['id'])}: "
+                         f"{presentation.cell(', '.join(item['revisions']))}")
     for error in data.get('errors', []):
-        lines.append(f"- Observation error: {error}")
+        lines.append(f"- Observation error: {presentation.cell(error)}")
     return '\n'.join(lines)
 
 

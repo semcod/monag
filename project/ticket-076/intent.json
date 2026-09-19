@@ -44,7 +44,7 @@
       "status": "accepted",
       "decision": "Keep filesystem observation in a dedicated read-only module and reuse report section collection and presentation.",
       "components": [
-        {"name": "governance scanner", "paths": ["src/monag/governance.py"]},
+        {"name": "governance scanner", "paths": ["src/monag/governance.py", "tests/test_governance.py"]},
         {"name": "report", "paths": ["src/monag/report.py", "tests/test_report.py"]}
       ],
       "responsibilityChanges": false,
@@ -57,7 +57,7 @@
     "validation": [
       {
         "criterion": "AC-03",
-        "commands": ["PYTHONPATH=src python -m pytest -q tests/test_report.py", "./project/governance-check.sh"],
+        "commands": ["PYTHONPATH=src python -m pytest -q tests/test_governance.py tests/test_report.py", "./project/governance-check.sh"],
         "evidence": "Focused report tests and governance gate pass."
       }
     ]
