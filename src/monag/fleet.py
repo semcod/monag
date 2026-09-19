@@ -6,8 +6,8 @@ Three traps produced an 18x overcount in a manual audit on 2026-09-17:
 
 1. **Stale remote refs.** ``ahead > 0`` against a local ``origin/main`` that was
    never fetched reports merged work as unmerged. This module records
-   ``base_ref_age_seconds`` so a reader can tell a real delta from a stale ref,
-   and never claims publication state when the base is missing.
+   commit age separately from unknown remote-observation freshness, and never
+   claims publication state when the base is missing.
 2. **Parallel clones.** The same repository is often cloned several times
    (``subactor/docs`` and ``subactor-lifecycle-v7/docs``). Summing per-checkout
    rows counts one branch many times, so aggregates here are keyed by
@@ -66,12 +66,8 @@ def remote_identity(path):
     return match[1] if match else url
 
 
-def base_ref_age_seconds(path, base):
-    """Seconds since ``base`` last moved, or ``None`` when it cannot be read.
-
-    A large age means a publication verdict from ancestry may be reporting a
-    stale ref rather than real unpublished work.
-    """
+def base_commit_age_seconds(path, base):
+    """Age of the target commit, which is not evidence of fetch freshness."""
     if not base:
         return None
     output, error = command(
@@ -89,6 +85,58 @@ def time_now():
     return datetime.now(timezone.utc).timestamp()
 
 
+def base_ref_age_seconds(path, base):
+    """Compatibility field: no reliable remote-observation time is available."""
+    return None
+
+
+def lease_observation(lease_path, fallback_status='unknown', now=None):
+    """Expose supported lease evidence without granting ownership or takeover."""
+    row = dict(lease_status='unknown', lease_schema=None, lease_kind='missing',
+               lease_owner=None, lease_revision=None, lease_fencing_token=None, lease_ticket=None,
+               lease_heartbeat_at=None, lease_expires_at=None, lease_expired=None,
+               lease_age_seconds=None, lease_stale=False)
+    try:
+        data = json.loads(lease_path.read_text())
+        if not isinstance(data, dict):
+            raise ValueError('expected mapping')
+    except FileNotFoundError:
+        return row
+    except (OSError, ValueError):
+        return dict(row, lease_kind='invalid')
+    schema = data.get('schema')
+    row['lease_schema'] = schema
+    if schema == 'wellmanifest.change-lease/v1':
+        phase = data.get('phase')
+        if phase not in {'claimed', 'editing', 'validating', 'publication_frozen',
+                         'dispatching', 'approved', 'merged', 'closed', 'cancelled',
+                         'expired', 'released'}:
+            return dict(row, lease_kind='invalid')
+        row.update(lease_kind='change-lease', lease_status=phase,
+                   lease_owner=data.get('ownerActor'), lease_revision=data.get('leaseRevision'),
+                   lease_fencing_token=data.get('fencingToken'), lease_ticket=data.get('ticketId'))
+        timestamp = data.get('heartbeatAt')
+    elif schema in (None, 'wellmanifest.worktrees/v5'):
+        if schema and 'status' not in data:
+            return dict(row, lease_kind='layout-only')
+        row.update(lease_kind='legacy', lease_status=str(data.get('status', fallback_status)),
+                   lease_owner=data.get('owner'), lease_ticket=data.get('ticketId') or data.get('ticket'))
+        timestamp = data.get('heartbeatAt') or data.get('claimedAt')
+    else:
+        return dict(row, lease_kind='unsupported')
+    row.update(lease_heartbeat_at=data.get('heartbeatAt'), lease_expires_at=data.get('expiresAt'))
+    reference = time_now() if now is None else now
+    expiry = _timestamp(data.get('expiresAt'))
+    row['lease_expired'] = reference >= expiry.timestamp() if expiry else None
+    if row['lease_status'] in {'released', 'merged', 'closed', 'cancelled', 'unknown'}:
+        return row
+    heartbeat = _timestamp(timestamp)
+    if heartbeat:
+        age = max(0, int(reference - heartbeat.timestamp()))
+        row.update(lease_age_seconds=age, lease_stale=age > DEFAULT_STALE_LEASE_SECONDS)
+    return row
+
+
 def lease_age(lease_path, status, now=None):
     """Return ``(age_seconds, stale)`` for a checkout's lease claim.
 
@@ -96,18 +144,8 @@ def lease_age(lease_path, status, now=None):
     timestamp is old. A released lease is never stale, and an unreadable
     timestamp yields ``None`` instead of a guess.
     """
-    if str(status or 'unknown') in {'released', 'unknown'}:
-        return None, False
-    try:
-        data = json.loads(lease_path.read_text())
-    except (OSError, ValueError, AttributeError):
-        return None, False
-    claimed = _timestamp(data.get('claimedAt'))
-    if claimed is None:
-        return None, False
-    reference = now if now is not None else time_now()
-    age = max(0, int(reference - claimed.timestamp()))
-    return age, age > DEFAULT_STALE_LEASE_SECONDS
+    row = lease_observation(lease_path, status, now)
+    return row['lease_age_seconds'], row['lease_stale']
 
 
 def publication_state(row):
@@ -136,7 +174,7 @@ def metrics(rows, stale_lease_seconds=DEFAULT_STALE_LEASE_SECONDS):
     """
     states = dict.fromkeys(PUBLICATION_STATES, 0)
     seen, duplicated, stale_leases = set(), 0, 0
-    base_ages = []
+    base_ages, commit_ages = [], []
     for row in rows:
         states[row.get('publication_state', 'no_base')] = states.get(
             row.get('publication_state', 'no_base'), 0) + 1
@@ -150,6 +188,9 @@ def metrics(rows, stale_lease_seconds=DEFAULT_STALE_LEASE_SECONDS):
         age = row.get('base_ref_age_seconds')
         if isinstance(age, int):
             base_ages.append(age)
+        age = row.get('base_commit_age_seconds')
+        if isinstance(age, int):
+            commit_ages.append(age)
     unmerged = states.get('unmerged_by_ancestry', 0)
     return {
         'schema': 'monag.fleet-metrics/v1',
@@ -160,6 +201,8 @@ def metrics(rows, stale_lease_seconds=DEFAULT_STALE_LEASE_SECONDS):
         'stale_lease_claims': stale_leases,
         'stale_lease_threshold_seconds': stale_lease_seconds,
         'base_ref_age_seconds_max': max(base_ages) if base_ages else None,
+        'base_commit_age_seconds_max': max(commit_ages) if commit_ages else None,
+        'remote_observation_freshness': 'unknown',
         'refactoring_notes': [
             f'{unmerged} checkout(s) look unpublished by ancestry; a squash or '
             'rebase merge produces the same signal, so confirm each against its '

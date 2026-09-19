@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from monag import fleet
 
@@ -135,3 +136,42 @@ def test_metrics_base_ref_age_is_none_when_unobservable() -> None:
 def test_remote_identity_extracts_owner_and_name(tmp_path: Path) -> None:
     """Identity is what proves two paths are one repository."""
     assert fleet.remote_identity(tmp_path) is None  # not a git checkout
+
+
+def test_change_lease_phase_and_heartbeat_do_not_grant_takeover(tmp_path):
+    lease = _lease(tmp_path, schema='wellmanifest.change-lease/v1', phase='editing',
+                   ownerActor='other', leaseRevision=4, fencingToken=9,
+                   issuedAt='1970-01-01T00:00:00Z', heartbeatAt='1970-01-01T23:59:50Z',
+                   expiresAt='1970-01-01T23:59:59Z')
+    row = fleet.lease_observation(lease, now=86400)
+    assert row['lease_status'] == 'editing'
+    assert row['lease_owner'] == 'other'
+    assert row['lease_fencing_token'] == 9
+    assert row['lease_age_seconds'] == 10
+    assert row['lease_expired'] is True
+    assert row['lease_stale'] is False
+
+
+def test_released_change_lease_never_becomes_stale(tmp_path):
+    lease = _lease(tmp_path, schema='wellmanifest.change-lease/v1', phase='released',
+                   heartbeatAt='1970-01-01T00:00:00Z')
+    row = fleet.lease_observation(lease, now=86400)
+    assert row['lease_status'] == 'released'
+    assert row['lease_age_seconds'] is None
+    assert not row['lease_stale']
+
+
+def test_lease_metadata_is_not_a_claim(tmp_path):
+    lease = _lease(tmp_path, schema='wellmanifest.worktrees/v5', kind='layout-record')
+    assert fleet.lease_observation(lease)['lease_kind'] == 'layout-only'
+    lease = _lease(tmp_path, schema='unknown/v8', phase='editing')
+    assert fleet.lease_observation(lease)['lease_status'] == 'unknown'
+    lease.write_text('[]')
+    assert fleet.lease_observation(lease)['lease_kind'] == 'invalid'
+
+
+def test_old_commit_does_not_establish_remote_freshness(tmp_path):
+    with patch('monag.fleet.command', return_value=('1000\n', None)), patch('monag.fleet.time_now', return_value=2000):
+        assert fleet.base_commit_age_seconds(tmp_path, 'origin/main') == 1000
+        assert fleet.base_ref_age_seconds(tmp_path, 'origin/main') is None
+    assert fleet.metrics([_row(base_commit_age_seconds=1000)])['remote_observation_freshness'] == 'unknown'

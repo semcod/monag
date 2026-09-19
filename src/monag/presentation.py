@@ -148,6 +148,6 @@ def markdown(data, limit=12, view='all'):
         if a.get('open_files_truncated') or a.get('open_files_inaccessible'):
             problems.append(f"PID {a['pid']}: open file observation incomplete")
     if problems:
-        parts += ['## Observation gaps\n', table(['Detail'], ([p] for p in problems))]
+        parts += ['## Observation gaps\n', table(['Detail'], ([p] for p in dict.fromkeys(problems)))]
     parts.append('_Observed processes and Git changes do not establish task completion or file authorship._\n')
     return '\n'.join(parts)
