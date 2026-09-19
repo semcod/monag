@@ -1,0 +1,101 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-070",
+  "summary": "Fix verified MONAG report correctness findings (Issues 70-77)",
+  "workstream": "application",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-070/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/fleet.py",
+    "src/monag/monitor.py",
+    "src/monag/presentation.py",
+    "src/monag/resume.py",
+    "tests/test_fleet.py",
+    "tests/test_monitor.py",
+    "tests/test_resume.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "59c450d4e0d2c6f6ca3c0ee9d8dd85d42ccb70e5",
+    "targetBranch": "main",
+    "outcome": "Make report claims match observed Git, Planfile, lease and process evidence for Issues 70-77.",
+    "nonGoals": [
+      "No change to advise, no takeover, no network in offline scan."
+    ],
+    "complexity": "M",
+    "estimatedMinutes": 90,
+    "budgets": {
+      "maxImplementationFiles": 9,
+      "maxAffectedComponents": 3,
+      "maxPublicInterfaceChanges": 2,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Keep observation, source reconciliation and rendering in their existing modules; reuse one agent-checkout mapper.",
+      "components": [
+        {
+          "name": "report",
+          "paths": [
+            "src/monag/resume.py",
+            "src/monag/presentation.py",
+            "tests/test_resume.py"
+          ]
+        },
+        {
+          "name": "observation",
+          "paths": [
+            "src/monag/monitor.py",
+            "tests/test_monitor.py"
+          ]
+        },
+        {
+          "name": "fleet",
+          "paths": [
+            "src/monag/fleet.py",
+            "tests/test_fleet.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "multi-state",
+        "states": [
+          "empty",
+          "error",
+          "success"
+        ],
+        "evidence": [
+          "tests/test_resume.py",
+          "tests/test_monitor.py"
+        ]
+      },
+      "rollback": "Revert application fix commit through protected publication."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-06",
+        "commands": [
+          "PYTHONPATH=src python -m pytest -q",
+          "./project/governance-check.sh"
+        ],
+        "evidence": "Application regression suite and governance output."
+      }
+    ]
+  }
+}

@@ -29,7 +29,11 @@ def command(args, cwd=None, timeout=8):
         p = subprocess.run(args, cwd=cwd, env=env, stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE, timeout=timeout)
         if p.returncode:
-            return '', f'{args[0]} failed (exit {p.returncode})'
+            operation = args[0]
+            if args[0] == 'git' and len(args) > 1 and args[1] in {
+                    'rev-parse', 'status', 'log', 'show', 'worktree', 'rev-list', 'config'}:
+                operation += ' ' + args[1]
+            return '', f'{operation} failed (exit {p.returncode})'
         return p.stdout.decode('utf-8', 'replace'), None
     except (OSError, subprocess.TimeoutExpired) as e:
         return '', f'{args[0]}: {type(e).__name__}'
@@ -190,9 +194,17 @@ def inspect_repo(path, since):
         if error:
             errors.append(error)
         return out
-    branch = git('rev-parse', '--abbrev-ref', 'HEAD').strip()
+    head, head_error = command(['git', 'rev-parse', '--verify', '--quiet', 'HEAD'], path)
+    symbolic, _ = command(['git', 'symbolic-ref', '--quiet', '--short', 'HEAD'], path)
+    head_state = 'committed'
+    if not head:
+        any_commit, error = command(['git', 'log', '--all', '-1', '--format=%H'], path)
+        head_state = 'unknown' if error or any_commit else 'unborn'
+        if head_state == 'unknown':
+            errors.append(head_error or 'HEAD unavailable')
+    branch = symbolic.strip() or ('HEAD' if head else '(unborn)' if head_state == 'unborn' else 'unknown')
     files = parse_status(git('status', '--porcelain=v1', '-z', '--untracked-files=all'), path)
-    log = git('log', '-8', f'--since={since}', '--format=%H%x00%ct%x00%s')
+    log = git('log', '-8', f'--since={since}', '--format=%H%x00%ct%x00%s') if head else ''
     commits = []
     for line in log.splitlines():
         parts = line.split('\0', 2)
@@ -201,7 +213,7 @@ def inspect_repo(path, since):
     recent_files = git('show', '--format=', '--name-only', '-z', '--no-renames', commits[0]['sha']).split('\0') if commits else []
     common = git('rev-parse', '--path-format=absolute', '--git-common-dir').strip()
     remote, _ = command(['git', 'config', '--get', 'remote.origin.url'], path)
-    return {'path': str(path), 'branch': branch, 'files': files, 'commits': commits,
+    return {'path': str(path), 'branch': branch, 'head_state': head_state, 'files': files, 'commits': commits,
             'github': github_repo(remote), 'common_dir': common, 'errors': errors,
             'recent_committed_files': [f for f in recent_files if f],
             'activity': max([f['modified'] for f in files] + [c['time'] for c in commits] + [0])}
@@ -322,6 +334,22 @@ def activity(agents, samples, sampled, proc=Path('/proc')):
     samples.update(current)
 
 
+def checkout_agents(paths, agents):
+    """Associate observed host/child directories with their nearest checkout."""
+    by_path = {Path(path): [] for path in paths}
+    for agent in agents:
+        directories = agent.get('working_directories') or [agent.get('cwd')]
+        directories = [*directories, *(p.get('cwd') for p in agent.get('descendants', []))]
+        for cwd in directories:
+            if not cwd:
+                continue
+            path = Path(cwd)
+            nearest = next((p for p in (path, *path.parents) if p in by_path), None)
+            if nearest is not None and agent['pid'] not in by_path[nearest]:
+                by_path[nearest].append(agent['pid'])
+    return {str(path): pids for path, pids in by_path.items()}
+
+
 def snapshot(root, state_dir, depth=2, since='24 hours ago', github=False, cache=None,
              registry=None, machine=False, all_users=False, open_files=False, agents_only=False):
     """One observation; a cache shared by watch refreshes enables CPU activity and scan reuse."""
@@ -347,17 +375,9 @@ def snapshot(root, state_dir, depth=2, since='24 hours ago', github=False, cache
         task = next((t for t in tasks if t['pid'] == agent['pid'] and t['start'] == agent['start'] and t['status'] == 'running'), None)
         if task:
             agent['task'] = task['task']
+    assignments = checkout_agents([r['path'] for r in repos], agents)
     for repo in repos:
-        repo['agents'] = []
-    # Choose the deepest containing checkout, the nearest ancestor, per observed working directory.
-    by_path = {Path(r['path']): r for r in repos}
-    for agent in agents:
-        for cwd in agent.get('working_directories', [agent['cwd']]):
-            if cwd:
-                path = Path(cwd)
-                repo = next((by_path[p] for p in (path, *path.parents) if p in by_path), None)
-                if repo and agent['pid'] not in repo['agents']:
-                    repo['agents'].append(agent['pid'])
+        repo['agents'] = assignments[repo['path']]
     repos.sort(key=lambda r: (bool(r['agents']), r['activity']), reverse=True)
     events = []
     if github:

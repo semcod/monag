@@ -10,7 +10,7 @@ import time
 import yaml
 
 from . import fleet
-from .monitor import command, inside, processes
+from .monitor import checkout_agents, command, processes
 from .presentation import table
 
 CLOSED = {'done', 'closed', 'cancelled', 'canceled', 'completed', 'merged'}
@@ -78,6 +78,18 @@ def planfile(path):
     if sprints_dir.is_dir():
         files.extend(sorted(sprints_dir.glob('*.yaml')))
     result, errors, sources = [], [], []
+    locations = {}
+    locator = path / '.planfile/index/history-locations.yaml'
+    if locator.is_file():
+        try:
+            if locator.stat().st_size > 5_000_000:
+                raise ValueError('history index exceeds read limit')
+            data = yaml.safe_load(locator.read_text())
+            if not isinstance(data, dict) or not isinstance(data.get('tickets'), dict):
+                raise ValueError('invalid history index')
+            locations = data['tickets']
+        except (OSError, ValueError, yaml.YAMLError):
+            errors.append(f'{locator}: invalid history ownership index')
     for file in files:
         if not file.is_file():
             continue
@@ -118,10 +130,79 @@ def planfile(path):
                                    if isinstance(item.get('labels', []), list) else [],
                                    'import_evidence': evidence,
                                    'source': str(file),
-                                   'github': github_mapping(item)})
+                                   'checkout': str(path),
+                                   'history_owner': locations.get(str(identity)),
+                                   'historical': file.stem.startswith(('history-', 'archive-')),
+                                   'github': github_mapping(item),
+                                   'github_binding': (item.get('sync') or {}).get('github', {})
+                                   if isinstance(item.get('sync'), dict) else {}})
         except (OSError, ValueError, TypeError, yaml.YAMLError, RecursionError) as error:
             errors.append(f'{file}: {type(error).__name__}')
+    for identity, owner in locations.items():
+        if any(row['id'] == identity for row in result) and not any(
+                row['id'] == identity and Path(row['source']).stem == owner for row in result):
+            errors.append(f'{locator}: {identity}: canonical history owner unavailable')
     return result, sources, errors
+
+
+def external_identity(row):
+    binding = row.get('github_binding') or {}
+    if not isinstance(binding, dict):
+        binding = {}
+    key = binding.get('key')
+    url = binding.get('url')
+    if key:
+        return str(key)
+    if url:
+        match = re.fullmatch(r'https://github.com/([^/]+/[^/]+)/issues/(\d+)/?', str(url))
+        if match:
+            return match[1] + '#' + match[2]
+        return str(url)
+    if binding.get('repository') and row.get('github'):
+        return str(binding['repository']) + '#' + str(row['github'])
+    return str(row['github']) if row.get('github') else None
+
+
+def identity_bindings(rows):
+    identities = {external_identity(r) for r in rows if external_identity(r)}
+    # Legacy id-only copies are compatible with one uniquely scoped issue.
+    for identity in list(identities):
+        if identity.isdigit() and len([x for x in identities if x.endswith('#' + identity)]) == 1:
+            identities.remove(identity)
+    return sorted(identities)
+
+
+def reconcile_ticket_sources(items, primary):
+    """Prefer the primary store and its locator; retain collisions and provenance."""
+    grouped = {}
+    for row in items:
+        grouped.setdefault(row['id'], []).append(row)
+    selected, stale = [], []
+    for rows in grouped.values():
+        primary_rows = [r for r in rows if r.get('checkout') == str(primary)]
+        candidates = primary_rows or rows
+        identities = identity_bindings(rows)
+        # Conflicting external bindings must never be hidden by source precedence.
+        if len(identities) > 1:
+            selected.extend(rows)
+            continue
+        owners = [r for r in candidates if r.get('history_owner') and
+                  Path(r['source']).stem == r['history_owner']]
+        if owners:
+            candidates = owners
+        elif not any(r.get('history_owner') for r in candidates):
+            active = [r for r in candidates if not r.get('historical')]
+            if active:
+                candidates = active
+        if primary_rows:
+            # A locally edited peer store may contain an unsynchronized update,
+            # not an inherited stale snapshot. Retain it as conflicting evidence.
+            candidates = [*candidates, *(r for r in rows if r not in primary_rows
+                                        and r.get('source_changed'))]
+        selected.extend(candidates)
+        stale.extend(dict(r, exclusion='noncanonical snapshot') for r in rows
+                     if not any(r is candidate for candidate in candidates))
+    return selected, stale
 
 
 def summarize_tickets(items, priorities=None):
@@ -143,10 +224,15 @@ def summarize_tickets(items, priorities=None):
             priorities = [priorities]
         selected_priorities = {normalize_priority(value) for value in priorities}
     pending, blocked, conflicts, unknown, priority_conflicts = [], 0, 0, 0, 0
-    pending_tickets = []
+    pending_tickets, identity_collisions = [], []
     included_tickets = 0
     for key in sorted(grouped):
         rows = grouped[key]
+        identities = identity_bindings(rows)
+        identity_collision = len(identities) > 1
+        if identity_collision:
+            identity_collisions.append({'id': key, 'github_bindings': identities,
+                                        'records': rows})
         statuses = {r['status'] for r in rows}
         row_priorities = {r['priority'] for r in rows}
         known = [value for value in row_priorities if value in PRIORITY_RANK]
@@ -166,12 +252,16 @@ def summarize_tickets(items, priorities=None):
             pending_tickets.append({
                 'id': key,
                 'status': '/'.join(sorted(statuses)),
-                'title': sorted(str(r.get('title', key)) for r in rows)[0],
+                'title': ('identity collision: ' + ' / '.join(identities)) if identity_collision
+                         else sorted(str(r.get('title', key)) for r in rows)[0],
                 'priority': effective_priority,
                 'labels': labels,
                 'import_evidence': import_evidence,
                 'source': sorted(str(r.get('source', '')) for r in rows)[0],
                 'priority_conflict': len(row_priorities) > 1,
+                'identity_collision': identity_collision,
+                'sources': sorted({str(r.get('source', '')) for r in rows}),
+                'github_bindings': identities,
             })
     pending_tickets.sort(key=lambda row: (-priority_rank(row['priority']), row['id']))
     priority_counts = {value: 0 for value in (*PLANFILE_PRIORITIES, 'unknown')}
@@ -187,6 +277,7 @@ def summarize_tickets(items, priorities=None):
             'highest_priority': highest,
             'highest_priority_rank': priority_rank(highest),
             'priority_conflicts': priority_conflicts,
+            'identity_collisions': identity_collisions,
             'priority_filter': sorted(selected_priorities, key=lambda value: (-priority_rank(value), value))
             if selected_priorities is not None else []}
 
@@ -229,7 +320,12 @@ def registrations(path):
     return records, error
 
 
-def inspect_checkout(record, primary, base, agent_rows):
+def ticket_identity(value):
+    match = re.match(r'^ticket[-/]((?:[A-Z][A-Z0-9]*-)?\d+)(?=-|/|$)', value)
+    return 'ticket-' + match[1] if match else None
+
+
+def inspect_checkout(record, primary, base, agent_rows, assignments=None):
     path = Path(record['path'])
     row = dict(record, errors=[])
     def git(*args):
@@ -239,6 +335,7 @@ def inspect_checkout(record, primary, base, agent_rows):
         return out
     output = git('status', '--porcelain=v1', '-z', '--untracked-files=normal')
     fields = output.split('\0'); changed = 0; implementation_changes = 0; conflict = False
+    changed_paths = []
     i = 0
     while i < len(fields):
         part = fields[i]; i += 1
@@ -246,34 +343,38 @@ def inspect_checkout(record, primary, base, agent_rows):
             continue
         changed += 1
         name = part[3:]
+        changed_paths.append(name)
         if not name.startswith(('project/', '.subactor/', '.planfile/')) and name not in {'TODO.md'}:
             implementation_changes += 1
         conflict |= part[:2] in {'DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'}
         if 'R' in part[:2] or 'C' in part[:2]:
             i += 1
-    row.update(changed_files=changed, conflicts=conflict, ahead=None, behind=None)
+    row.update(changed_files=changed, changed_paths=changed_paths, conflicts=conflict, ahead=None, behind=None)
     if base and record.get('head'):
         counts = git('rev-list', '--left-right', '--count', f'{base}...{record["head"]}').split()
         if len(counts) == 2:
             row['behind'], row['ahead'] = map(int, counts)
-    row['agent_pids'] = [a['pid'] for a in agent_rows if a.get('cwd') and inside(Path(a['cwd']), path)]
+    row['agent_pids'] = (assignments if assignments is not None else
+                         checkout_agents([str(path)], agent_rows)).get(str(path), [])
     lease = primary / '.subactor/leases' / (path.name + '.json')
-    row['lease_status'] = 'unknown'
-    if lease.is_file():
-        try:
-            row['lease_status'] = str(json.loads(lease.read_text()).get('status', 'unknown'))
-        except (OSError, ValueError, AttributeError):
-            row['errors'].append('invalid lease')
+    row.update(fleet.lease_observation(lease))
+    if row['lease_kind'] == 'invalid':
+        row['errors'].append('invalid lease')
     # Fleet refactoring metrics: clone identity, base freshness and lease age are
     # what keep an aggregate from counting delivered work as pending.
     row['remote_identity'] = fleet.remote_identity(path)
     row['base_ref_age_seconds'] = fleet.base_ref_age_seconds(path, base)
-    row['lease_age_seconds'], row['lease_stale'] = fleet.lease_age(lease, row['lease_status'])
+    row['base_commit_age_seconds'] = fleet.base_commit_age_seconds(path, base)
+    row['remote_observation_freshness'] = 'unknown'
     row['publication_state'] = fleet.publication_state(row)
-    ticket = re.search(r'ticket[-/](\d+)', record.get('branch', ''))
-    row.update(ticket=None, complexity='unknown', complexity_source='none')
+    row['publication_verified'] = False
+    ticket = ticket_identity(record.get('branch', ''))
+    path_ticket = ticket_identity(path.name)
+    row.update(ticket=ticket, path_ticket=path_ticket, ticket_identity_conflict=bool(
+        ticket and path_ticket and ticket != path_ticket), complexity='unknown', complexity_source='none')
+    if row['ticket_identity_conflict']:
+        row['errors'].append(f'ticket identity disagreement: branch {ticket}, path {path_ticket}')
     if ticket:
-        row['ticket'] = 'ticket-' + ticket[1]
         intent = path / 'project' / row['ticket'] / 'intent.json'
         try:
             data = json.loads(intent.read_text())
@@ -286,7 +387,7 @@ def inspect_checkout(record, primary, base, agent_rows):
             row['errors'].append('invalid intent')
     row['unfinished'] = bool(changed or row['ahead'] or row['errors'] or row['ahead'] is None)
     row['stage'] = ('conflict' if conflict else 'started (tracking changes only)' if changed and not implementation_changes and row['ticket'] else 'modified' if changed else
-                    'unmerged commits' if row['ahead'] else 'no local delta' if row['ahead'] == 0 else 'unknown')
+                    'ancestry delta (publication unknown)' if row['ahead'] else 'no local delta' if row['ahead'] == 0 else 'unknown')
     row['readiness'] = ('inspect errors' if row['errors'] else 'resolve conflict' if conflict else
                         'agent present' if row['agent_pids'] else 'review ownership' if row['unfinished'] else 'no local delta')
     row['command'] = 'cd -- ' + shlex.quote(str(path))
@@ -326,7 +427,8 @@ def scan(root, depth=2, sort='backlog', priorities=None):
                 # No known remote base: leave ahead/behind unknown, including primary.
                 base = ''
             groups.append((primary, records, base.strip()))
-        futures = [(primary, base, [pool.submit(inspect_checkout, r, primary, base, agent_rows) for r in records])
+        assignments = checkout_agents([r['path'] for _, records, _ in groups for r in records], agent_rows)
+        futures = [(primary, base, [pool.submit(inspect_checkout, r, primary, base, agent_rows, assignments) for r in records])
                    for primary, records, base in groups]
         for primary, base, pending in futures:
             rows = [f.result() for f in pending]
@@ -334,13 +436,19 @@ def scan(root, depth=2, sort='backlog', priorities=None):
             for row in rows:
                 if row['path'] == str(primary) or row['unfinished']:
                     tickets, files, failures = planfile(Path(row['path']))
+                    for ticket in tickets:
+                        relative = str(Path(ticket['source']).relative_to(row['path']))
+                        ticket['source_changed'] = any(relative == name or (
+                            name.endswith('/') and relative.startswith(name)) for name in row['changed_paths'])
                     items.extend(tickets); sources.extend(files); ticket_errors.extend(failures)
-            summary = summarize_tickets(items, priority_filter)
+            canonical, stale = reconcile_ticket_sources(items, primary)
+            summary = summarize_tickets(canonical, priority_filter)
+            summary['stale_copies'] = stale
             summary['available'] = bool(sources)
             summary['complete'] = (bool(sources) and not ticket_errors and
                                    not summary['unknown_statuses'] and
                                    not summary['conflicting_statuses'] and
-                                   not summary['priority_conflicts'])
+                                   not summary['priority_conflicts'] and not summary['identity_collisions'])
             project = {'path': str(primary), 'checkouts': rows, 'planfile': summary,
                        'planfile_sources': sources, 'errors': ticket_errors,
                        'priority_filter': priority_filter,
@@ -374,7 +482,7 @@ def scan(root, depth=2, sort='backlog', priorities=None):
 
 def markdown(data, limit=12, all_projects=False):
     lines = ['# MONAG — wznowienie pracy', '',
-             f"Projekty: **{data['project_count']}**; z lokalnymi zmianami/niewłączonymi commitami: "
+             f"Projekty: **{data['project_count']}**; z lokalnymi zmianami/różnicami historii Git: "
              f"**{data['unfinished_projects']}**; do sprawdzenia (także brak danych): "
              f"**{data['projects_needing_review']}**; skan: {data['duration_seconds']} s.", '',
              'Brak procesu po restarcie nie zwalnia lease. Lista jest wskazówką do kontroli, nie zgodą na przejęcie.', '',
@@ -385,12 +493,14 @@ def markdown(data, limit=12, all_projects=False):
         lines.insert(5, 'Filtr priorytetów Planfile: **' + ', '.join(priority_filter) + '** (pozostałe tickety pominięte).')
     selected = [p for p in data['projects'] if all_projects or p['unfinished_checkouts'] or p['planfile']['remaining']]
     lines.append(table(['Projekt', 'Worktree do sprawdzenia', 'Zmiany', 'Planfile pozostało',
-                        'Najwyższy priorytet', 'Konflikty statusów', 'Konflikty priorytetów'],
+                        'Najwyższy priorytet', 'Konflikty statusów', 'Konflikty priorytetów', 'Kolizje ID', 'Stare kopie'],
                        [[p['path'], p['unfinished_checkouts'], p['changed_files'],
                          (str(p['planfile']['remaining']) + ('' if p['planfile']['complete'] else ' (niepełne)')) if p['planfile']['available'] else 'brak danych',
                          p['planfile'].get('highest_priority', 'unknown'),
                          p['planfile']['conflicting_statuses'],
-                         p['planfile'].get('priority_conflicts', 0)] for p in selected[:limit]]))
+                         p['planfile'].get('priority_conflicts', 0),
+                         len(p['planfile'].get('identity_collisions', [])),
+                         len(p['planfile'].get('stale_copies', []))] for p in selected[:limit]]))
     ticket_rows = [[p['path'], ticket['id'], ticket['priority'], ticket['status'], ticket['title']]
                    for p in selected[:limit]
                    for ticket in p['planfile'].get('remaining_tickets', [])]
@@ -413,7 +523,8 @@ def markdown(data, limit=12, all_projects=False):
                   'Etap opisuje Git, nie procent ukończenia. Planfile: bieżący sprint/backlog; '
                   'brak danych nie oznacza zera ticketów. Priorytet Planfile: critical > high > medium > normal > low; '
                   'unknown oznacza brak lub nieznaną wartość. Klasyfikacja Wellmanifest P0–P3 nie jest mapowana. '
-                  'Dane GitHub wymagają osobnej weryfikacji.',
+                  'Dane GitHub wymagają osobnej weryfikacji. Różnica historii Git nie dowodzi braku scalenia PR; '
+                  'wiek commitu nie określa świeżości danych zdalnych.',
                   '', 'Pełne dane i błędy: `monag --json resume`. '
                   'Ranking priorytetów: `monag resume --sort priority`; ranking zmian: `monag resume --sort changes`.'])
     return '\n'.join(lines) + '\n'

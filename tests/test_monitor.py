@@ -82,6 +82,23 @@ class MonitorTests(unittest.TestCase):
         self.assertNotIn(self.root, paths)
         self.assertTrue(errors)
 
+    def test_unborn_repository_preserves_branch_and_changes_without_git_errors(self):
+        repo = self.root / 'empty'
+        repo.mkdir()
+        self.git(repo, 'init', '-b', 'main')
+        (repo / 'new.txt').write_text('new')
+        row = inspect_repo(repo, '2000-01-01')
+        self.assertEqual(row['head_state'], 'unborn')
+        self.assertEqual(row['branch'], 'main')
+        self.assertEqual(row['commits'], [])
+        self.assertEqual(row['errors'], [])
+        self.assertEqual([r['path'] for r in row['files']], ['new.txt'])
+
+    def test_command_failure_preserves_safe_operation_context(self):
+        from monag.monitor import command
+        _, error = command(['git', 'status', '--short'], self.root)
+        self.assertIn('git status failed', error)
+
     def test_status_rename_and_deleted_file(self):
         files = parse_status('R  target\0source\0 D deleted\0', self.root)
         self.assertEqual(files[0]['previous_path'], 'source')
@@ -137,6 +154,17 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(counts[str(wt)], 2)
         self.assertIn('MULTIPLE AGENTS', render(data))
         self.assertEqual(render(data).count('initial'), 1)
+
+    def test_report_deduplicates_identical_gaps_but_keeps_distinct_operations(self):
+        repo = self.repo()
+        data = snapshot(self.root, self.root / 'state')
+        error = f'{repo}: git log failed (exit 128)'
+        data['errors'] = [error, error, f'{repo}: git status failed (exit 128)']
+        data['repositories'][0]['errors'] = ['git log failed (exit 128)']
+        from monag.presentation import markdown
+        rendered = markdown(data)
+        self.assertEqual(rendered.count('git log failed'), 1)
+        self.assertEqual(rendered.count('git status failed'), 1)
 
     def test_watch_refresh_reuses_recent_scan_and_inspects_new_agent_checkout(self):
         repo = self.repo()

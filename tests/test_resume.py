@@ -57,6 +57,94 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(result['conflicting_statuses'], 1)
         self.assertEqual(result['unknown_statuses'], 1)
 
+    def test_squash_merged_branch_is_only_an_ancestry_candidate(self):
+        linked = self.repo / '.worktrees/ticket-020--squash'
+        self.git('worktree', 'add', '-b', 'ticket/020-squash', str(linked))
+        (linked / 'feature').write_text('delivered')
+        self.git('add', 'feature', cwd=linked)
+        self.git('commit', '-m', 'feature', cwd=linked)
+        self.git('merge', '--squash', 'ticket/020-squash')
+        self.git('commit', '-m', 'squashed delivery')
+        self.git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+        row = next(r for r in self.scan()['projects'][0]['checkouts'] if r['path'] == str(linked))
+        self.assertGreater(row['ahead'], 0)
+        self.assertEqual(row['stage'], 'ancestry delta (publication unknown)')
+        self.assertFalse(row['publication_verified'])
+
+    def test_canonical_history_overrides_old_primary_and_worktree_copies(self):
+        linked = self.repo / '.worktrees/ticket-021--old'
+        sprint = self.repo / '.planfile/sprints'
+        sprint.mkdir(parents=True)
+        (sprint / 'current.yaml').write_text('sprint:\n  tickets:\n    A:\n      status: open\n')
+        self.git('add', '.planfile')
+        self.git('commit', '-m', 'original ticket snapshot')
+        self.git('worktree', 'add', '-b', 'ticket/021-old', str(linked))
+        (linked / '.planfile/sprints/backlog.yaml').write_text('sprint:\n  tickets:\n    NEW:\n      status: open\n')
+        (self.repo / '.planfile/sprints/history-2026-09-19.yaml').write_text(
+            'sprint:\n  tickets:\n    A:\n      status: done\n    BLOCKED:\n      status: blocked\n')
+        index = self.repo / '.planfile/index'
+        index.mkdir()
+        (index / 'history-locations.yaml').write_text(
+            'tickets:\n  A: history-2026-09-19\n  BLOCKED: history-2026-09-19\n')
+        result = self.scan()['projects'][0]['planfile']
+        self.assertEqual(result['remaining_ids'], ['BLOCKED', 'NEW'])
+        self.assertEqual(result['conflicting_statuses'], 0)
+        self.assertEqual(len(result['stale_copies']), 2)
+
+    def test_locally_changed_worktree_record_is_not_dismissed_as_stale(self):
+        items = [dict(id='A', status='done', checkout=str(self.repo), source='current.yaml'),
+                 dict(id='A', status='open', checkout='other', source='current.yaml', source_changed=True)]
+        selected, stale = resume.reconcile_ticket_sources(items, self.repo)
+        self.assertEqual(resume.summarize_tickets(selected)['conflicting_statuses'], 1)
+        self.assertEqual(stale, [])
+
+    def test_distinct_external_bindings_are_not_hidden_by_source_precedence(self):
+        items = [dict(id='A', status='done', title='First', github='5', checkout=str(self.repo), source='current.yaml'),
+                 dict(id='A', status='open', title='Second', github='7', checkout='other', source='backlog.yaml')]
+        selected, stale = resume.reconcile_ticket_sources(items, self.repo)
+        result = resume.summarize_tickets(selected)
+        self.assertEqual(len(result['identity_collisions']), 1)
+        self.assertEqual(result['identity_collisions'][0]['github_bindings'], ['5', '7'])
+        self.assertIn('identity collision', result['remaining_tickets'][0]['title'])
+        self.assertEqual(len(result['identity_collisions'][0]['records']), 2)
+        self.assertEqual(stale, [])
+
+    def test_equivalent_external_binding_shapes_do_not_collide(self):
+        rows = [dict(id='A', status='open', github='5', github_binding=b) for b in
+                ({}, {'key': 'org/repo#5'}, {'url': 'https://github.com/org/repo/issues/5'})]
+        self.assertEqual(resume.summarize_tickets(rows)['identity_collisions'], [])
+
+    def test_missing_canonical_history_is_incomplete(self):
+        directory = self.repo / '.planfile/index'
+        directory.mkdir(parents=True)
+        (directory / 'history-locations.yaml').write_text('tickets:\n  A: history-missing\n')
+        (self.repo / 'planfile.yaml').write_text('tickets:\n  A:\n    status: open\n')
+        result = self.scan()['projects'][0]
+        self.assertFalse(result['planfile']['complete'])
+        self.assertTrue(any('canonical history owner unavailable' in e for e in result['errors']))
+
+    def test_prefixed_ticket_and_path_disagreement(self):
+        self.assertEqual(resume.ticket_identity('ticket/PLF-084-feature'), 'ticket-PLF-084')
+        self.assertEqual(resume.ticket_identity('ticket-115--feature'), 'ticket-115')
+        self.assertIsNone(resume.ticket_identity('not-ticket/003-feature'))
+        linked = self.repo / '.worktrees/ticket-115--feature'
+        self.git('worktree', 'add', '-b', 'ticket/096-feature', str(linked))
+        row = next(r for r in self.scan()['projects'][0]['checkouts'] if r['path'] == str(linked))
+        self.assertEqual(row['ticket'], 'ticket-096')
+        self.assertTrue(row['ticket_identity_conflict'])
+        self.assertEqual(row['readiness'], 'inspect errors')
+
+    def test_descendant_agent_association_uses_deepest_checkout(self):
+        linked = self.repo / '.worktrees/ticket-022--child'
+        self.git('worktree', 'add', '-b', 'ticket/022-child', str(linked))
+        agent = dict(pid=123, cwd=str(self.root), working_directories=[str(self.root), str(linked)])
+        with patch('monag.resume.processes', return_value=([agent], 0)):
+            rows = resume.scan(self.root)['projects'][0]['checkouts']
+        self.assertEqual(next(r for r in rows if r['path'] == str(self.repo))['agent_pids'], [])
+        row = next(r for r in rows if r['path'] == str(linked))
+        self.assertEqual(row['agent_pids'], [123])
+        self.assertEqual(row['readiness'], 'agent present')
+
     def test_planfile_priorities_are_preserved_and_ranked(self):
         sprint = self.repo / '.planfile/sprints'
         sprint.mkdir(parents=True)
