@@ -53,6 +53,22 @@ def test_symlink_is_not_followed(tmp_path):
     assert governance.scan(tmp_path, depth=5)['repository_count'] == 1
 
 
+@pytest.mark.parametrize('name, payload', [
+    ('standard-adoption.json', {'adoptions': [{'id': 'external-pack'}]}),
+    ('manifest.lock.json', {'standard': {'id': 'external-pack', 'sourceRevision': 'a' * 40}}),
+])
+def test_symlinked_metadata_is_not_trusted(tmp_path, name, payload):
+    root = repository(tmp_path / 'repo')
+    target = tmp_path / 'outside.json'
+    target.write_text(json.dumps(payload))
+    (root / '.governance' / name).symlink_to(target)
+
+    result = governance.scan(tmp_path, depth=1)
+
+    assert result['repositories'][0]['standards'] == []
+    assert any('symlink metadata is not allowed' in error for error in result['errors'])
+
+
 def test_conflicting_lock_pin_is_preserved(tmp_path):
     repository(tmp_path, {'adoptions': [{'id': 'pack', 'revision': 'a' * 40}]},
                {'standard': {'id': 'pack', 'sourceRevision': 'b' * 40}})

@@ -10,6 +10,8 @@ _SKIP_DIRS = {'.git', '.worktrees', '.venv', 'node_modules', '__pycache__'}
 
 def _read_object(path: Path):
     try:
+        if path.is_symlink():
+            return None, f'{path}: symlink metadata is not allowed'
         value = json.loads(path.read_text(encoding='utf-8'))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         return None, f'{path}: {type(exc).__name__}: {exc}'
