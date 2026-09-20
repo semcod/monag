@@ -81,6 +81,35 @@ def test_collect_captures_errors_gracefully(tmp_path):
     assert any('RuntimeError' in e for e in data['errors'])
 
 
+def test_collect_standards_and_formats_workspace_drift(tmp_path):
+    for name, revision in [('alpha', 'a' * 40), ('beta', 'b' * 40)]:
+        governance = tmp_path / name / '.governance'
+        governance.mkdir(parents=True)
+        (tmp_path / name / '.git').mkdir()
+        (governance / 'standard-adoption.json').write_text(json.dumps({
+            'schema': 'wellmanifest.standard-adoption/v1', 'mode': 'enforce',
+            'profile': 'baseline', 'repositoryRole': 'service', 'adoptions': [{
+                'id': 'wellmanifest/new-project', 'version': '1.0', 'revision': revision,
+                'model': 'protected-conformance', 'level': 'S4', 'artifacts': [], 'evidence': [],
+            }],
+        }))
+    (tmp_path / 'missing' / '.git').mkdir(parents=True)
+    malformed = tmp_path / 'malformed' / '.governance'
+    malformed.mkdir(parents=True)
+    (tmp_path / 'malformed' / '.git').mkdir()
+    (malformed / 'standard-adoption.json').write_text('{not json')
+    data = report.collect(tmp_path, depth=2, sections=['standards'])
+    standards = data['sections']['standards']
+    assert standards['repository_count'] == 4
+    assert standards['adoption_manifest_count'] == 2
+    assert any('JSONDecodeError' in error for error in standards['errors'])
+    assert any(repo['mode'] == 'missing' for repo in standards['repositories'])
+    assert standards['drift'] == [{'id': 'wellmanifest/new-project', 'revisions': ['a' * 40, 'b' * 40]}]
+    rendered = report.format_section_standards(standards)
+    assert 'Workspace-local pin disagreement' in rendered
+    assert 'enforce' in rendered
+
+
 # -- markdown -----------------------------------------------------------
 
 def test_markdown_output_has_sections():
@@ -431,6 +460,23 @@ def test_run_daemon_dynamic_config(tmp_path):
         assert results[0]['ok'] is True
         mock_send.assert_called_once()
         assert mock_send.call_args[0][0] == ['dyn@dev.local']
+
+
+def test_standards_displays_pins_and_escapes_untrusted_observations():
+    text = report.format_section_standards({
+        'repositories': [{'name': 'repo', 'standards': [{
+            'id': 'pack', 'level': 'S3', 'version': '1.2',
+            'revision': 'a' * 40, 'source': 'lock',
+        }]}],
+        'drift': [{'id': '<script>', 'revisions': ['<img>', 'second']}],
+        'errors': ['<script>bad</script>'],
+    })
+    assert 'a' * 40 in text
+    assert 'source=lock' in text
+    assert 'S3' in text
+    assert '<script>' not in text
+    assert '<img>' not in text
+    assert '&lt;script&gt;' in text
 
 
 def test_markdown_overview_table_with_prs_and_wts():

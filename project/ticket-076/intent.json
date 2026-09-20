@@ -1,0 +1,65 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-076",
+  "summary": "Scan Wellmanifest standard adoptions in workspace reports",
+  "workstream": "application",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-076/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/governance.py",
+    "src/monag/report.py",
+    "tests/test_governance.py",
+    "tests/test_report.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "08215f3bbf3c29b2642c9f9acb9acf90fbec42af",
+    "targetBranch": "main",
+    "outcome": "Provide a read-only workspace standards scanner and report section.",
+    "nonGoals": [
+      "Do not claim release freshness without an authoritative source.",
+      "Do not modify status or export integration owned by a later slice."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 60,
+    "budgets": {
+      "maxImplementationFiles": 4,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 1,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Keep filesystem observation in a dedicated read-only module and reuse report section collection and presentation.",
+      "components": [
+        {"name": "governance scanner", "paths": ["src/monag/governance.py", "tests/test_governance.py"]},
+        {"name": "report", "paths": ["src/monag/report.py", "tests/test_report.py"]}
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": ["report section: standards"],
+      "dataChanges": [],
+      "ui": {"impact": "none", "states": [], "evidence": []},
+      "rollback": "Revert the protected delivery commit."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-03",
+        "commands": ["PYTHONPATH=src python -m pytest -q tests/test_governance.py tests/test_report.py", "./project/governance-check.sh"],
+        "evidence": "Focused report tests and governance gate pass."
+      }
+    ]
+  }
+}

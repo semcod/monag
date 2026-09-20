@@ -28,7 +28,7 @@ from . import presentation
 SCHEMA = 'monag.report/v1'
 
 SECTION_REGISTRY = (
-    'status', 'prs', 'audit', 'resume', 'export', 'advise',
+    'status', 'prs', 'audit', 'resume', 'export', 'advise', 'standards',
 )
 
 
@@ -184,6 +184,9 @@ def collect(root, depth=2, hours=24, sections=None, github=True,
                     kwargs['repos_with_worktrees'] = audit_sec.get('repos_with_worktrees')
                 data = advise.advise(root, depth=depth, issue_limit=issue_limit, **kwargs)
                 result['sections']['advise'] = data
+            elif section == 'standards':
+                from . import governance
+                result['sections']['standards'] = governance.scan(root, depth=depth)
         except Exception as exc:
             result['errors'].append(f'{section}: {type(exc).__name__}: {exc}')
     result['duration_seconds'] = round(time.monotonic() - started, 2)
@@ -293,6 +296,36 @@ def format_section_advise(data):
     return '\n'.join(lines)
 
 
+def format_section_standards(data):
+    """Render local Wellmanifest adoption observations without freshness claims."""
+    repos = data.get('repositories', [])
+    lines = [f"Repositories scanned: **{data.get('repository_count', len(repos))}** · "
+             f"Adoption manifests: **{data.get('adoption_manifest_count', 0)}** · "
+             f"Workspace pin disagreements: **{len(data.get('drift', []))}**"]
+    rows = []
+    for repo in repos:
+        packs = repo.get('standards', [])
+        declared = ', '.join(
+            f"{pack.get('id', '?')} ({pack.get('level') or '—'}; "
+            f"version={pack.get('version') or '—'}; revision={pack.get('revision') or '—'}; "
+            f"source={pack.get('source') or '—'})" for pack in packs
+        ) or '—'
+        rows.append([
+            repo.get('name', repo.get('path', '')), repo.get('mode', 'missing'),
+            repo.get('profile', '—'), declared,
+        ])
+    if rows:
+        lines.extend(['', presentation.table(['Repository', 'Mode', 'Profile', 'Declared packs'], rows)])
+    if data.get('drift'):
+        lines.extend(['', '**Workspace-local pin disagreement (not a release-freshness claim):**'])
+        for item in data['drift']:
+            lines.append(f"- {presentation.cell(item['id'])}: "
+                         f"{presentation.cell(', '.join(item['revisions']))}")
+    for error in data.get('errors', []):
+        lines.append(f"- Observation error: {presentation.cell(error)}")
+    return '\n'.join(lines)
+
+
 _SECTION_FORMATTERS = {
     'status': format_section_status,
     'prs': format_section_prs,
@@ -300,6 +333,7 @@ _SECTION_FORMATTERS = {
     'resume': format_section_resume,
     'export': format_section_export,
     'advise': format_section_advise,
+    'standards': format_section_standards,
 }
 
 _SECTION_TITLES = {
@@ -309,6 +343,7 @@ _SECTION_TITLES = {
     'resume': 'Planfile backlog and worktrees',
     'export': 'Candidate work items',
     'advise': 'Architectural Advisory & Task Guidance',
+    'standards': 'Wellmanifest standards adoption',
 }
 
 
@@ -575,4 +610,3 @@ def run_daemon(root, emails=None, interval=3600, depth=2, hours=24,
                 break
             stop_event.wait(min(current_interval, 5))
     return results
-
