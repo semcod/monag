@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 import sys
 
-from . import dsl
+from . import dsl, nl_contract
 
 MCP_PROTOCOL_VERSION = '2024-11-05'
 SERVER_NAME = 'monag-mcp'
@@ -120,7 +120,24 @@ TOOLS = [
     },
 ]
 
+TOOLS.extend([
+    {'name': 'execute_dsl', 'description': 'Execute one strictly validated MONAG OBSERVE statement.',
+     'inputSchema': {'type': 'object', 'required': ['dsl_command'],
+                     'properties': {'dsl_command': {'type': 'string'}}}},
+    {'name': 'nl_ask', 'description': 'Resolve Polish or English observation queries; LLM translation is optional.',
+     'inputSchema': {'type': 'object', 'required': ['query'], 'properties': {
+         'query': {'type': 'string'}, 'allow_llm_fallback': {'type': 'boolean', 'default': True},
+         'locale': {'type': 'string', 'enum': ['pl', 'en']}}}},
+    {'name': 'describe_grammar', 'description': 'Describe the pinned observation schema, domains and interfaces.',
+     'inputSchema': {'type': 'object', 'properties': {}}},
+])
+for tool in TOOLS:
+    tool['inputSchema']['additionalProperties'] = False
+    tool['annotations'] = {'readOnlyHint': True, 'destructiveHint': False}
+
+
 RESOURCES = [
+    {'uri': 'schema://current', 'name': 'Observation command JSON Schema', 'mimeType': 'application/json'},
     {'uri': 'monag://snapshot', 'name': 'Workspace Snapshot', 'mimeType': 'text/markdown'},
     {'uri': 'monag://prs', 'name': 'Pull Requests & Unpushed Branches', 'mimeType': 'text/markdown'},
     {'uri': 'monag://audit', 'name': 'Planfile / GitHub Coverage Audit', 'mimeType': 'text/markdown'},
@@ -130,78 +147,51 @@ RESOURCES = [
 ]
 
 
-def handle_tool_call(name, arguments, root, depth=2):
-    """Execute tool and return MCP formatted content array."""
-    arguments = arguments or {}
-
-    if name == 'monag_prs':
-        query = dsl.Query(
-            target='prs',
-            hours=float(arguments.get('hours', 24.0)),
-            state=arguments.get('state', 'all'),
-            unpushed_only=bool(arguments.get('unpushed_only', False)),
-        )
-        res = dsl.execute(query, root, depth=depth)
-        return [{'type': 'text', 'text': res['markdown']}]
-
-    elif name == 'monag_audit':
-        query = dsl.Query(
-            target='audit',
-            issue_limit=int(arguments.get('issue_limit', 200)),
-            worktrees_only=bool(arguments.get('worktrees_only', False)),
-            hours=float(arguments.get('hours', 24.0)),
-        )
-        res = dsl.execute(query, root, depth=depth)
-        return [{'type': 'text', 'text': res['markdown']}]
-
-    elif name == 'monag_status':
-        query = dsl.Query(
-            target='status',
-            hours=float(arguments.get('hours', 24.0)),
-            limit=int(arguments.get('limit', 20)),
-        )
-        res = dsl.execute(query, root, depth=depth)
-        return [{'type': 'text', 'text': res['markdown']}]
-
-    elif name == 'monag_resume':
-        query = dsl.Query(target='resume')
-        res = dsl.execute(query, root, depth=depth)
-        return [{'type': 'text', 'text': res['markdown']}]
-
-    elif name == 'monag_usage':
-        query = dsl.Query(target='usage')
-        res = dsl.execute(query, root, depth=depth)
-        return [{'type': 'text', 'text': res['markdown']}]
-
-    elif name == 'monag_catalog':
-        query = dsl.Query(target='catalog')
-        res = dsl.execute(query, root, depth=depth)
-        return [{'type': 'text', 'text': res['markdown']}]
-
-    elif name == 'monag_query':
-        from . import dsl_llm
-        q_str = arguments.get('query', '')
-        res = dsl_llm.execute(q_str, root, depth=depth)
-        if res.get('status') == 'error':
-            return [{'type': 'text', 'text': f"Error: {res.get('error')}"}]
-        return [{'type': 'text', 'text': res['markdown']}]
-
-    elif name == 'monag_advise':
-        from . import advise
-        data = advise.advise(root, depth=depth, limit=int(arguments.get('limit', 10)),
-                             radar=bool(arguments.get('radar', False)),
-                             tier=arguments.get('tier'))
-        if arguments.get('emit_planfile'):
-            payload = advise.export_planfile_tickets(data, tier=arguments.get('tier'))
-            return [{'type': 'text', 'text': json.dumps(payload, ensure_ascii=False, indent=2)}]
-        return [{'type': 'text', 'text': advise.markdown(data)}]
-
+def execute_tool(name, arguments, root, depth=2):
+    """Keep legacy text while returning the same machine result as CLI/REST."""
+    try:
+        tool = next((item for item in TOOLS if item['name'] == name), None)
+        if tool is None:
+            raise ValueError(f'Unknown tool: {name}')
+        nl_contract.validate(arguments, tool['inputSchema'])
+        if name == 'describe_grammar':
+            result = nl_contract.grammar()
+            return {'content': [{'type': 'text', 'text': json.dumps(result)}],
+                    'structuredContent': result, 'isError': False}
+        if name == 'execute_dsl':
+            result = nl_contract.execute(arguments['dsl_command'], root, direct=True, depth=depth)
+        elif name in {'nl_ask', 'monag_query'}:
+            result = nl_contract.execute(arguments['query'], root, depth=depth,
+                                         allow_llm_fallback=arguments.get('allow_llm_fallback', True),
+                                         locale=arguments.get('locale'))
+        else:
+            target = name.removeprefix('monag_')
+            values = dict(arguments)
+            if target == 'advise':
+                values.setdefault('limit', 10)
+            result = nl_contract.execute({'entity': target, 'operation': 'query',
+                                          'arguments': values}, root, direct=True, depth=depth)
+    except (ValueError, TypeError, OverflowError) as error:
+        result = nl_contract.envelope(success=False, status='VALIDATION_ERROR', error=error)
+    if isinstance(name, str) and name in {'execute_dsl', 'nl_ask'}:
+        text = json.dumps(result, ensure_ascii=False)
+    elif result['success']:
+        text = result['meta']['markdown']
     else:
-        raise ValueError(f'Unknown tool: {name}')
+        text = 'Error: ' + result['errors'][0]['message']
+    return {'content': [{'type': 'text', 'text': text}],
+            'structuredContent': result, 'isError': not result['success']}
+
+
+def handle_tool_call(name, arguments, root, depth=2):
+    """Compatibility helper for callers expecting just the text content array."""
+    return execute_tool(name, arguments, root, depth)['content']
 
 
 def read_resource(uri, root, depth=2):
     """Read resource content by URI and return markdown text."""
+    if uri == 'schema://current':
+        return json.dumps(nl_contract.grammar()['commandSchema'])
     target = uri.replace('monag://', '').strip('/')
     if target == 'snapshot':
         res = dsl.execute('OBSERVE status', root, depth=depth)
@@ -214,9 +204,7 @@ def read_resource(uri, root, depth=2):
     elif target == 'usage':
         res = dsl.execute('OBSERVE usage', root, depth=depth)
     elif target == 'advise':
-        from . import advise
-        data = advise.advise(root, depth=depth, limit=10)
-        return advise.markdown(data)
+        res = dsl.execute('OBSERVE advise LIMIT 10', root, depth=depth)
     else:
         raise ValueError(f'Unknown resource: {uri}')
     return res['markdown']
@@ -233,6 +221,9 @@ def process_message(msg, root, depth=2):
     msg_id = msg.get('id')
     method = msg.get('method')
     params = msg.get('params', {})
+
+    if not isinstance(params, dict):
+        return {'jsonrpc': '2.0', 'id': msg_id, 'error': {'code': -32602, 'message': 'params must be an object'}}
 
     if not method:
         return {'jsonrpc': '2.0', 'id': msg_id, 'error': {'code': -32600, 'message': 'Method required'}}
@@ -270,22 +261,8 @@ def process_message(msg, root, depth=2):
     if method == 'tools/call':
         tool_name = params.get('name')
         arguments = params.get('arguments', {})
-        try:
-            content = handle_tool_call(tool_name, arguments, root, depth=depth)
-            return {
-                'jsonrpc': '2.0',
-                'id': msg_id,
-                'result': {'content': content, 'isError': False},
-            }
-        except Exception as error:
-            return {
-                'jsonrpc': '2.0',
-                'id': msg_id,
-                'result': {
-                    'content': [{'type': 'text', 'text': f'Tool execution error: {error}'}],
-                    'isError': True,
-                },
-            }
+        return {'jsonrpc': '2.0', 'id': msg_id,
+                'result': execute_tool(tool_name, arguments, root, depth)}
 
     if method == 'resources/list':
         return {
@@ -302,7 +279,7 @@ def process_message(msg, root, depth=2):
                 'jsonrpc': '2.0',
                 'id': msg_id,
                 'result': {
-                    'contents': [{'uri': uri, 'mimeType': 'text/markdown', 'text': text}],
+                    'contents': [{'uri': uri, 'mimeType': 'application/json' if uri == 'schema://current' else 'text/markdown', 'text': text}],
                 },
             }
         except Exception as error:

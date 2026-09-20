@@ -1,0 +1,110 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-078",
+  "summary": "Conform MCP observation tools and shared CLI REST contract to NL-DSL-LLM",
+  "workstream": "application",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-078/**",
+    "src/monag/cli.py",
+    "src/monag/dsl.py",
+    "src/monag/dsl_llm.py",
+    "src/monag/mcp.py",
+    "src/monag/nl_contract.py",
+    "src/monag/panel.py",
+    "tests/test_nl_contract.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "fb5259da3fb739cb0d138bd9008d422b59232381",
+    "targetBranch": "main",
+    "outcome": "Expose standard MCP observation tools/resource, strict validated DSL execution and consistent structured results through MCP, CLI and REST; publish and deploy verified merged package",
+    "nonGoals": [
+      "No mutation command redesign or remote MCP registration",
+      "No edits to concurrent governance adoption or historical branches",
+      "No new runtime dependencies"
+    ],
+    "complexity": "L",
+    "estimatedMinutes": 75,
+    "budgets": {
+      "maxImplementationFiles": 9,
+      "maxAffectedComponents": 4,
+      "maxPublicInterfaceChanges": 3,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Share a closed JSON-schema observation profile, its small validator, the existing DSL executor and standard result envelope across adapters; preserve legacy monag_* text alongside machine-readable results",
+      "components": [
+        {
+          "name": "observation-contract",
+          "paths": [
+            "src/monag/dsl.py",
+            "src/monag/dsl_llm.py",
+            "src/monag/nl_contract.py"
+          ]
+        },
+        {
+          "name": "mcp",
+          "paths": [
+            "src/monag/mcp.py"
+          ]
+        },
+        {
+          "name": "cli-rest",
+          "paths": [
+            "src/monag/cli.py",
+            "src/monag/panel.py"
+          ]
+        },
+        {
+          "name": "conformance",
+          "paths": [
+            "tests/test_nl_contract.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "MCP standard tools and schema resource",
+        "CLI dsl and structured ask",
+        "REST versioned observation routes"
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the protected merge; switch installed launcher back to its recorded previous runtime"
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python -m pytest -q tests/test_nl_contract.py tests/test_mcp.py tests/test_dsl.py tests/test_dsl_llm.py"
+        ],
+        "evidence": "Strict invalid-input rejection, real stdio/HTTP/CLI parity, provider fallback and legacy tool compatibility"
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "python -m pytest -q",
+          "./project/governance-check.sh --actor agent"
+        ],
+        "evidence": "Full tests and protected exact-head checks pass; installed merged MCP handshake/tool call verified"
+      }
+    ]
+  }
+}

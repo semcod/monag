@@ -11,7 +11,11 @@ requires-python = ">=3.10"
 license = "Apache-2.0"
 authors = [{name = "semcod"}, {name = "Tom Softreck",email = "tom@sapletta.com"}]
 classifiers = ["Environment :: Console", "Operating System :: POSIX :: Linux", "Programming Language :: Python :: 3"]
-dependencies = ["rich>=14,<16", "pyyaml>=6,<7"]
+dependencies = [
+    "rich>=14,<16",
+    "pyyaml>=6,<7",
+    "subactor-procache @ git+https://github.com/subactor/procache.git@f1548ef488c133617b181005e8fd083eba2cc84b",
+]
 
 [project.optional-dependencies]
 dev = ["build>=1,<2", "twine>=6,<7", "setuptools>=77.0.3",
@@ -27,13 +31,13 @@ monag = "monag.cli:main"
 where = ["src"]
 
 [tool.wellmanifest]
-standard = "0.20.31"
-revision = "2b016654cff1a1ccef2c0d6126a9c2550ae6b37a"
+standard = "0.20.32"
+revision = "b6ba9c21a65a6a5648ecf904b64c3b75295e136f"
 gate = "project/governance-check.sh"
 
 [tool.pytest.ini_options]
 addopts = "-p wellmanifest_governance"
-pythonpath = ["src", "tests"]
+pythonpath = [".", "src", "tests"]
 
 [tool.costs]
 # AI Cost tracking configuration

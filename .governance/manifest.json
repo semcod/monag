@@ -15,24 +15,12 @@
   "coordination": {
     "integration": {
       "requiredForPaths": [
-        ".governance/manifest.base.json",
-        ".governance/manifest.json",
-        ".governance/manifest.lock.json",
-        ".governance/package-manifest.json",
-        ".governance/required-checks.json",
-        ".governance/ticket-allocation.json",
-        ".subactor/manifest.json",
-        "AGENTS.md",
-        "package.json",
-        "pyproject.toml",
-        "go.mod",
-        "Cargo.toml",
-        "pom.xml",
         "operations/**",
         "events/**",
         "error/**",
         "models/**",
-        "proto/**"
+        "proto/**",
+        ".planfile/**"
       ],
       "workstream": "integration"
     },
@@ -52,9 +40,17 @@
       },
       "governance": {
         "ownedPaths": [
+          ".aider.conf.yml",
+          ".cursor/rules/**",
+          ".githooks/**",
+          ".github/copilot-instructions.md",
+          ".github/workflows/new-project-governance.yml",
+          ".gitignore",
           ".governance/**",
           ".subactor/**",
           "AGENTS.md",
+          "CLAUDE.md",
+          "GEMINI.md",
           "README.md",
           "TODO.md",
           "CHANGELOG.md",
@@ -63,7 +59,11 @@
           "project.sh",
           "project.bat",
           "project/**",
-          "scripts/runtime.sh"
+          "scripts/runtime.sh",
+          "scripts/install-agent-hosts.sh",
+          "wellmanifest_governance.py",
+          "worktree-guard.yaml",
+          "pyproject.toml"
         ]
       },
       "infrastructure": {
@@ -77,42 +77,17 @@
       },
       "integration": {
         "ownedPaths": [
-          ".governance/manifest.base.json",
-          ".governance/manifest.json",
-          ".governance/manifest.lock.json",
-          ".governance/package-manifest.json",
-          ".governance/required-checks.json",
-          ".governance/ticket-allocation.json",
-          ".governance/ticket-activity.override.json",
-          ".governance/docs.json",
-          ".governance/managed-copies.json",
-          ".subactor/manifest.json",
-          "AGENTS.md",
           ".planfile/**",
           "VERSION",
-          "package.json",
-          "pyproject.toml",
-          "go.mod",
-          "Cargo.toml",
-          "pom.xml",
           "docs/**",
           "operations/**",
           "events/**",
           "error/**",
           "models/**",
           "proto/**",
-          "src/monag/**",
-          "project.sh",
-          "project.bat",
-          "tests/**",
           "Makefile",
           "MANIFEST.in",
-          "LICENSE",
-          "README.md",
-          "goal.yaml",
-          "CHANGELOG.md",
-          "scripts/**",
-          "wellmanifest_governance.py"
+          "LICENSE"
         ]
       },
       "interfaces": {
@@ -224,7 +199,7 @@
   ],
   "standard": {
     "id": "wellmanifest/new-project",
-    "version": "0.20.31"
+    "version": "0.20.32"
   },
   "ticket": {
     "activeStatuses": [

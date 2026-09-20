@@ -383,6 +383,11 @@ def make_handler(state):
                 self._send(json.dumps({'status': 'ok', 'updated': updated, 'config': cfg}, ensure_ascii=False).encode(),
                            'application/json; charset=utf-8')
                 return
+            if parsed.path == '/api/v1/schema':
+                from . import nl_contract
+                self._send(json.dumps(nl_contract.grammar()).encode(),
+                           'application/json; charset=utf-8')
+                return
             if parsed.path in {'/api/query', '/api/query.json'}:
                 params = parse_qs(parsed.query)
                 q = (params.get('q') or params.get('query') or params.get('nl') or [''])[0]
@@ -441,6 +446,30 @@ def make_handler(state):
                     report_mod.save_config(state.state_dir, cfg)
                 self._send(json.dumps({'status': 'ok', 'updated': updated, 'config': cfg}, ensure_ascii=False).encode(),
                            'application/json; charset=utf-8')
+                return
+            if parsed.path in {'/api/v1/query', '/api/v1/dsl'}:
+                from . import nl_contract
+                try:
+                    length = int(self.headers.get('Content-Length', 0))
+                    if not 0 < length <= 65536:
+                        raise ValueError('JSON request size must be 1..65536 bytes')
+                    body = json.loads(self.rfile.read(length))
+                    if not isinstance(body, dict):
+                        raise ValueError('JSON body must be an object')
+                    direct = parsed.path.endswith('/dsl')
+                    allowed = {'dsl_command'} if direct else {'query', 'locale', 'allow_llm_fallback'}
+                    if set(body) - allowed:
+                        raise ValueError('Unsupported request fields')
+                    value = body.get('dsl_command' if direct else 'query')
+                    result = nl_contract.execute(value, state.root, direct=direct,
+                                                 allow_llm_fallback=body.get('allow_llm_fallback', True),
+                                                 locale=body.get('locale'), depth=state.depth,
+                                                 registry=state.registry)
+                except (ValueError, TypeError) as error:
+                    result = nl_contract.envelope(success=False, status='VALIDATION_ERROR', error=error)
+                code = 200 if result['success'] else (400 if result['status'] == 'VALIDATION_ERROR' else 500)
+                self._send(json.dumps(result, ensure_ascii=True).encode(),
+                           'application/json; charset=utf-8', status=code)
                 return
             if parsed.path in {'/api/query', '/api/query.json'}:
                 try:
