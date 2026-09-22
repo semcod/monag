@@ -70,4 +70,5 @@
 | **ticket-077** | [`README.md`](./ticket-077/README.md) | - | - | - | - | - |
 | **ticket-078** | [`README.md`](./ticket-078/README.md) | - | - | - | - | - |
 | **ticket-079** | [`README.md`](./ticket-079/README.md) | - | - | - | - | - |
+| **ticket-080** | [`README.md`](./ticket-080/README.md) | - | - | - | - | - |
 <!-- AUTO:TICKET_INDEX:END -->
