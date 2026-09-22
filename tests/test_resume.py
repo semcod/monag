@@ -18,6 +18,7 @@ class ResumeTests(unittest.TestCase):
         self.git('init', '-b', 'main')
         self.git('config', 'user.email', 'test@example.invalid')
         self.git('config', 'user.name', 'Test')
+        self.git('config', 'core.excludesfile', '')
         (self.repo / 'README').write_text('base')
         self.git('add', 'README')
         self.git('commit', '-m', 'base')

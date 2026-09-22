@@ -1,0 +1,27 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-079",
+  "summary": "cli-parser-subcommand-options-and-version",
+  "workstream": "application",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-079/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/cli.py",
+    "tests/test_startup.py",
+    "tests/test_resume.py",
+    "project/ticket-077/**"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}

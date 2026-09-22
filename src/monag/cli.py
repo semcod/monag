@@ -17,6 +17,7 @@ from .agents import aliases
 from . import history
 from .doctor import diagnose
 from . import presentation
+from . import __version__
 
 
 SHELL_COMMANDS = {
@@ -176,7 +177,8 @@ def run_task(args):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Monitor local agents and Git workspace activity (Linux). No command: interactive shell in a terminal, otherwise one snapshot.')
+    parser = argparse.ArgumentParser(prog='monag', description='Monitor local agents and Git workspace activity (Linux). No command: interactive shell in a terminal, otherwise one snapshot.')
+    parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
     parser.set_defaults(interval=5, no_record=False, retention_days=7)
     parser.add_argument('--root', type=Path, default=Path.home() / 'github')
     parser.add_argument('--state-dir', type=Path, default=Path(os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state'))) / 'monag')
@@ -195,17 +197,27 @@ def main(argv=None):
     formats.add_argument('--markdown', dest='output', action='store_const', const='markdown', help='export raw Markdown with tables and a text diagram')
     formats.add_argument('--plain', dest='output', action='store_const', const='plain', help='plain text without terminal formatting')
     parser.add_argument('--view', choices=['all', 'agents', 'projects', 'tree', 'history'], default='all', help='section shown in terminal and Markdown reports')
+
+    common_sub_parser = argparse.ArgumentParser(add_help=False)
+    common_sub_parser.add_argument('--root', type=Path, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    common_sub_parser.add_argument('--state-dir', type=Path, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    common_sub_parser.add_argument('--depth', type=int, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    common_sub_parser.add_argument('--format', dest='output', choices=['auto', 'terminal', 'markdown', 'plain', 'json'], default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    common_sub_parser.add_argument('--json', dest='output', action='store_const', const='json', default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    common_sub_parser.add_argument('--markdown', dest='output', action='store_const', const='markdown', default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    common_sub_parser.add_argument('--plain', dest='output', action='store_const', const='plain', default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+
     sub = parser.add_subparsers(dest='mode')
-    status = sub.add_parser('status', help='one snapshot and exit')
+    status = sub.add_parser('status', parents=[common_sub_parser], help='one snapshot and exit')
     status.add_argument('--record', action='store_true', help='save changes to local history')
-    sub.add_parser('doctor', help='diagnose dependencies and process visibility')
-    usage_parser = sub.add_parser('usage', help='read-only table of agent process usage '
+    sub.add_parser('doctor', parents=[common_sub_parser], help='diagnose dependencies and process visibility')
+    usage_parser = sub.add_parser('usage', parents=[common_sub_parser], help='read-only table of agent process usage '
                                               'and api-budget account ledgers')
     usage_parser.add_argument('--ledger', action='append', default=[], metavar='SOURCE',
                               help='api-budget ledger source; repeatable: a state file, a directory '
                                    'of api-budget-*.json, docker:CONTAINER or docker:auto '
                                    '(coordinator containers on this host)')
-    open_parser = sub.add_parser('open', help='open one numbered `usage` row; append an action '
+    open_parser = sub.add_parser('open', parents=[common_sub_parser], help='open one numbered `usage` row; append an action '
                                             'letter (t/b/d/o/p) or use --browser')
     open_parser.add_argument('target', nargs='?',
                              help='row number from `usage`, or pid:NNNN; an action '
@@ -218,14 +230,14 @@ def main(argv=None):
                              help='use the web/desktop UI route instead of a terminal')
     open_parser.add_argument('--print', dest='print_only', action='store_true',
                              help='print the launch command without spawning anything')
-    resume_parser = sub.add_parser('resume', help='read-only restart inventory of worktrees and local Planfile backlog')
+    resume_parser = sub.add_parser('resume', parents=[common_sub_parser], help='read-only restart inventory of worktrees and local Planfile backlog')
     resume_parser.add_argument('--sort', choices=['backlog', 'priority', 'changes'], default='backlog',
                                help='project ranking (priority uses highest remaining Planfile priority)')
     resume_parser.add_argument('--priority', dest='priorities', action='append',
                                choices=['critical', 'high', 'medium', 'normal', 'low', 'unknown'],
                                help='show only tickets with this Planfile priority; repeat to select several')
     resume_parser.add_argument('--all-projects', action='store_true')
-    audit_parser = sub.add_parser('audit', help='read-only report of Planfile ticket coverage against GitHub Issues, '
+    audit_parser = sub.add_parser('audit', parents=[common_sub_parser], help='read-only report of Planfile ticket coverage against GitHub Issues, '
                                                 'for one repository or every repository under --root')
     audit_parser.add_argument('--issue-limit', type=int, default=200,
                               help='GitHub issues fetched per repository via gh (default: 200)')
@@ -240,7 +252,7 @@ def main(argv=None):
                                    'skip GitHub issue queries')
     audit_parser.add_argument('--worktrees-hours', type=float, default=10.0, metavar='HOURS',
                               help='time window in hours for worktree commit recency (default: 10)')
-    prs_parser = sub.add_parser('prs', aliases=['pr'],
+    prs_parser = sub.add_parser('prs', aliases=['pr'], parents=[common_sub_parser],
                                 help='read-only audit of GitHub Pull Requests and local branch merge status')
     prs_parser.add_argument('--hours', '--within', dest='hours', type=float, default=24.0, metavar='HOURS',
                             help='time window in hours for PR recency and activity filtering (default: 24)')
@@ -262,7 +274,7 @@ def main(argv=None):
                             help='bypass branch protection rules if permissions allow (default: True)')
     prs_parser.add_argument('--browser', action='store_true',
                             help='use Browser CDP instead of gh CLI')
-    merge_parser = sub.add_parser('merge', help='merge a GitHub Pull Request via gh or browser CDP')
+    merge_parser = sub.add_parser('merge', parents=[common_sub_parser], help='merge a GitHub Pull Request via gh or browser CDP')
     merge_parser.add_argument('target', nargs='?', default=None,
                              help='PR number, repo#number, or full GitHub PR URL')
     merge_parser.add_argument('--all', dest='merge_all', action='store_true',
@@ -273,15 +285,15 @@ def main(argv=None):
                              help='bypass rules if permissions allow')
     merge_parser.add_argument('--browser', action='store_true',
                              help='use browser CDP')
-    sub.add_parser('mcp', help='run Model Context Protocol (MCP) server over stdio for AI agents')
-    query_parser = sub.add_parser('query', aliases=['ask'],
+    sub.add_parser('mcp', parents=[common_sub_parser], help='run Model Context Protocol (MCP) server over stdio for AI agents')
+    query_parser = sub.add_parser('query', aliases=['ask'], parents=[common_sub_parser],
                                   help='execute a natural language query or OBSERVE DSL command')
     query_parser.add_argument('query', nargs='+', help='natural language query phrase or OBSERVE DSL command')
-    dsl_parser = sub.add_parser('dsl', help='execute one validated OBSERVE statement')
+    dsl_parser = sub.add_parser('dsl', parents=[common_sub_parser], help='execute one validated OBSERVE statement')
     dsl_parser.add_argument('query', nargs='+', help='canonical OBSERVE DSL')
-    sub.add_parser('catalog', help='read-only, local-only catalog of what each repository under --root '
+    sub.add_parser('catalog', parents=[common_sub_parser], help='read-only, local-only catalog of what each repository under --root '
                                    'declares itself to be (description, stack, entry points)')
-    export_parser = sub.add_parser('export', help='read-only staging list of candidate work items '
+    export_parser = sub.add_parser('export', parents=[common_sub_parser], help='read-only staging list of candidate work items '
                                                    '(untracked GitHub issues, undescribed repositories) '
                                                    'for human review; creates, imports or claims nothing')
     export_parser.add_argument('--issue-limit', type=int, default=200,
@@ -294,7 +306,7 @@ def main(argv=None):
                                help="add a candidate per repository where semcod/taskill's read-only "
                                     "'status' (never 'run') reports it would update README/CHANGELOG/"
                                     "TODO; a missing/failing taskill checks nothing, never assumes clean")
-    report_parser = sub.add_parser('report', help='workspace activity digest sent via email; '
+    report_parser = sub.add_parser('report', parents=[common_sub_parser], help='workspace activity digest sent via email; '
                                                    'collects data from status, prs, audit, resume '
                                                    'and export, then sends a Markdown/HTML email')
     report_parser.add_argument('--email', dest='report_email', action='append', default=[],
@@ -332,8 +344,9 @@ def main(argv=None):
                                help='seconds between reports in daemon mode (default: 3600 / 1 hour)')
     report_parser.add_argument('--issue-limit', type=int, default=200,
                                help='GitHub issues fetched per repository (default: 200)')
-    advise_parser = sub.add_parser('advise', help='architectural guidance and prioritized next tasks '
-                                                  'synthesized from candidate items and reflex patterns')
+    advise_parser = sub.add_parser('advise', parents=[common_sub_parser],
+                                   help='architectural guidance and prioritized next tasks '
+                                        'synthesized from candidate items and reflex patterns')
     advise_parser.add_argument('--limit', type=int, default=10,
                                help='maximum recommendations to display (default: 10)')
     advise_parser.add_argument('--radar', action='store_true',
@@ -355,7 +368,8 @@ def main(argv=None):
                                help='target sprint for --feed-planfile (default: current)')
     advise_parser.add_argument('--holistic', action='store_true',
                                help='run holistic multi-org algorithmic triage and guidance engine (algocode + collision detection)')
-    triage_parser = sub.add_parser('triage', help='holistic algorithmic multi-org workspace triage and guidance (algocode)')
+    triage_parser = sub.add_parser('triage', parents=[common_sub_parser],
+                                   help='holistic algorithmic multi-org workspace triage and guidance (algocode)')
     triage_parser.add_argument('--limit', type=int, default=15,
                                help='maximum guidance steps to display (default: 15)')
     triage_parser.add_argument('--emit-planfile', action='store_true',
@@ -364,13 +378,15 @@ def main(argv=None):
                                help='directly feed guidance steps into Planfile backlog/sprint')
     triage_parser.add_argument('--sprint', default='current',
                                help='target sprint for --feed-planfile (default: current)')
-    quality = sub.add_parser('quality', help='read-only semcod/regix quality gate for ONE repository '
-                                             '(--root must be a Git checkout, not a workspace); '
-                                             'costs roughly a minute per run, never a write command')
+    quality = sub.add_parser('quality', parents=[common_sub_parser],
+                             help='read-only semcod/regix quality gate for ONE repository '
+                                  '(--root must be a Git checkout, not a workspace); '
+                                  'costs roughly a minute per run, never a write command')
     quality.add_argument('--quality-timeout', dest='quality_timeout', type=float, default=180,
                          help='seconds to wait for regix gates (default: 180)')
-    panel = sub.add_parser('panel', help='serve a local-only HTTP dashboard (agents, repositories, '
-                                         'Planfile backlog, on-demand audit/catalog); Ctrl-C to stop')
+    panel = sub.add_parser('panel', parents=[common_sub_parser],
+                           help='serve a local-only HTTP dashboard (agents, repositories, '
+                                'Planfile backlog, on-demand audit/catalog); Ctrl-C to stop')
     panel.add_argument('--port', type=int, default=8090)
     panel.add_argument('--bind', default='127.0.0.1',
                        help='listen address (default: localhost only; widen only if you mean to)')
@@ -378,15 +394,15 @@ def main(argv=None):
                        help='background refresh seconds for the live snapshot/resume view (default: 30)')
     panel.add_argument('--port-attempts', type=int, default=20,
                        help='ports tried after --port before falling back to any free port (default: 20)')
-    timeline = sub.add_parser('history', help='read local recorded observations')
+    timeline = sub.add_parser('history', parents=[common_sub_parser], help='read local recorded observations')
     timeline.add_argument('--kind')
     timeline.add_argument('--search')
-    watch = sub.add_parser('watch', help='refresh until Ctrl-C (default in a terminal)')
+    watch = sub.add_parser('watch', parents=[common_sub_parser], help='refresh until Ctrl-C (default in a terminal)')
     watch.add_argument('--no-record', action='store_true', help='disable local history recording')
     watch.add_argument('--retention-days', type=int, default=7)
     watch.add_argument('--interval', type=float, default=5)
-    sub.add_parser('shell', help='interactive command shell (default in a terminal)')
-    run = sub.add_parser('run', help='wrap an agent command with an explicit task description')
+    sub.add_parser('shell', parents=[common_sub_parser], help='interactive command shell (default in a terminal)')
+    run = sub.add_parser('run', parents=[common_sub_parser], help='wrap an agent command with an explicit task description')
     run.add_argument('--agent-kind', default='reported', help='label for an otherwise unknown agent')
     run.add_argument('--task', required=True)
     run.add_argument('--issue')
