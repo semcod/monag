@@ -210,7 +210,8 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='mode')
     status = sub.add_parser('status', parents=[common_sub_parser], help='one snapshot and exit')
     status.add_argument('--record', action='store_true', help='save changes to local history')
-    sub.add_parser('doctor', parents=[common_sub_parser], help='diagnose dependencies and process visibility')
+    doctor_parser = sub.add_parser('doctor', parents=[common_sub_parser], help='diagnose dependencies, worktrees, and process visibility')
+    doctor_parser.add_argument('--fix', action='store_true', help='automatically prune orphaned worktrees, remove merged ticket branches, and run housekeeping')
     usage_parser = sub.add_parser('usage', parents=[common_sub_parser], help='read-only table of agent process usage '
                                               'and api-budget account ledgers')
     usage_parser.add_argument('--ledger', action='append', default=[], metavar='SOURCE',
@@ -456,7 +457,8 @@ def main(argv=None):
         if args.mode == 'watch' and not 1 <= args.retention_days <= 365:
             parser.error('retention-days must be between 1 and 365')
         if args.mode == 'doctor':
-            data = diagnose(args.root.expanduser().resolve())
+            fix = getattr(args, 'fix', False)
+            data = diagnose(args.root.expanduser().resolve(), fix=fix)
             if output_format in {'terminal', 'markdown'}:
                 display_report(presentation.doctor_markdown(data))
             else:

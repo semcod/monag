@@ -84,8 +84,16 @@ def history_markdown(events):
 
 
 def doctor_markdown(data):
-    return '# MONAG · Diagnostics\n\n' + table(['Check', 'Result'],
-        ((k, '; '.join(map(str, v)) if isinstance(v, list) else v) for k, v in data.items()))
+    rows = []
+    for k, v in data.items():
+        if isinstance(v, list):
+            val = '; '.join(map(str, v)) if v else '—'
+        elif isinstance(v, dict):
+            val = ', '.join(f'{dk}: {len(dv) if isinstance(dv, list) else dv}' for dk, dv in v.items()) if v else '—'
+        else:
+            val = v
+        rows.append((k, val))
+    return '# MONAG · Diagnostics\n\n' + table(['Check', 'Result'], rows)
 
 
 def cpu(agent):
