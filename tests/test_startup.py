@@ -65,3 +65,22 @@ class StartupTests(unittest.TestCase):
                 self.assertEqual(snapshots.call_count, 1)
                 records.assert_not_called()
                 sleep.assert_not_called()
+
+    def test_version_flag_prints_version_and_exits(self):
+        stream = StringIO()
+        with patch('sys.stdout', stream), self.assertRaises(SystemExit) as cm:
+            main(['--version'])
+        self.assertEqual(cm.exception.code, 0)
+        self.assertIn('monag', stream.getvalue())
+
+    def test_subcommand_accepts_common_options_after_command(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            stream = Output(True)
+            with patch('monag.cli.Path.home', return_value=base), \
+                 patch('sys.stdout', stream), \
+                 patch('monag.cli.snapshot', return_value=sample()) as snapshots, \
+                 patch('monag.cli.history.record'):
+                self.assertEqual(main(['status', '--root', str(base), '--json']), 0)
+            self.assertEqual(snapshots.call_count, 1)
+
