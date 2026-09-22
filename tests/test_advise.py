@@ -54,6 +54,19 @@ def test_synthesize_guidelines():
     assert any('cdp' in g.lower() or 'api' in g.lower() for g in guidelines['guardrails'])
 
 
+def test_synthesize_guidelines_handles_none_repo():
+    candidate_none_repo = {
+        'origin': 'backlog',
+        'repo': None,
+        'path': None,
+        'title': 'Item without repo',
+        'id': 'PLF-999',
+    }
+    guidelines = advise.synthesize_guidelines(candidate_none_repo, [])
+    assert 'PLF-999' in guidelines['satisfied_when']
+    assert isinstance(guidelines['guardrails'], list)
+
+
 def test_advise_ranking(tmp_path):
     mock_candidates = [
         {'origin': 'catalog-undescribed', 'path': '/repo/low', 'title': 'Undescribed repo', 'priority': 'low'},

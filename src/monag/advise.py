@@ -256,7 +256,7 @@ def synthesize_guidelines(candidate: dict[str, Any], matched_risks: list[str],
     origin = candidate.get('origin', '')
     title = candidate.get('title', '')
     summary = candidate.get('summary', candidate.get('description', ''))
-    repo = candidate.get('repo', candidate.get('path', ''))
+    repo = candidate.get('repo') or candidate.get('path') or ''
 
     # Determine base action and satisfied_when condition
     if origin == 'audit-untracked-issue':
@@ -291,7 +291,7 @@ def synthesize_guidelines(candidate: dict[str, Any], matched_risks: list[str],
         guardrails.append("Migracja wersji/pinów: sprawdź konsumentów downstream (np. onedev-agent) przed zmianą digestów.")
     if 'governance-friction' in matched_risks:
         guardrails.append("Upewnij się, że modyfikowane ścieżki mieszczą się w jednym workstreamie i dokładnie jednym tickecie.")
-    if 'contract-schema-drift' in matched_risks or 'autogrammar' in repo:
+    if 'contract-schema-drift' in matched_risks or (repo and 'autogrammar' in repo):
         guardrails.append("Weryfikuj zgodność intract / kontraktów semantycznych (autogrammar/intract / code2schema) oraz schematów.")
 
     return {
