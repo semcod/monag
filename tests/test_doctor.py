@@ -69,11 +69,29 @@ class DoctorTests(unittest.TestCase):
         diag_fixed = diagnose(repo, fix=True)
         self.assertTrue(diag_fixed['fix_mode'])
         self.assertEqual(diag_fixed['remediated_worktrees'], 1)
+        self.assertEqual(diag_fixed['remediated_branches'], 1)
         self.assertFalse(wt_dir.exists())
 
-        # Verify worktrees are clean after fix
+        # Verify worktrees and merged branches are clean after single-pass fix
         wts_after = audit_worktrees(repo)
         self.assertEqual(len([w for w in wts_after if not w.get('is_primary')]), 0)
+        self.assertEqual(len(audit_merged_branches(repo)), 0)
+
+    def test_discover_broken_gitdir_handling(self):
+        from monag.monitor import discover
+        # Create a broken linked worktree directory pointing to non-existent gitdir
+        broken_dir = self.root / 'broken-worktree'
+        broken_dir.mkdir(parents=True)
+        (broken_dir / '.git').write_text('gitdir: /nonexistent/path/worktrees/broken\n')
+
+        # Create a stray empty .git folder
+        stray_dir = self.root / 'stray-git'
+        (stray_dir / '.git').mkdir(parents=True)
+
+        found, errors = discover(self.root)
+        self.assertEqual(errors, [])
+        self.assertNotIn(broken_dir, found)
+        self.assertNotIn(stray_dir, found)
 
     def test_cli_doctor_fix_invocation(self):
         repo = self.make_repo('service-b')

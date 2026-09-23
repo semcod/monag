@@ -1,7 +1,7 @@
 # ticket-073 — Evidence-based triage recommendations
 
-- **Status**: IN_PROGRESS
-- **Workflow state**: EDIT
+- **Status**: DONE
+- **Workflow state**: DONE
 - **Owner**: codex:monag-triage-cache-20260919
 
 SESSION_EXECUTION_AUTHORIZATION: user asked to execute the screenshot recommendations. Correct confirmed recommendation defects before selecting work; Planfile PLF-026, GitHub Issue89.

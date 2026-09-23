@@ -179,8 +179,10 @@ def prune_and_remediate(repo: Path, stale_worktrees: list[dict], merged_branches
     # 3. Prune worktrees again after directory removal
     command(['git', '-C', str(repo), 'worktree', 'prune'])
 
-    # 4. Delete merged branches
-    for b in merged_branches:
+    # 4. Delete merged branches (including branches that were freed up by worktree removal)
+    active_merged = audit_merged_branches(repo)
+    candidates = list(dict.fromkeys(merged_branches + active_merged))
+    for b in candidates:
         chk, _ = command(['git', '-C', str(repo), 'branch', '--list', b])
         if chk.strip():
             command(['git', '-C', str(repo), 'branch', '-D' if b.startswith(('ticket/', 'ticket-')) else '-d', b])

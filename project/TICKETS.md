@@ -71,4 +71,6 @@
 | **ticket-078** | [`README.md`](./ticket-078/README.md) | - | - | - | - | - |
 | **ticket-079** | [`README.md`](./ticket-079/README.md) | - | - | - | - | - |
 | **ticket-080** | [`README.md`](./ticket-080/README.md) | - | - | - | - | - |
+| **ticket-081** | [`README.md`](./ticket-081/README.md) | - | - | - | - | - |
+| **ticket-082** | [`README.md`](./ticket-082/README.md) | - | - | - | - | - |
 <!-- AUTO:TICKET_INDEX:END -->

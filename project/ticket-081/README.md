@@ -2,8 +2,8 @@
 
 - **ID**: ticket-081
 - **Owner**: agent:antigravity
-- **Status**: IN_PROGRESS
-- **Workflow state**: VALIDATION
+- **Status**: DONE
+- **Workflow state**: DONE
 - **Created**: 2026-09-22
 
 ## Goal and scope

@@ -147,19 +147,37 @@ def discover(root, depth=2):
     found = set()
     errors = []
     def visit(path, level):
-        if (path / '.git').exists():
-            out, error = command(['git', 'worktree', 'list', '--porcelain', '-z'], path)
-            if error:
-                errors.append(f'{path}: {error}')
-            else:
-                found.add(path)
-            for part in out.split('\0'):
-                if part.startswith('worktree '):
-                    linked = Path(part[9:])
-                    if linked.is_dir() and inside(linked, root):
-                        found.add(linked)
-            if not error:
-                return
+        git_item = path / '.git'
+        if git_item.exists():
+            valid_git = True
+            if git_item.is_dir() and not (git_item / 'HEAD').exists():
+                valid_git = False
+            elif git_item.is_file():
+                try:
+                    content = git_item.read_text(encoding='utf-8', errors='replace').strip()
+                    if content.startswith('gitdir:'):
+                        raw_target = content[7:].strip()
+                        target_path = Path(raw_target)
+                        if not target_path.is_absolute():
+                            target_path = (path / target_path).resolve()
+                        if not target_path.exists():
+                            valid_git = False
+                except OSError:
+                    valid_git = False
+
+            if valid_git:
+                out, error = command(['git', 'worktree', 'list', '--porcelain', '-z'], path)
+                if error:
+                    errors.append(f'{path}: {error}')
+                else:
+                    found.add(path)
+                for part in out.split('\0'):
+                    if part.startswith('worktree '):
+                        linked = Path(part[9:])
+                        if linked.is_dir() and inside(linked, root):
+                            found.add(linked)
+                if not error:
+                    return
         if level >= depth:
             return
         try:
