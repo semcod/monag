@@ -89,9 +89,10 @@ class DoctorTests(unittest.TestCase):
         (stray_dir / '.git').mkdir(parents=True)
 
         found, errors = discover(self.root)
-        self.assertEqual(errors, [])
         self.assertNotIn(broken_dir, found)
         self.assertNotIn(stray_dir, found)
+        self.assertFalse(any(str(broken_dir) in e for e in errors))
+        self.assertTrue(any(str(stray_dir) in e for e in errors))
 
     def test_cli_doctor_fix_invocation(self):
         repo = self.make_repo('service-b')
