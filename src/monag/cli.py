@@ -409,6 +409,19 @@ def main(argv=None):
     run.add_argument('--issue')
     run.add_argument('--pr')
     run.add_argument('command', nargs=argparse.REMAINDER)
+    for sp in set(sub.choices.values()):
+        if '--limit' not in sp._option_string_actions:
+            sp.add_argument('--limit', type=int, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+        if '--hours' not in sp._option_string_actions:
+            sp.add_argument('--hours', type=float, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+        if '--github' not in sp._option_string_actions:
+            sp.add_argument('--github', action='store_true', default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+        if '--open-files' not in sp._option_string_actions:
+            sp.add_argument('--open-files', action='store_true', default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+        if '--agents-only' not in sp._option_string_actions:
+            sp.add_argument('--agents-only', action='store_true', default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+        if '--machine' not in sp._option_string_actions:
+            sp.add_argument('--machine', action='store_true', default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.mode is None:
         args.mode = ('shell' if sys.stdout.isatty() and args.output not in {'json', 'markdown'}

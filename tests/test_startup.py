@@ -84,3 +84,17 @@ class StartupTests(unittest.TestCase):
                 self.assertEqual(main(['status', '--root', str(base), '--json']), 0)
             self.assertEqual(snapshots.call_count, 1)
 
+    def test_subcommands_accept_limit_hours_and_common_flags_after_command(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            stream = Output(True)
+            with patch('monag.cli.Path.home', return_value=base), \
+                 patch('sys.stdout', stream), \
+                 patch('monag.resume.scan', return_value={'projects': [], 'errors': [], 'inaccessible_processes': 0}), \
+                 patch('monag.cli.history.read', return_value=[]), \
+                 patch('monag.prs.scan', return_value={'repositories': [], 'errors': []}):
+                self.assertEqual(main(['resume', '--limit', '20', '--root', str(base), '--json']), 0)
+                self.assertEqual(main(['history', '--hours', '10', '--limit', '5', '--json']), 0)
+                self.assertEqual(main(['prs', '--limit', '50', '--root', str(base), '--json']), 0)
+
+

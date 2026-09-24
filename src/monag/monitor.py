@@ -152,6 +152,7 @@ def discover(root, depth=2):
             valid_git = True
             if git_item.is_dir() and not (git_item / 'HEAD').exists():
                 valid_git = False
+                errors.append(f'{path}: invalid .git directory')
             elif git_item.is_file():
                 try:
                     content = git_item.read_text(encoding='utf-8', errors='replace').strip()
