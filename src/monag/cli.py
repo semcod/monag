@@ -397,7 +397,8 @@ def main(argv=None):
                                   'costs roughly a minute per run, never a write command')
     quality.add_argument('--quality-timeout', dest='quality_timeout', type=float, default=180,
                          help='seconds to wait for regix gates (default: 180)')
-    panel = sub.add_parser('panel', parents=[common_sub_parser],
+    panel = sub.add_parser('panel', aliases=['serve', 'dashboard', 'ui'],
+                           parents=[common_sub_parser],
                            help='serve a local-only HTTP dashboard (agents, repositories, '
                                 'Planfile backlog, on-demand audit/catalog); Ctrl-C to stop')
     panel.add_argument('--port', type=int, default=8090)
@@ -438,6 +439,8 @@ def main(argv=None):
     if args.mode is None:
         args.mode = ('shell' if sys.stdout.isatty() and args.output not in {'json', 'markdown'}
                      else 'status')
+    elif args.mode in ('serve', 'dashboard', 'ui'):
+        args.mode = 'panel'
     if sys.platform != 'linux':
         parser.error('process monitoring currently requires Linux /proc')
     if args.depth < 0 or args.limit < 1 or not 0 < args.hours < 876000:

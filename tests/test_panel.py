@@ -284,6 +284,18 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(data['action'], 'daily_automation_completed')
         self.assertTrue(data['koru_ready'])
 
+    def test_cli_serve_and_aliases(self):
+        from unittest.mock import patch
+        from monag.cli import main
+        for subcmd in ('serve', 'dashboard', 'ui', 'panel'):
+            with self.subTest(subcmd=subcmd), patch('monag.panel.serve') as mock_serve:
+                ret = main([subcmd, '--port', '9191', '--root', str(self.root)])
+                self.assertEqual(ret, 0)
+                self.assertEqual(mock_serve.call_count, 1)
+                args, _ = mock_serve.call_args
+                self.assertEqual(args[0], self.root)
+                self.assertEqual(args[4], 9191)
+
 
 if __name__ == '__main__':
     unittest.main()
