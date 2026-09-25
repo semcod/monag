@@ -224,7 +224,8 @@ def inspect_repository_anomalies(repo_path: Path) -> List[Dict[str, Any]]:
     return anomalies
 
 
-def diagnose_fleet(root: Path, depth: int = 2) -> Dict[str, Any]:
+def diagnose_fleet(root: Path, depth: int = 2, db: Optional[Any] = None,
+                   use_cache: bool = True, state_dir: Optional[Path] = None) -> Dict[str, Any]:
     """Scan workspace fleet for technical defects, governance drift, and ticket readiness."""
     started = datetime.now(timezone.utc)
     repos: List[Path] = []
@@ -246,8 +247,37 @@ def diagnose_fleet(root: Path, depth: int = 2) -> Dict[str, Any]:
             except (OSError, PermissionError):
                 pass
 
+    database = None
+    if use_cache:
+        if db is not None:
+            database = db
+        else:
+            try:
+                from . import autodiag_store
+                database = autodiag_store.connect(state_dir=state_dir)
+            except Exception:
+                database = None
+
     all_anomalies: List[Dict[str, Any]] = []
+    cached_repos_count = 0
+    repo_fingerprints: Dict[str, Tuple[str, str]] = {}
+
     for r in sorted(set(repos)):
+        repo_str = str(r)
+        if database is not None:
+            try:
+                from . import autodiag_store
+                head_sha, dirty_digest = autodiag_store.compute_repo_fingerprint(r)
+                repo_fingerprints[repo_str] = (head_sha, dirty_digest)
+                cached = autodiag_store.get_cached_diagnosis(database, repo_str, head_sha, dirty_digest)
+                if cached is not None:
+                    cached_anom, _ = cached
+                    all_anomalies.extend(cached_anom)
+                    cached_repos_count += 1
+                    continue
+            except Exception:
+                pass
+
         all_anomalies.extend(inspect_repository_anomalies(r))
 
     return {
@@ -255,8 +285,11 @@ def diagnose_fleet(root: Path, depth: int = 2) -> Dict[str, Any]:
         "root": str(root),
         "timestamp": started.isoformat(),
         "repositories_checked": len(repos),
+        "repositories_cached": cached_repos_count,
         "anomalies_count": len(all_anomalies),
         "anomalies": all_anomalies,
+        "_repo_fingerprints": repo_fingerprints,
+        "_database": database,
     }
 
 
@@ -336,17 +369,22 @@ def _parse_subllm_response(text: str, fallback_anomaly: Dict[str, Any]) -> Dict[
     }
 
 
-def synthesize_tickets_with_subllm(anomalies: List[Dict[str, Any]],
-                                   runner: Optional[Callable[[str], str]] = None) -> List[Dict[str, Any]]:
+def synthesize_tickets_with_subllm(anomalies: Any,
+                                   runner: Optional[Callable[[str], str]] = None,
+                                   db: Optional[Any] = None) -> List[Dict[str, Any]]:
     """Synthesize high-fidelity Planfile/GitHub/Koru tickets from raw anomalies using SubLLM."""
     if runner is None:
         runner = _find_subllm_runner()
 
+    report_dict: Optional[Dict[str, Any]] = None
     if isinstance(anomalies, dict):
-        anomalies = anomalies.get("anomalies", [])
+        report_dict = anomalies
+        anom_list = anomalies.get("anomalies", [])
+    else:
+        anom_list = list(anomalies or [])
 
     tickets: List[Dict[str, Any]] = []
-    for anom in anomalies:
+    for anom in anom_list:
         subllm_result: Optional[str] = None
         if runner:
             try:
@@ -357,11 +395,28 @@ def synthesize_tickets_with_subllm(anomalies: List[Dict[str, Any]],
 
         ticket_spec = _parse_subllm_response(subllm_result or "", anom)
 
-        # Assemble full Planfile ticket with Koru handoff directives and GitHub issue markdown
+        # Assemble full Planfile ticket with Koru handoff directives, empirical estimation, and GitHub issue markdown
         target = ticket_spec.get("target_repo", anom.get("target", "workspace"))
         title = ticket_spec.get("title", f"[{target}] Remediate technical defect")
         ac_lines = "\n".join(f"- [ ] {ac}" for ac in ticket_spec.get("acceptance_criteria", []))
         cmd = ticket_spec.get("verification_command", "npm test || pytest -q")
+
+        # Enrich with semcod/estimation empirical resource envelope
+        try:
+            from . import estimation as est_mod
+            estimation_data = est_mod.estimate_verification(cmd, target)
+            estimation_md = est_mod.format_estimation_markdown(estimation_data)
+        except Exception:
+            estimation_data = {
+                "duration_p50_seconds": 2.5,
+                "duration_p90_seconds": 4.5,
+                "peak_rss_mb": 128.0,
+                "effective_cpu_cores": 0.8,
+                "confidence": "none",
+                "samples_count": 0,
+                "source": "default_envelope"
+            }
+            estimation_md = ""
 
         description = f"""## Context
 Observed technical defect in `{target}`:
@@ -380,6 +435,7 @@ Observed technical defect in `{target}`:
 {cmd}
 ```
 
+{estimation_md}
 ## Planfile & Koru Autonomous Handoff
 - Driven by: `koru autonomous`
 - When checks pass and the work is complete, mark done via: `planfile ticket done <id>`
@@ -397,10 +453,27 @@ Observed technical defect in `{target}`:
             "acceptance_criteria": ticket_spec.get("acceptance_criteria", []),
             "satisfied_when": ticket_spec.get("satisfied_when"),
             "verification_command": cmd,
+            "estimation": estimation_data,
+            "estimated_duration_seconds": estimation_data.get("duration_p90_seconds"),
+            "estimated_peak_rss_mb": estimation_data.get("peak_rss_mb"),
+            "estimation_confidence": estimation_data.get("confidence"),
             "source": "monag.autodiagnosis",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         tickets.append(ticket)
+
+    # Persist into SQLite cache if database is available
+    database = db or (report_dict.get("_database") if report_dict else None)
+    if database is not None and report_dict is not None:
+        try:
+            from . import autodiag_store
+            fingerprints = report_dict.get("_repo_fingerprints", {})
+            for repo_str, (head_sha, dirty_digest) in fingerprints.items():
+                repo_anoms = [a for a in anom_list if a.get("target") in (repo_str, Path(repo_str).name)]
+                repo_tkts = [t for t in tickets if t.get("target_repo") in (repo_str, Path(repo_str).name)]
+                autodiag_store.save_cached_diagnosis(database, repo_str, head_sha, dirty_digest, repo_anoms, repo_tkts)
+        except Exception:
+            pass
 
     return tickets
 
@@ -472,6 +545,10 @@ def dispatch_tickets_to_planfile(tickets: List[Dict[str, Any]], root: Path,
                 "status": "todo",
                 "tier": t.get("tier", TIER_BACKLOG),
                 "labels": t.get("labels", []),
+                "estimation": t.get("estimation"),
+                "estimated_duration_seconds": t.get("estimated_duration_seconds"),
+                "estimated_peak_rss_mb": t.get("estimated_peak_rss_mb"),
+                "estimation_confidence": t.get("estimation_confidence"),
                 "satisfied_when": t.get("satisfied_when"),
                 "created_at": t.get("created_at"),
                 "source": "monag.autodiagnosis",
