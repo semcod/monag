@@ -90,7 +90,7 @@ button{background:#16202b;color:#d6e0ea;border:1px solid #2a3a4a;border-radius:4
 <button onclick="runDailyAutomation()" style="background:#238636;color:#fff;border:none">daily automation</button></h2>
 <div id="autodiag-summary" class="sub">loading autodiagnosis…</div>
 <table id="autodiagnosis"><thead><tr>
-<th>Target Repo</th><th>Tier</th><th>Priority</th><th>Title</th><th>Action</th></tr></thead>
+<th>Target Repo</th><th>Tier</th><th>Priority</th><th>Title</th><th>Estimation (semcod)</th><th>Action</th></tr></thead>
 <tbody></tbody></table></section>
 
 <script>
@@ -159,11 +159,16 @@ async function loadAutodiagnosis(){
 }
 function renderAutodiag(res){
   const sum = res.summary || {};
+  const cachedStr = sum.repositories_cached ? ` (${sum.repositories_cached} cached)` : '';
   document.getElementById('autodiag-summary').textContent =
-    'Inspected: ' + (sum.total_repositories || 0) + ' repos · Issues: ' + (sum.total_anomalies || 0) + ' · Actionable tickets: ' + ((res.tickets||[]).length);
-  fill('autodiagnosis', (res.tickets||[]).map(t=>[
-    t.target_repo, t.tier || 'STANDARD', t.priority || 'P2', t.title, (t.acceptance_criteria||[]).length + ' AC'
-  ]), 'No technical anomalies found in workspace.');
+    'Inspected: ' + (sum.total_repositories || 0) + ' repos' + cachedStr + ' · Issues: ' + (sum.total_anomalies || 0) + ' · Actionable tickets: ' + ((res.tickets||[]).length);
+  fill('autodiagnosis', (res.tickets||[]).map(t=>{
+    const est = t.estimation || {};
+    const estStr = est.duration_p90_seconds ? `${est.duration_p90_seconds}s / ${est.peak_rss_mb || 0}MB (${est.confidence || 'none'})` : '-';
+    return [
+      t.target_repo, t.tier || 'STANDARD', t.priority || 'P2', t.title, estStr, (t.acceptance_criteria||[]).length + ' AC'
+    ];
+  }), 'No technical anomalies found in workspace.');
 }
 async function runAutodiagnosis(){
   document.getElementById('autodiag-summary').textContent = 'Running fleet autodiagnosis…';

@@ -67,6 +67,23 @@ class TestAutodiagnosisFleetInspection(unittest.TestCase):
         self.assertEqual(report["repositories_checked"], 2)
         self.assertGreater(report["anomalies_count"], 0)
 
+    def test_diagnose_fleet_with_sqlite_caching(self):
+        r1 = self.root / "org1" / "cached-repo"
+        r1.mkdir(parents=True)
+        subprocess.run(["git", "-C", str(r1), "init"], check=True, capture_output=True)
+
+        state_dir = self.root / "state"
+        # First diagnostic pass: cache miss, saves to SQLite
+        rep1 = autodiagnosis.diagnose_fleet(self.root, depth=2, state_dir=state_dir)
+        self.assertEqual(rep1["repositories_cached"], 0)
+
+        # Synthesize so tickets and snapshots are committed to SQLite cache
+        autodiagnosis.synthesize_tickets_with_subllm(rep1)
+
+        # Second diagnostic pass on unchanged repo: cache hit!
+        rep2 = autodiagnosis.diagnose_fleet(self.root, depth=2, state_dir=state_dir)
+        self.assertEqual(rep2["repositories_cached"], 1)
+
 
 class TestSubLLMTicketSynthesis(unittest.TestCase):
     def test_synthesize_tickets_with_mock_subllm_runner(self):
@@ -131,6 +148,9 @@ class TestSubLLMTicketSynthesis(unittest.TestCase):
         self.assertEqual(t["priority"], "critical")
         self.assertIn("AC-01: Repository contains raw Git URL dependency", t["description"])
         self.assertIn("AC-02: Verification checks", t["description"])
+        self.assertIn("## Empirical Resource Estimation (semcod/estimation)", t["description"])
+        self.assertIn("estimation", t)
+        self.assertGreater(t["estimation"]["duration_p90_seconds"], 0)
         self.assertIn("planfile ticket done", t["description"])
 
 
