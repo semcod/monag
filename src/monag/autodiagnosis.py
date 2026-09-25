@@ -261,6 +261,52 @@ def inspect_repository_anomalies(repo_path: Path) -> List[Dict[str, Any]]:
                 "evidence": "Found 'git+' or 'github:' reference in package.json dependencies.",
             })
 
+    # 6. Unresolved Git merge conflict markers
+    try:
+        proc_conflict = subprocess.run(
+            ["git", "-C", str(repo_path), "grep", "-I", "-l", "-E", "^(<<<<<<< |=======|>>>>>>> )"],
+            capture_output=True, text=True, timeout=10
+        )
+        if proc_conflict.returncode == 0 and proc_conflict.stdout.strip():
+            conflict_files = proc_conflict.stdout.strip().splitlines()
+            anomalies.append({
+                "code": "GIT_CONFLICT_MARKERS",
+                "tier": TIER_FLOOR,
+                "severity": "ERROR",
+                "target": repo_name,
+                "path": str(repo_path),
+                "summary": f"Repository contains unresolved Git merge conflict markers in {len(conflict_files)} files.",
+                "evidence": f"Unresolved conflict markers detected in: {', '.join(conflict_files[:3])}",
+                "details": conflict_files,
+            })
+    except Exception:
+        pass
+
+    # 7. Broken or missing Python virtualenv
+    if pyproject.is_file() or (repo_path / "requirements.txt").is_file():
+        venv_candidates = [repo_path / ".venv", repo_path / "venv"]
+        for vpath in venv_candidates:
+            if vpath.is_symlink() and not vpath.exists():
+                anomalies.append({
+                    "code": "BROKEN_VENV",
+                    "tier": TIER_FLOOR,
+                    "severity": "ERROR",
+                    "target": repo_name,
+                    "path": str(repo_path),
+                    "summary": f"Broken virtualenv symlink detected at {vpath.name}.",
+                    "evidence": f"Symlink {vpath} points to non-existent target.",
+                })
+            elif vpath.is_dir() and not (vpath / "bin" / "python").exists() and not (vpath / "Scripts" / "python.exe").exists():
+                anomalies.append({
+                    "code": "BROKEN_VENV",
+                    "tier": TIER_FLOOR,
+                    "severity": "WARNING",
+                    "target": repo_name,
+                    "path": str(repo_path),
+                    "summary": f"Incomplete or damaged virtualenv at {vpath.name} (missing python executable).",
+                    "evidence": f"Virtualenv directory {vpath} does not contain bin/python or Scripts/python.exe.",
+                })
+
     return anomalies
 
 
@@ -391,6 +437,8 @@ def _parse_subllm_response(text: str, fallback_anomaly: Dict[str, Any]) -> Dict[
         "PLANFILE_UNINITIALIZED": "Initialize .planfile/sprints directory structure for task orchestration and autonomous agent delivery.",
         "PLANFILE_GITHUB_SYNC_MISSING": "Configure .planfile/sync/github.state.yaml to enable bidirectional GitHub Issues synchronization.",
         "DEPENDENCY_GIT_URL_FOUND": "Replace unbounded git+ URL dependency with published package contract or bounded version pin.",
+        "GIT_CONFLICT_MARKERS": "Resolve merge conflicts, remove conflict markers, and verify syntax with git status and tests.",
+        "BROKEN_VENV": "Recreate damaged virtual environment (.venv) and reinstall project dependencies.",
     }
     action = action_map.get(code, f"Resolve {code} in {target}.")
     ac1 = f"AC-01: {fallback_anomaly.get('summary', 'Anomaly is remediated')}."
@@ -565,8 +613,31 @@ Observed technical defect in `{target}`:
     return tickets
 
 
+def sync_planfile_github(repo_path: Path) -> Dict[str, Any]:
+    """Run planfile sync github in the target repository if planfile is available."""
+    planfile_bin = shutil.which("planfile")
+    cmd = [planfile_bin, "sync", "github"] if planfile_bin else [sys.executable, "-m", "planfile", "sync", "github"]
+    try:
+        proc = subprocess.run(cmd, cwd=str(repo_path), capture_output=True, text=True, timeout=60)
+        return {
+            "target": str(repo_path),
+            "ok": proc.returncode == 0,
+            "stdout": proc.stdout.strip(),
+            "stderr": proc.stderr.strip(),
+            "exit_code": proc.returncode,
+        }
+    except Exception as err:
+        return {
+            "target": str(repo_path),
+            "ok": False,
+            "error": str(err),
+            "exit_code": 1,
+        }
+
+
 def dispatch_tickets_to_planfile(tickets: List[Dict[str, Any]], root: Path,
-                                 sprint: str = "current") -> Dict[str, Any]:
+                                 sprint: str = "current",
+                                 sync_github: bool = False) -> Dict[str, Any]:
     """Write synthesized tickets into target projects' Planfile sprint storage."""
     results: Dict[str, Any] = {
         "total_tickets": len(tickets),
@@ -674,5 +745,11 @@ def dispatch_tickets_to_planfile(tickets: List[Dict[str, Any]], root: Path,
             results["tickets_by_repo"][target] = added_for_repo
         except Exception as err:
             results["errors"].append(f"Failed to write {sprint_file}: {err}")
+
+    if sync_github:
+        results["github_sync"] = []
+        for updated_repo in results["repositories_updated"]:
+            sync_res = sync_planfile_github(Path(updated_repo))
+            results["github_sync"].append(sync_res)
 
     return results

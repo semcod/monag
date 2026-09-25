@@ -385,8 +385,10 @@ def main(argv=None):
                                      help='use SubLLM to synthesize root causes, AC, and Koru handoffs (default: true)')
     autodiagnose_parser.add_argument('--no-subllm', dest='subllm', action='store_false',
                                      help='disable SubLLM and use deterministic rule-based ticket synthesis')
-    autodiagnose_parser.add_argument('--feed-planfile', action='store_true',
+    autodiagnose_parser.add_argument('--feed-planfile', '--dispatch', dest='feed_planfile', action='store_true',
                                      help='directly write synthesized tickets into target projects .planfile/sprints storage')
+    autodiagnose_parser.add_argument('--sync-github', action='store_true', default=False,
+                                     help='synchronize dispatched Planfile tickets to GitHub Issues via planfile sync github')
     autodiagnose_parser.add_argument('--sprint', default='current',
                                      help='target sprint for --feed-planfile (default: current)')
     autodiagnose_parser.add_argument('--emit-planfile', action='store_true',
@@ -830,7 +832,7 @@ def main(argv=None):
             from . import autodiagnosis
             diag_report = autodiagnosis.diagnose_fleet(root, depth=args.depth)
             runner = autodiagnosis._find_subllm_runner() if getattr(args, 'subllm', True) else None
-            tickets = autodiagnosis.synthesize_tickets_with_subllm(diag_report.get('anomalies', []), runner=runner)
+            tickets = autodiagnosis.synthesize_tickets_with_subllm(diag_report, runner=runner)
 
             if getattr(args, 'emit_planfile', False):
                 payload = {
@@ -844,7 +846,8 @@ def main(argv=None):
 
             if getattr(args, 'feed_planfile', False):
                 dispatch_res = autodiagnosis.dispatch_tickets_to_planfile(
-                    tickets, root=root, sprint=getattr(args, 'sprint', 'current')
+                    tickets, root=root, sprint=getattr(args, 'sprint', 'current'),
+                    sync_github=getattr(args, 'sync_github', False),
                 )
                 if output_format == 'json':
                     print(json.dumps(dispatch_res, ensure_ascii=False, indent=2))
@@ -852,6 +855,9 @@ def main(argv=None):
                     print(f"Planfile Dispatch: zapisano {dispatch_res.get('dispatched', 0)}/{dispatch_res.get('total_tickets', 0)} ticketów w {len(dispatch_res.get('repositories_updated', []))} projektach.")
                     for repo, tids in dispatch_res.get('tickets_by_repo', {}).items():
                         print(f"  {repo}: {', '.join(tids)}")
+                    for sync_item in dispatch_res.get('github_sync', []):
+                        status_str = "OK" if sync_item.get("ok") else f"FAILED ({sync_item.get('error') or sync_item.get('stderr')})"
+                        print(f"  GitHub Sync ({Path(sync_item['target']).name}): {status_str}")
                     for err in dispatch_res.get('errors', []):
                         print(f"  ERROR: {err}", file=sys.stderr)
                 return 0 if not dispatch_res.get('errors') else 1

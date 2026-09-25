@@ -46,6 +46,13 @@ th{color:#8a9bb0;font-weight:600}
 .empty{color:#5a6b7d;font-style:italic}
 button{background:#16202b;color:#d6e0ea;border:1px solid #2a3a4a;border-radius:4px;
        padding:.3rem .7rem;font-size:.8rem;cursor:pointer}
+.badge{display:inline-block;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;text-transform:uppercase}
+.badge-critical,.badge-floor{background:#da3633;color:#fff}
+.badge-high,.badge-mission{background:#d29922;color:#fff}
+.badge-medium,.badge-normal,.badge-hygiene{background:#1f6feb;color:#fff}
+.badge-low,.badge-backlog{background:#8b949e;color:#fff}
+details summary{cursor:pointer;color:#58a6ff;font-size:.8rem}
+details code{background:#16202b;padding:2px 4px;border-radius:3px;font-family:monospace;display:block;margin-top:4px;word-break:break-all}
 </style></head>
 <body>
 <h1>monag panel</h1>
@@ -87,6 +94,7 @@ button{background:#16202b;color:#d6e0ea;border:1px solid #2a3a4a;border-radius:4
 <section><h2>Fleet Autodiagnosis & Koru Autonomous Delegations
 <button onclick="runAutodiagnosis()">run diagnosis</button>
 <button onclick="dispatchToKoru()" style="background:#1f4368;border-color:#388bfd;color:#fff">delegate to planfile / koru</button>
+<button onclick="syncWithGitHub()" style="background:#238636;border-color:#2ea043;color:#fff">sync with github</button>
 <button onclick="runDailyAutomation()" style="background:#238636;color:#fff;border:none">daily automation</button></h2>
 <div id="autodiag-summary" class="sub">loading autodiagnosis…</div>
 <table id="autodiagnosis"><thead><tr>
@@ -162,13 +170,42 @@ function renderAutodiag(res){
   const cachedStr = sum.repositories_cached ? ` (${sum.repositories_cached} cached)` : '';
   document.getElementById('autodiag-summary').textContent =
     'Inspected: ' + (sum.total_repositories || 0) + ' repos' + cachedStr + ' · Issues: ' + (sum.total_anomalies || 0) + ' · Actionable tickets: ' + ((res.tickets||[]).length);
-  fill('autodiagnosis', (res.tickets||[]).map(t=>{
+  const tbody = document.querySelector('#autodiagnosis tbody');
+  tbody.innerHTML = '';
+  const tickets = res.tickets || [];
+  if (!tickets.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 6; td.className = 'empty'; td.textContent = 'No technical anomalies found in workspace.';
+    tr.appendChild(td); tbody.appendChild(tr); return;
+  }
+  for (const t of tickets) {
+    const tr = document.createElement('tr');
     const est = t.estimation || {};
     const estStr = est.duration_p90_seconds ? `${est.duration_p90_seconds}s / ${est.peak_rss_mb || 0}MB (${est.confidence || 'none'})` : '-';
-    return [
-      t.target_repo, t.tier || 'STANDARD', t.priority || 'P2', t.title, estStr, (t.acceptance_criteria||[]).length + ' AC'
-    ];
-  }), 'No technical anomalies found in workspace.');
+    const tier = (t.tier || 'STANDARD').toUpperCase();
+    const prio = (t.priority || 'NORMAL').toUpperCase();
+    const tierClass = 'badge badge-' + (t.tier || 'backlog').toLowerCase();
+    const prioClass = 'badge badge-' + (t.priority || 'normal').toLowerCase();
+    const detailsHtml = t.verification_command ? `<details style="margin-top:4px"><summary>verify: <code>${t.verification_command}</code></summary><div style="font-size:11px;margin-top:4px;color:#8a9bb0">${(t.acceptance_criteria||[]).join('<br>')}</div></details>` : '';
+    tr.innerHTML = `<td><code>${t.target_repo}</code></td>
+      <td><span class="${tierClass}">${tier}</span></td>
+      <td><span class="${prioClass}">${prio}</span></td>
+      <td><strong>${t.title}</strong>${detailsHtml}</td>
+      <td>${estStr}</td>
+      <td>${(t.acceptance_criteria||[]).length} AC</td>`;
+    tbody.appendChild(tr);
+  }
+}
+async function syncWithGitHub(){
+  document.getElementById('autodiag-summary').textContent = 'Synchronizing Planfile tickets with GitHub Issues…';
+  try{
+    const res = await fetch('/api/autodiagnosis/sync-github.json').then(r=>r.json());
+    alert('GitHub sync completed for ' + (res.synced_repositories || 0) + ' repositories!');
+    loadAutodiagnosis();
+  }catch(e){
+    alert('GitHub sync failed: ' + e);
+  }
 }
 async function runAutodiagnosis(){
   document.getElementById('autodiag-summary').textContent = 'Running fleet autodiagnosis…';
@@ -371,6 +408,31 @@ class State:
             'koru_ready': True,
         }
 
+    def autodiagnosis_sync_github(self):
+        """Run planfile sync github across repositories with .planfile in workspace."""
+        from . import autodiagnosis
+        repos = []
+        if (self.root / ".planfile").exists():
+            repos.append(self.root)
+        else:
+            try:
+                for p in self.root.iterdir():
+                    if p.is_dir() and not p.name.startswith("."):
+                        if (p / ".planfile").exists():
+                            repos.append(p)
+                        else:
+                            for sub in p.iterdir():
+                                if sub.is_dir() and not sub.name.startswith(".") and (sub / ".planfile").exists():
+                                    repos.append(sub)
+            except Exception:
+                pass
+        results = [autodiagnosis.sync_planfile_github(r) for r in repos]
+        return {
+            'status': 'ok',
+            'synced_repositories': len(repos),
+            'results': results,
+        }
+
 
 ROUTES = {'/api/snapshot.json': lambda s: s.snapshot,
           '/api/resume.json': lambda s: s.resume,
@@ -387,6 +449,8 @@ ROUTES = {'/api/snapshot.json': lambda s: s.snapshot,
           '/api/autodiagnosis/dispatch.json': State.autodiagnosis_dispatch,
           '/api/autodiagnosis/daily': State.autodiagnosis_daily_automation,
           '/api/autodiagnosis/daily.json': State.autodiagnosis_daily_automation,
+          '/api/autodiagnosis/sync-github': State.autodiagnosis_sync_github,
+          '/api/autodiagnosis/sync-github.json': State.autodiagnosis_sync_github,
           '/api/report/status': State.get_report_status,
           '/api/report/status.json': State.get_report_status,
           '/api/report/disable': State.report_disable,
