@@ -393,6 +393,10 @@ def main(argv=None):
                                      help='target sprint for --feed-planfile (default: current)')
     autodiagnose_parser.add_argument('--emit-planfile', action='store_true',
                                      help='print synthesized tickets as Planfile JSON envelope')
+    summary_parser = sub.add_parser('summary', aliases=['day'], parents=[common_sub_parser],
+                                    help='aggregate daily execution summary: Planfile completed/queued tickets, GitHub PRs, and time estimates')
+    summary_parser.add_argument('--no-github', dest='github', action='store_false',
+                                help='skip querying GitHub PR metrics for faster execution')
     quality = sub.add_parser('quality', parents=[common_sub_parser],
                              help='read-only semcod/regix quality gate for ONE repository '
                                   '(--root must be a Git checkout, not a workspace); '
@@ -882,6 +886,19 @@ def main(argv=None):
                     lines.append(f"- **Kryteria ukończenia**: `{t.get('satisfied_when', '—')}`")
                     lines.append("")
                 display_report('\n'.join(lines))
+            return 0
+        if args.mode in ('summary', 'day'):
+            from . import summary
+            data = summary.gather_summary(
+                root,
+                hours=getattr(args, 'hours', 24),
+                github=getattr(args, 'github', True),
+                depth=args.depth,
+            )
+            if output_format == 'json':
+                print(json.dumps(data, ensure_ascii=False, indent=2))
+            else:
+                display_report(summary.format_markdown(data))
             return 0
         if args.mode == 'quality':
             from . import quality
