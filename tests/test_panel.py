@@ -243,7 +243,49 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(data['config']['recipients'], ['custom@dev.local'])
         self.assertFalse(data['config']['enabled'])
 
+    def test_autodiagnosis_endpoints(self):
+        server, state = self.start()
+        # Verify page HTML includes autodiagnosis section and JS
+        status, content_type, body = self.get(server, '/')
+        self.assertEqual(status, 200)
+        self.assertIn(b'Fleet Autodiagnosis & Koru Autonomous Delegations', body)
+        self.assertIn(b'runAutodiagnosis', body)
+        self.assertIn(b'dispatchToKoru', body)
+        self.assertIn(b'runDailyAutomation', body)
+
+        # GET /api/autodiagnosis.json
+        status, content_type, body = self.get(server, '/api/autodiagnosis.json')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data['status'], 'ok')
+        self.assertIn('summary', data)
+        self.assertIn('tickets', data)
+
+        # GET /api/autodiagnosis/run.json
+        status, content_type, body = self.get(server, '/api/autodiagnosis/run.json')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data['status'], 'ok')
+        self.assertIn('tickets', data)
+
+        # GET /api/autodiagnosis/dispatch.json
+        status, content_type, body = self.get(server, '/api/autodiagnosis/dispatch.json')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data['status'], 'ok')
+        self.assertIn('dispatched_count', data)
+        self.assertIn('results', data)
+
+        # GET /api/autodiagnosis/daily.json
+        status, content_type, body = self.get(server, '/api/autodiagnosis/daily.json')
+        self.assertEqual(status, 200)
+        data = json.loads(body)
+        self.assertEqual(data['status'], 'ok')
+        self.assertEqual(data['action'], 'daily_automation_completed')
+        self.assertTrue(data['koru_ready'])
+
 
 if __name__ == '__main__':
     unittest.main()
+
 
