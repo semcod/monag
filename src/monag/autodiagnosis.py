@@ -342,6 +342,9 @@ def synthesize_tickets_with_subllm(anomalies: List[Dict[str, Any]],
     if runner is None:
         runner = _find_subllm_runner()
 
+    if isinstance(anomalies, dict):
+        anomalies = anomalies.get("anomalies", [])
+
     tickets: List[Dict[str, Any]] = []
     for anom in anomalies:
         subllm_result: Optional[str] = None

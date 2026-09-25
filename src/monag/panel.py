@@ -84,6 +84,15 @@ button{background:#16202b;color:#d6e0ea;border:1px solid #2a3a4a;border-radius:4
 <button onclick="disableReport()">disable cron</button></h2>
 <div id="report-status" class="sub">loading…</div></section>
 
+<section><h2>Fleet Autodiagnosis & Koru Autonomous Delegations
+<button onclick="runAutodiagnosis()">run diagnosis</button>
+<button onclick="dispatchToKoru()" style="background:#1f4368;border-color:#388bfd;color:#fff">delegate to planfile / koru</button>
+<button onclick="runDailyAutomation()" style="background:#238636;color:#fff;border:none">daily automation</button></h2>
+<div id="autodiag-summary" class="sub">loading autodiagnosis…</div>
+<table id="autodiagnosis"><thead><tr>
+<th>Target Repo</th><th>Tier</th><th>Priority</th><th>Title</th><th>Action</th></tr></thead>
+<tbody></tbody></table></section>
+
 <script>
 function row(cells){const tr=document.createElement('tr');
   for(const c of cells){const td=document.createElement('td');td.textContent=c;tr.appendChild(td);}
@@ -140,7 +149,53 @@ async function disableReport(){
   const res = await fetch('/api/report/disable.json').then(r=>r.json());
   alert(res.status === 'ok' ? 'Schedule disabled!' : 'Disable failed: ' + JSON.stringify(res.detail));
 }
-loadLive(); loadAudit(); loadCatalog(); loadExport(); loadReportStatus();
+async function loadAutodiagnosis(){
+  try{
+    const res = await fetch('/api/autodiagnosis.json').then(r=>r.json());
+    renderAutodiag(res);
+  }catch(e){
+    document.getElementById('autodiag-summary').textContent = 'Error loading autodiagnosis: ' + e;
+  }
+}
+function renderAutodiag(res){
+  const sum = res.summary || {};
+  document.getElementById('autodiag-summary').textContent =
+    'Inspected: ' + (sum.total_repositories || 0) + ' repos · Issues: ' + (sum.total_anomalies || 0) + ' · Actionable tickets: ' + ((res.tickets||[]).length);
+  fill('autodiagnosis', (res.tickets||[]).map(t=>[
+    t.target_repo, t.tier || 'STANDARD', t.priority || 'P2', t.title, (t.acceptance_criteria||[]).length + ' AC'
+  ]), 'No technical anomalies found in workspace.');
+}
+async function runAutodiagnosis(){
+  document.getElementById('autodiag-summary').textContent = 'Running fleet autodiagnosis…';
+  try{
+    const res = await fetch('/api/autodiagnosis/run.json').then(r=>r.json());
+    renderAutodiag(res);
+  }catch(e){
+    alert('Autodiagnosis failed: ' + e);
+  }
+}
+async function dispatchToKoru(){
+  if(!confirm('Dispatch tickets to target repositories .planfile/sprints and prepare for Koru execution?')) return;
+  document.getElementById('autodiag-summary').textContent = 'Dispatching tickets to Planfile…';
+  try{
+    const res = await fetch('/api/autodiagnosis/dispatch.json').then(r=>r.json());
+    alert('Dispatched ' + res.dispatched_count + ' tickets to Planfile storage!');
+    loadAutodiagnosis();
+  }catch(e){
+    alert('Dispatch failed: ' + e);
+  }
+}
+async function runDailyAutomation(){
+  document.getElementById('autodiag-summary').textContent = 'Executing daily automated diagnostic & delegation…';
+  try{
+    const res = await fetch('/api/autodiagnosis/daily.json').then(r=>r.json());
+    alert('Daily automation completed! Tickets dispatched to Planfile for Koru Autonomous execution.');
+    loadAutodiagnosis();
+  }catch(e){
+    alert('Daily automation failed: ' + e);
+  }
+}
+loadLive(); loadAudit(); loadCatalog(); loadExport(); loadReportStatus(); loadAutodiagnosis();
 setInterval(loadLive, 5000);
 </script>
 </body></html>"""
@@ -162,6 +217,7 @@ class State:
         self._catalog, self._catalog_at = None, 0.0
         self._export, self._export_at = None, 0.0
         self._prs, self._prs_at = None, 0.0
+        self._autodiag, self._autodiag_at = None, 0.0
 
     def get_prs(self, ttl=60):
         with self.lock:
@@ -258,6 +314,58 @@ class State:
         res = report.send_email([email_addr], f"MONAG on-demand report — {self.root.name}", body, smtp_cfg)
         return {'status': 'ok' if res.get('ok') else 'error', 'detail': res}
 
+    def get_autodiagnosis(self, ttl=60):
+        with self.lock:
+            if getattr(self, '_autodiag', None) is not None and time.monotonic() - getattr(self, '_autodiag_at', 0) < ttl:
+                return self._autodiag
+        from . import autodiagnosis
+        report = autodiagnosis.diagnose_fleet(self.root, depth=self.depth)
+        tickets = autodiagnosis.synthesize_tickets_with_subllm(report)
+        data = {
+            'status': 'ok',
+            'summary': report.get('summary', {}),
+            'tickets': tickets,
+            'timestamp': report.get('timestamp'),
+        }
+        with self.lock:
+            self._autodiag, self._autodiag_at = data, time.monotonic()
+        return data
+
+    def autodiagnosis_run(self):
+        from . import autodiagnosis
+        report = autodiagnosis.diagnose_fleet(self.root, depth=self.depth)
+        tickets = autodiagnosis.synthesize_tickets_with_subllm(report)
+        data = {
+            'status': 'ok',
+            'summary': report.get('summary', {}),
+            'tickets': tickets,
+            'timestamp': report.get('timestamp'),
+        }
+        with self.lock:
+            self._autodiag, self._autodiag_at = data, time.monotonic()
+        return data
+
+    def autodiagnosis_dispatch(self):
+        from . import autodiagnosis
+        data = self.autodiagnosis_run()
+        tickets = data.get('tickets', [])
+        results = autodiagnosis.dispatch_tickets_to_planfile(tickets, root=self.root)
+        return {
+            'status': 'ok',
+            'dispatched_count': results.get('dispatched', 0),
+            'results': results,
+        }
+
+    def autodiagnosis_daily_automation(self):
+        """Execute automated daily autodiagnosis, dispatch to Planfile and ready for Koru."""
+        dispatch_res = self.autodiagnosis_dispatch()
+        return {
+            'status': 'ok',
+            'action': 'daily_automation_completed',
+            'dispatched': dispatch_res,
+            'koru_ready': True,
+        }
+
 
 ROUTES = {'/api/snapshot.json': lambda s: s.snapshot,
           '/api/resume.json': lambda s: s.resume,
@@ -266,6 +374,14 @@ ROUTES = {'/api/snapshot.json': lambda s: s.snapshot,
           '/api/catalog.json': State.get_catalog,
           '/api/export.json': State.get_export,
           '/api/advise.json': State.get_advise,
+          '/api/autodiagnosis': State.get_autodiagnosis,
+          '/api/autodiagnosis.json': State.get_autodiagnosis,
+          '/api/autodiagnosis/run': State.autodiagnosis_run,
+          '/api/autodiagnosis/run.json': State.autodiagnosis_run,
+          '/api/autodiagnosis/dispatch': State.autodiagnosis_dispatch,
+          '/api/autodiagnosis/dispatch.json': State.autodiagnosis_dispatch,
+          '/api/autodiagnosis/daily': State.autodiagnosis_daily_automation,
+          '/api/autodiagnosis/daily.json': State.autodiagnosis_daily_automation,
           '/api/report/status': State.get_report_status,
           '/api/report/status.json': State.get_report_status,
           '/api/report/disable': State.report_disable,

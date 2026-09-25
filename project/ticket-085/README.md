@@ -14,6 +14,7 @@
 4. Implement Planfile sprint dispatching that safely formats and writes tickets directly into target repositories' `.planfile/sprints/{sprint}.yaml` storage, formatted for bidirectional `planfile sync github` and execution by `koru autonomous`.
 5. Expose the `autodiagnose` subcommand in `monag.cli` with options `--subllm`, `--no-subllm`, `--emit-planfile`, and `--feed-planfile`.
 6. Add comprehensive unit and integration test coverage (`tests/test_autodiagnosis_subllm_pipeline.py`).
+7. Expose autodiagnosis results, manual triggers, and daily Koru autonomous dispatch in `monag panel` web interface with REST endpoints (`/api/autodiagnosis*`).
 
 ## Acceptance criteria
 
@@ -24,3 +25,5 @@
 - [x] AC-05: Tickets conform to `planfile sync github` schema and Koru Autonomous handoff contracts (`koru.queue` / `koru.autonomy.planfile_handoff`).
 - [x] AC-06: `monag autodiagnose` CLI subcommand supports `--emit-planfile` and `--feed-planfile` modes.
 - [x] AC-07: Full test suite passes.
+- [x] AC-08: `monag panel` provides autodiagnosis view, manual diagnosis run, Planfile dispatching, and automated daily execution for Koru Autonomous.
+
