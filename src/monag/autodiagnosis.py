@@ -9,6 +9,7 @@ autonomous execution by Koru Autonomous.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -33,6 +34,45 @@ TIER_PRIORITY_MAP = {
     TIER_HYGIENE: "medium",
     TIER_BACKLOG: "low",
 }
+
+TIER_ORDER = {
+    TIER_FLOOR: 0,
+    TIER_MISSION: 1,
+    TIER_HYGIENE: 2,
+    TIER_BACKLOG: 3,
+}
+
+PRIORITY_ORDER = {
+    "critical": 0,
+    "highest": 0,
+    "high": 1,
+    "medium": 2,
+    "normal": 2,
+    "low": 3,
+    "lowest": 4,
+}
+
+
+def priority_sort_key(ticket_or_task: Dict[str, Any]) -> tuple:
+    """Sort key matching Wellmanifest lexicographic tiers and priority order.
+
+    1. Tier: floor (0) < mission (1) < hygiene (2) < backlog (3)
+    2. Priority: critical (0) < high (1) < medium/normal (2) < low (3) < lowest (4)
+    3. Created at: older first (FIFO)
+    """
+    tier = str(ticket_or_task.get("tier") or TIER_BACKLOG).lower()
+    priority = str(ticket_or_task.get("priority") or "normal").lower()
+    created_at = str(ticket_or_task.get("created_at") or "")
+
+    tier_weight = TIER_ORDER.get(tier, 3)
+    priority_weight = PRIORITY_ORDER.get(priority, 2)
+    return (tier_weight, priority_weight, created_at)
+
+
+def sort_tickets_by_priority(tickets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Deterministically sort tickets according to Wellmanifest priority tiers."""
+    return sorted(tickets, key=priority_sort_key)
+
 
 
 def _find_subllm_runner() -> Optional[Callable[[str], str]]:
@@ -442,13 +482,55 @@ Observed technical defect in `{target}`:
 - Git discipline: commit only files modified for this ticket; stage explicitly by path; write conventional commit message.
 """
 
+        tier = ticket_spec.get("tier", anom.get("tier", TIER_BACKLOG))
+        priority = ticket_spec.get("priority", TIER_PRIORITY_MAP.get(tier, "normal"))
+
+        # Build stable diagnostic ID from target and anomaly code
+        code_str = str(anom.get("code") or "DEFECT")
+        diag_hash = hashlib.md5(f"{target}:{code_str}".encode("utf-8")).hexdigest()[:8]
+        diag_id = f"DIAG-{diag_hash}"
+
+        # todo2code label integration
+        labels = list(dict.fromkeys(ticket_spec.get("labels", ["monag", "autodiagnosis", "koru-autonomous"]) + [
+            "todo2code",
+            "type:development-defect",
+            f"tier:{tier}",
+            f"priority:{priority}",
+        ]))
+
+        source_info = {
+            "tool": "todo2code",
+            "origin": "monag.autodiagnosis",
+            "context": {
+                "target_repo": target,
+                "code": code_str,
+                "diagnostic_ids": [diag_id],
+            }
+        }
+
+        inputs_info = {
+            "verify_command": cmd,
+            "expect_files_changed": True,
+            "patch_mode": True,
+            "worktree": True,
+            "risk_class": "R1",
+            "contract": "wellmanifest.defect-repair/v1",
+            "llm_timeout_seconds": 300,
+            "max_patch_attempts": 3,
+        }
+
+        executor_info = {
+            "kind": "llm",
+            "mode": "automatic",
+        }
+
         ticket = {
             "title": title,
             "description": description.strip(),
             "target_repo": target,
-            "tier": ticket_spec.get("tier", anom.get("tier", TIER_BACKLOG)),
-            "priority": ticket_spec.get("priority", "normal"),
-            "labels": ticket_spec.get("labels", ["monag", "autodiagnosis", "koru-autonomous"]),
+            "tier": tier,
+            "priority": priority,
+            "labels": labels,
             "action": ticket_spec.get("action"),
             "acceptance_criteria": ticket_spec.get("acceptance_criteria", []),
             "satisfied_when": ticket_spec.get("satisfied_when"),
@@ -457,10 +539,15 @@ Observed technical defect in `{target}`:
             "estimated_duration_seconds": estimation_data.get("duration_p90_seconds"),
             "estimated_peak_rss_mb": estimation_data.get("peak_rss_mb"),
             "estimation_confidence": estimation_data.get("confidence"),
-            "source": "monag.autodiagnosis",
+            "source": source_info,
+            "inputs": inputs_info,
+            "executor": executor_info,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         tickets.append(ticket)
+
+    # Sort tickets deterministically by Wellmanifest Priority tiers
+    tickets = sort_tickets_by_priority(tickets)
 
     # Persist into SQLite cache if database is available
     database = db or (report_dict.get("_database") if report_dict else None)
@@ -537,6 +624,24 @@ def dispatch_tickets_to_planfile(tickets: List[Dict[str, Any]], root: Path,
                 continue
 
             ticket_id = f"task_{int(datetime.now(timezone.utc).timestamp())}_{len(existing_data['tasks']) + 1}"
+            t_inputs = dict(t.get("inputs") or {})
+            t_inputs.setdefault("verify_command", t.get("verification_command", "npm test || pytest -q"))
+            t_inputs.setdefault("contract", "wellmanifest.defect-repair/v1")
+            t_inputs.setdefault("expect_files_changed", True)
+            t_inputs.setdefault("patch_mode", True)
+            t_inputs.setdefault("worktree", True)
+            t_inputs.setdefault("risk_class", "R1")
+            t_inputs.setdefault("llm_timeout_seconds", 300)
+            t_inputs.setdefault("max_patch_attempts", 3)
+
+            t_source = dict(t.get("source") or {})
+            t_source.setdefault("tool", "todo2code")
+            t_source.setdefault("origin", "monag.autodiagnosis")
+
+            t_executor = dict(t.get("executor") or {})
+            t_executor.setdefault("kind", "llm")
+            t_executor.setdefault("mode", "automatic")
+
             task_entry = {
                 "id": ticket_id,
                 "title": t["title"],
@@ -545,17 +650,22 @@ def dispatch_tickets_to_planfile(tickets: List[Dict[str, Any]], root: Path,
                 "status": "todo",
                 "tier": t.get("tier", TIER_BACKLOG),
                 "labels": t.get("labels", []),
+                "source": t_source,
+                "inputs": t_inputs,
+                "executor": t_executor,
                 "estimation": t.get("estimation"),
                 "estimated_duration_seconds": t.get("estimated_duration_seconds"),
                 "estimated_peak_rss_mb": t.get("estimated_peak_rss_mb"),
                 "estimation_confidence": t.get("estimation_confidence"),
                 "satisfied_when": t.get("satisfied_when"),
                 "created_at": t.get("created_at"),
-                "source": "monag.autodiagnosis",
             }
             existing_data["tasks"].append(task_entry)
             added_for_repo.append(ticket_id)
             results["dispatched"] += 1
+
+        # Sort tasks according to Wellmanifest Priority tiers before saving sprint file
+        existing_data["tasks"].sort(key=priority_sort_key)
 
         # Write back sprint yaml
         try:
