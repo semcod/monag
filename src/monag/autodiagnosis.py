@@ -85,12 +85,18 @@ def _find_subllm_runner() -> Optional[Callable[[str], str]]:
         def _subllm_import_runner(prompt: str) -> str:
             messages = [{"role": "user", "content": prompt}]
             try:
-                resp = complete(messages, timeout_seconds=30.0)
+                resp = complete("koru-agent", "nl-to-koru-dsl", messages, timeout_seconds=30.0)
                 if isinstance(resp, CompletionResponse):
                     return resp.content
                 return str(resp)
-            except Exception as e:
-                raise RuntimeError(f"SubLLM import invocation failed: {e}") from e
+            except Exception:
+                try:
+                    resp = complete("todo2code", "semantic", messages, timeout_seconds=30.0)
+                    if isinstance(resp, CompletionResponse):
+                        return resp.content
+                    return str(resp)
+                except Exception as e:
+                    raise RuntimeError(f"SubLLM import invocation failed: {e}") from e
 
         return _subllm_import_runner
     except ImportError:
@@ -108,26 +114,32 @@ def _find_subllm_runner() -> Optional[Callable[[str], str]]:
                 def _subllm_workspace_runner(prompt: str) -> str:
                     messages = [{"role": "user", "content": prompt}]
                     try:
-                        resp = complete(messages, timeout_seconds=30.0)
+                        resp = complete("koru-agent", "nl-to-koru-dsl", messages, timeout_seconds=30.0)
                         if isinstance(resp, CompletionResponse):
                             return resp.content
                         return str(resp)
-                    except Exception as e:
-                        raise RuntimeError(f"SubLLM workspace invocation failed: {e}") from e
+                    except Exception:
+                        try:
+                            resp = complete("todo2code", "semantic", messages, timeout_seconds=30.0)
+                            if isinstance(resp, CompletionResponse):
+                                return resp.content
+                            return str(resp)
+                        except Exception as e:
+                            raise RuntimeError(f"SubLLM workspace invocation failed: {e}") from e
 
                 return _subllm_workspace_runner
             except ImportError:
                 pass
 
     # 3. CLI executable
-    subllm_bin = shutil.which("subllm")
-    if subllm_bin:
+    subllm_complete_bin = shutil.which("subllm-complete")
+    if subllm_complete_bin:
         def _subllm_cli_runner(prompt: str) -> str:
-            proc = subprocess.run([subllm_bin, "complete", "--prompt", prompt],
-                                  capture_output=True, text=True, timeout=30)
+            proc = subprocess.run([subllm_complete_bin, "koru-agent", "nl-to-koru-dsl"],
+                                  input=prompt, capture_output=True, text=True, timeout=30)
             if proc.returncode == 0 and proc.stdout.strip():
                 return proc.stdout.strip()
-            raise RuntimeError(f"subllm CLI failed: {proc.stderr.strip()}")
+            raise RuntimeError(f"subllm-complete CLI failed: {proc.stderr.strip()}")
 
         return _subllm_cli_runner
 
