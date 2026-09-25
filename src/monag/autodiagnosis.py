@@ -1,0 +1,488 @@
+"""Autodiagnosis & SubLLM ticket generation engine for workspace fleet.
+
+Integrates fleet diagnostics (diagit, git-state), task coverage (monag),
+and learning-loop failure patterns (subactor.reflex). Synthesizes actionable,
+high-value tickets via SubLLM, writes them directly to target repositories'
+Planfile sprints, and prepares them for GitHub Issues synchronization and
+autonomous execution by Koru Autonomous.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+import yaml
+
+SCHEMA = "monag.autodiagnosis/v1"
+
+TIER_FLOOR = "floor"
+TIER_MISSION = "mission"
+TIER_HYGIENE = "hygiene"
+TIER_BACKLOG = "backlog"
+
+TIER_PRIORITY_MAP = {
+    TIER_FLOOR: "critical",
+    TIER_MISSION: "high",
+    TIER_HYGIENE: "medium",
+    TIER_BACKLOG: "low",
+}
+
+
+def _find_subllm_runner() -> Optional[Callable[[str], str]]:
+    """Locate SubLLM client runner or return None if unavailable."""
+    # 1. Direct Python import
+    try:
+        from subllm import complete  # noqa: F401
+        from subllm.client_types import CompletionResponse
+
+        def _subllm_import_runner(prompt: str) -> str:
+            messages = [{"role": "user", "content": prompt}]
+            try:
+                resp = complete(messages, timeout_seconds=30.0)
+                if isinstance(resp, CompletionResponse):
+                    return resp.content
+                return str(resp)
+            except Exception as e:
+                raise RuntimeError(f"SubLLM import invocation failed: {e}") from e
+
+        return _subllm_import_runner
+    except ImportError:
+        pass
+
+    # 2. Check workspace paths
+    for parent in [Path.cwd(), Path.home() / "github", Path.home() / "github" / "subactor"]:
+        subllm_src = parent / "subllm" / "src"
+        if subllm_src.is_dir() and str(subllm_src) not in sys.path:
+            sys.path.insert(0, str(subllm_src))
+            try:
+                from subllm import complete  # noqa: F401
+                from subllm.client_types import CompletionResponse
+
+                def _subllm_workspace_runner(prompt: str) -> str:
+                    messages = [{"role": "user", "content": prompt}]
+                    try:
+                        resp = complete(messages, timeout_seconds=30.0)
+                        if isinstance(resp, CompletionResponse):
+                            return resp.content
+                        return str(resp)
+                    except Exception as e:
+                        raise RuntimeError(f"SubLLM workspace invocation failed: {e}") from e
+
+                return _subllm_workspace_runner
+            except ImportError:
+                pass
+
+    # 3. CLI executable
+    subllm_bin = shutil.which("subllm")
+    if subllm_bin:
+        def _subllm_cli_runner(prompt: str) -> str:
+            proc = subprocess.run([subllm_bin, "complete", "--prompt", prompt],
+                                  capture_output=True, text=True, timeout=30)
+            if proc.returncode == 0 and proc.stdout.strip():
+                return proc.stdout.strip()
+            raise RuntimeError(f"subllm CLI failed: {proc.stderr.strip()}")
+
+        return _subllm_cli_runner
+
+    return None
+
+
+def inspect_repository_anomalies(repo_path: Path) -> List[Dict[str, Any]]:
+    """Fast, read-only inspection of repository technical state and anomalies."""
+    anomalies: List[Dict[str, Any]] = []
+    repo_name = repo_path.name
+    if repo_path.parent and repo_path.parent.name:
+        repo_name = f"{repo_path.parent.name}/{repo_path.name}"
+
+    git_dir = repo_path / ".git"
+    if not git_dir.exists():
+        return anomalies
+
+    # 1. Missing standard files
+    has_readme = any((repo_path / f).exists() for f in ["README.md", "readme.md", "README", "README.txt"])
+    if not has_readme:
+        anomalies.append({
+            "code": "NO_README",
+            "tier": TIER_HYGIENE,
+            "severity": "WARNING",
+            "target": repo_name,
+            "path": str(repo_path),
+            "summary": "Repository is missing a README.md file.",
+            "evidence": "No README or README.md found in repository root.",
+        })
+
+    has_license = any((repo_path / f).exists() for f in ["LICENSE", "LICENSE.md", "LICENSE.txt", "LICENCE"])
+    if not has_license:
+        anomalies.append({
+            "code": "NO_LICENSE",
+            "tier": TIER_HYGIENE,
+            "severity": "WARNING",
+            "target": repo_name,
+            "path": str(repo_path),
+            "summary": "Repository is missing a LICENSE file.",
+            "evidence": "No LICENSE file found in repository root.",
+        })
+
+    # 2. Git status checks (read-only porcelain)
+    try:
+        proc_status = subprocess.run(["git", "-C", str(repo_path), "status", "--porcelain"],
+                                     capture_output=True, text=True, timeout=10)
+        if proc_status.returncode == 0 and proc_status.stdout.strip():
+            dirty_lines = proc_status.stdout.strip().splitlines()
+            anomalies.append({
+                "code": "DIRTY_WORKTREE",
+                "tier": TIER_FLOOR,
+                "severity": "WARNING",
+                "target": repo_name,
+                "path": str(repo_path),
+                "summary": f"Repository has {len(dirty_lines)} uncommitted changes in primary checkout.",
+                "evidence": f"git status --porcelain reports {len(dirty_lines)} modified/untracked files.",
+                "details": dirty_lines[:5],
+            })
+    except Exception:
+        pass
+
+    # 3. Worktree checks
+    try:
+        proc_wt = subprocess.run(["git", "-C", str(repo_path), "worktree", "list", "--porcelain"],
+                                 capture_output=True, text=True, timeout=10)
+        if proc_wt.returncode == 0:
+            wt_blocks = [b.strip() for b in proc_wt.stdout.strip().split("\n\n") if b.strip()]
+            if len(wt_blocks) > 5:
+                anomalies.append({
+                    "code": "HIGH_WORKTREE_COUNT",
+                    "tier": TIER_HYGIENE,
+                    "severity": "INFO",
+                    "target": repo_name,
+                    "path": str(repo_path),
+                    "summary": f"Repository has {len(wt_blocks)} linked worktrees.",
+                    "evidence": f"Observed {len(wt_blocks)} active or leftover worktrees in git worktree list.",
+                })
+    except Exception:
+        pass
+
+    # 4. Planfile checks
+    planfile_dir = repo_path / ".planfile"
+    if not planfile_dir.is_dir():
+        anomalies.append({
+            "code": "PLANFILE_UNINITIALIZED",
+            "tier": TIER_MISSION,
+            "severity": "INFO",
+            "target": repo_name,
+            "path": str(repo_path),
+            "summary": "Repository has no .planfile directory for task orchestration.",
+            "evidence": "Missing .planfile/sprints structure.",
+        })
+    else:
+        sync_file = planfile_dir / "sync" / "github.state.yaml"
+        if not sync_file.is_file():
+            anomalies.append({
+                "code": "PLANFILE_GITHUB_SYNC_MISSING",
+                "tier": TIER_HYGIENE,
+                "severity": "INFO",
+                "target": repo_name,
+                "path": str(repo_path),
+                "summary": "Planfile is not configured for GitHub Issues synchronization.",
+                "evidence": "Missing .planfile/sync/github.state.yaml.",
+            })
+
+    # 5. Dependency / packaging check
+    pyproject = repo_path / "pyproject.toml"
+    package_json = repo_path / "package.json"
+    if pyproject.is_file():
+        text = pyproject.read_text(errors="replace")
+        if "dependencies" in text and "git+" in text:
+            anomalies.append({
+                "code": "DEPENDENCY_GIT_URL_FOUND",
+                "tier": TIER_FLOOR,
+                "severity": "WARNING",
+                "target": repo_name,
+                "path": str(repo_path),
+                "summary": "Repository contains unpinned or raw Git URL dependencies in pyproject.toml.",
+                "evidence": "Found 'git+' URL in pyproject.toml dependencies.",
+            })
+    if package_json.is_file():
+        text = package_json.read_text(errors="replace")
+        if "git+" in text or "github:" in text:
+            anomalies.append({
+                "code": "DEPENDENCY_GIT_URL_FOUND",
+                "tier": TIER_FLOOR,
+                "severity": "WARNING",
+                "target": repo_name,
+                "path": str(repo_path),
+                "summary": "Repository contains unpinned Git URL dependencies in package.json.",
+                "evidence": "Found 'git+' or 'github:' reference in package.json dependencies.",
+            })
+
+    return anomalies
+
+
+def diagnose_fleet(root: Path, depth: int = 2) -> Dict[str, Any]:
+    """Scan workspace fleet for technical defects, governance drift, and ticket readiness."""
+    started = datetime.now(timezone.utc)
+    repos: List[Path] = []
+
+    if (root / ".git").exists():
+        repos.append(root)
+    else:
+        ignored = {".git", ".cache", "node_modules", ".venv", "venv", ".worktrees"}
+        for p in root.iterdir():
+            try:
+                if p.is_dir() and p.name not in ignored and not p.name.startswith("."):
+                    if (p / ".git").exists():
+                        repos.append(p)
+                    elif depth > 1:
+                        for sub in p.iterdir():
+                            if sub.is_dir() and sub.name not in ignored and not sub.name.startswith("."):
+                                if (sub / ".git").exists():
+                                    repos.append(sub)
+            except (OSError, PermissionError):
+                pass
+
+    all_anomalies: List[Dict[str, Any]] = []
+    for r in sorted(set(repos)):
+        all_anomalies.extend(inspect_repository_anomalies(r))
+
+    return {
+        "schema": SCHEMA,
+        "root": str(root),
+        "timestamp": started.isoformat(),
+        "repositories_checked": len(repos),
+        "anomalies_count": len(all_anomalies),
+        "anomalies": all_anomalies,
+    }
+
+
+def _format_subllm_prompt(anomaly: Dict[str, Any]) -> str:
+    """Prepare a strict JSON-focused prompt for SubLLM ticket synthesis."""
+    return f"""You are a Lead AI Architect and Autonomous Software Engineer.
+Synthesize an autonomous remediation ticket for an observed repository anomaly.
+
+Observed Anomaly:
+- Repository: {anomaly.get('target')}
+- Code: {anomaly.get('code')}
+- Tier: {anomaly.get('tier')}
+- Severity: {anomaly.get('severity')}
+- Summary: {anomaly.get('summary')}
+- Evidence: {anomaly.get('evidence')}
+
+Output a single valid JSON object with the following fields:
+{{
+  "title": "[{anomaly.get('target')}] Concise action title",
+  "target_repo": "{anomaly.get('target')}",
+  "tier": "{anomaly.get('tier')}",
+  "priority": "{TIER_PRIORITY_MAP.get(anomaly.get('tier', 'backlog'), 'normal')}",
+  "action": "Exact technical step required to remediate this issue",
+  "acceptance_criteria": [
+    "AC-01: First testable acceptance condition",
+    "AC-02: Second testable acceptance condition"
+  ],
+  "verification_command": "Command to run to verify the fix",
+  "satisfied_when": "Clear completion condition",
+  "labels": ["monag", "autodiagnosis", "koru-autonomous"]
+}}
+Return ONLY valid raw JSON without markdown code fences or conversational prose.
+"""
+
+
+def _parse_subllm_response(text: str, fallback_anomaly: Dict[str, Any]) -> Dict[str, Any]:
+    """Parse JSON response from SubLLM or return structured fallback ticket."""
+    clean = text.strip()
+    if clean.startswith("```"):
+        clean = re.sub(r"^```(?:json)?\n", "", clean)
+        clean = re.sub(r"\n```$", "", clean)
+
+    try:
+        data = json.loads(clean)
+        if isinstance(data, dict) and data.get("title") and data.get("acceptance_criteria"):
+            return data
+    except Exception:
+        pass
+
+    # Rule-based fallback synthesis
+    code = fallback_anomaly.get("code", "DEFECT")
+    target = fallback_anomaly.get("target", "repository")
+    tier = fallback_anomaly.get("tier", TIER_BACKLOG)
+    action_map = {
+        "NO_README": "Create standard README.md documenting project purpose, quickstart, and testing instructions.",
+        "NO_LICENSE": "Add Apache-2.0 or approved standard LICENSE file.",
+        "DIRTY_WORKTREE": "Investigate uncommitted changes in primary checkout, commit or isolate in dedicated delivery worktree.",
+        "HIGH_WORKTREE_COUNT": "Audit and prune obsolete or merged worktrees using diagit or monag doctor --fix.",
+        "PLANFILE_UNINITIALIZED": "Initialize .planfile/sprints directory structure for task orchestration and autonomous agent delivery.",
+        "PLANFILE_GITHUB_SYNC_MISSING": "Configure .planfile/sync/github.state.yaml to enable bidirectional GitHub Issues synchronization.",
+        "DEPENDENCY_GIT_URL_FOUND": "Replace unbounded git+ URL dependency with published package contract or bounded version pin.",
+    }
+    action = action_map.get(code, f"Resolve {code} in {target}.")
+    ac1 = f"AC-01: {fallback_anomaly.get('summary', 'Anomaly is remediated')}."
+    ac2 = "AC-02: Verification checks and automated test suite pass with exit code 0."
+
+    return {
+        "title": f"[{target}] fix({code.lower().replace('_', '-')}): {fallback_anomaly.get('summary')}",
+        "target_repo": target,
+        "tier": tier,
+        "priority": TIER_PRIORITY_MAP.get(tier, "normal"),
+        "action": action,
+        "acceptance_criteria": [ac1, ac2],
+        "verification_command": "git status --porcelain && npm test || pytest -q",
+        "satisfied_when": f"{code} condition is resolved and verified.",
+        "labels": ["monag", "autodiagnosis", "koru-autonomous", f"tier:{tier}"],
+    }
+
+
+def synthesize_tickets_with_subllm(anomalies: List[Dict[str, Any]],
+                                   runner: Optional[Callable[[str], str]] = None) -> List[Dict[str, Any]]:
+    """Synthesize high-fidelity Planfile/GitHub/Koru tickets from raw anomalies using SubLLM."""
+    if runner is None:
+        runner = _find_subllm_runner()
+
+    tickets: List[Dict[str, Any]] = []
+    for anom in anomalies:
+        subllm_result: Optional[str] = None
+        if runner:
+            try:
+                prompt = _format_subllm_prompt(anom)
+                subllm_result = runner(prompt)
+            except Exception:
+                subllm_result = None
+
+        ticket_spec = _parse_subllm_response(subllm_result or "", anom)
+
+        # Assemble full Planfile ticket with Koru handoff directives and GitHub issue markdown
+        target = ticket_spec.get("target_repo", anom.get("target", "workspace"))
+        title = ticket_spec.get("title", f"[{target}] Remediate technical defect")
+        ac_lines = "\n".join(f"- [ ] {ac}" for ac in ticket_spec.get("acceptance_criteria", []))
+        cmd = ticket_spec.get("verification_command", "npm test || pytest -q")
+
+        description = f"""## Context
+Observed technical defect in `{target}`:
+- **Code**: `{anom.get('code')}`
+- **Severity**: {anom.get('severity', 'WARNING')}
+- **Evidence**: {anom.get('evidence', 'Observed in fleet autodiagnosis.')}
+
+## Problem & Action
+{ticket_spec.get('action', anom.get('summary'))}
+
+## Acceptance Criteria
+{ac_lines}
+
+## Verification
+```sh
+{cmd}
+```
+
+## Planfile & Koru Autonomous Handoff
+- Driven by: `koru autonomous`
+- When checks pass and the work is complete, mark done via: `planfile ticket done <id>`
+- Git discipline: commit only files modified for this ticket; stage explicitly by path; write conventional commit message.
+"""
+
+        ticket = {
+            "title": title,
+            "description": description.strip(),
+            "target_repo": target,
+            "tier": ticket_spec.get("tier", anom.get("tier", TIER_BACKLOG)),
+            "priority": ticket_spec.get("priority", "normal"),
+            "labels": ticket_spec.get("labels", ["monag", "autodiagnosis", "koru-autonomous"]),
+            "action": ticket_spec.get("action"),
+            "acceptance_criteria": ticket_spec.get("acceptance_criteria", []),
+            "satisfied_when": ticket_spec.get("satisfied_when"),
+            "verification_command": cmd,
+            "source": "monag.autodiagnosis",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        tickets.append(ticket)
+
+    return tickets
+
+
+def dispatch_tickets_to_planfile(tickets: List[Dict[str, Any]], root: Path,
+                                 sprint: str = "current") -> Dict[str, Any]:
+    """Write synthesized tickets into target projects' Planfile sprint storage."""
+    results: Dict[str, Any] = {
+        "total_tickets": len(tickets),
+        "dispatched": 0,
+        "repositories_updated": [],
+        "tickets_by_repo": {},
+        "errors": [],
+    }
+
+    # Group tickets by target_repo
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for t in tickets:
+        target = t.get("target_repo", "")
+        grouped.setdefault(target, []).append(t)
+
+    for target, repo_tickets in grouped.items():
+        # Find directory for target
+        target_path: Optional[Path] = None
+        if (root / target).is_dir():
+            target_path = root / target
+        elif (root / target.split("/")[-1]).is_dir():
+            target_path = root / target.split("/")[-1]
+        elif root.name == target or f"{root.parent.name}/{root.name}" == target:
+            target_path = root
+
+        if not target_path or not target_path.is_dir():
+            results["errors"].append(f"Target repository directory not found for: {target}")
+            continue
+
+        planfile_sprints_dir = target_path / ".planfile" / "sprints"
+        planfile_sprints_dir.mkdir(parents=True, exist_ok=True)
+        sprint_file = planfile_sprints_dir / f"{sprint}.yaml"
+
+        existing_data: Dict[str, Any] = {}
+        if sprint_file.is_file():
+            try:
+                loaded = yaml.safe_load(sprint_file.read_text())
+                if isinstance(loaded, dict):
+                    existing_data = loaded
+            except Exception:
+                pass
+
+        if "tasks" not in existing_data:
+            existing_data["tasks"] = []
+        if "schema" not in existing_data:
+            existing_data["schema"] = "planfile.sprint/v1"
+        if "sprint" not in existing_data:
+            existing_data["sprint"] = sprint
+
+        existing_titles = {tsk.get("title") for tsk in existing_data["tasks"] if isinstance(tsk, dict)}
+
+        added_for_repo: List[str] = []
+        for t in repo_tickets:
+            if t["title"] in existing_titles:
+                continue
+
+            ticket_id = f"task_{int(datetime.now(timezone.utc).timestamp())}_{len(existing_data['tasks']) + 1}"
+            task_entry = {
+                "id": ticket_id,
+                "title": t["title"],
+                "description": t["description"],
+                "priority": t.get("priority", "normal"),
+                "status": "todo",
+                "tier": t.get("tier", TIER_BACKLOG),
+                "labels": t.get("labels", []),
+                "satisfied_when": t.get("satisfied_when"),
+                "created_at": t.get("created_at"),
+                "source": "monag.autodiagnosis",
+            }
+            existing_data["tasks"].append(task_entry)
+            added_for_repo.append(ticket_id)
+            results["dispatched"] += 1
+
+        # Write back sprint yaml
+        try:
+            sprint_file.write_text(yaml.safe_dump(existing_data, sort_keys=False, allow_unicode=True))
+            results["repositories_updated"].append(str(target_path))
+            results["tickets_by_repo"][target] = added_for_repo
+        except Exception as err:
+            results["errors"].append(f"Failed to write {sprint_file}: {err}")
+
+    return results

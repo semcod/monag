@@ -379,6 +379,18 @@ def main(argv=None):
                                help='directly feed guidance steps into Planfile backlog/sprint')
     triage_parser.add_argument('--sprint', default='current',
                                help='target sprint for --feed-planfile (default: current)')
+    autodiagnose_parser = sub.add_parser('autodiagnose', parents=[common_sub_parser],
+                                         help='autonomous fleet diagnostic engine with SubLLM ticket synthesis and Planfile dispatch')
+    autodiagnose_parser.add_argument('--subllm', action='store_true', default=True,
+                                     help='use SubLLM to synthesize root causes, AC, and Koru handoffs (default: true)')
+    autodiagnose_parser.add_argument('--no-subllm', dest='subllm', action='store_false',
+                                     help='disable SubLLM and use deterministic rule-based ticket synthesis')
+    autodiagnose_parser.add_argument('--feed-planfile', action='store_true',
+                                     help='directly write synthesized tickets into target projects .planfile/sprints storage')
+    autodiagnose_parser.add_argument('--sprint', default='current',
+                                     help='target sprint for --feed-planfile (default: current)')
+    autodiagnose_parser.add_argument('--emit-planfile', action='store_true',
+                                     help='print synthesized tickets as Planfile JSON envelope')
     quality = sub.add_parser('quality', parents=[common_sub_parser],
                              help='read-only semcod/regix quality gate for ONE repository '
                                   '(--root must be a Git checkout, not a workspace); '
@@ -810,6 +822,57 @@ def main(argv=None):
                 print(json.dumps(data, ensure_ascii=False, indent=2))
             else:
                 display_report(advise.markdown(data))
+            return 0
+        if args.mode == 'autodiagnose':
+            from . import autodiagnosis
+            diag_report = autodiagnosis.diagnose_fleet(root, depth=args.depth)
+            runner = autodiagnosis._find_subllm_runner() if getattr(args, 'subllm', True) else None
+            tickets = autodiagnosis.synthesize_tickets_with_subllm(diag_report.get('anomalies', []), runner=runner)
+
+            if getattr(args, 'emit_planfile', False):
+                payload = {
+                    'schema': 'planfile.tickets/v1',
+                    'source': 'monag.autodiagnosis',
+                    'count': len(tickets),
+                    'tickets': tickets,
+                }
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+                return 0
+
+            if getattr(args, 'feed_planfile', False):
+                dispatch_res = autodiagnosis.dispatch_tickets_to_planfile(
+                    tickets, root=root, sprint=getattr(args, 'sprint', 'current')
+                )
+                if output_format == 'json':
+                    print(json.dumps(dispatch_res, ensure_ascii=False, indent=2))
+                else:
+                    print(f"Planfile Dispatch: zapisano {dispatch_res.get('dispatched', 0)}/{dispatch_res.get('total_tickets', 0)} ticketów w {len(dispatch_res.get('repositories_updated', []))} projektach.")
+                    for repo, tids in dispatch_res.get('tickets_by_repo', {}).items():
+                        print(f"  {repo}: {', '.join(tids)}")
+                    for err in dispatch_res.get('errors', []):
+                        print(f"  ERROR: {err}", file=sys.stderr)
+                return 0 if not dispatch_res.get('errors') else 1
+
+            if output_format == 'json':
+                print(json.dumps({
+                    'diagnosis': diag_report,
+                    'tickets': tickets,
+                }, ensure_ascii=False, indent=2))
+            else:
+                lines = [
+                    "# MONAG Fleet Autodiagnosis & SubLLM Ticket Generation",
+                    "",
+                    f"Zbadano {diag_report['repositories_checked']} repozytoriów, wykryto {diag_report['anomalies_count']} anomalii technicznych.",
+                    f"Wygenerowano {len(tickets)} biletów gotowych pod Planfile, GitHub i Koru Autonomous.",
+                    "",
+                ]
+                for idx, t in enumerate(tickets, 1):
+                    lines.append(f"### {idx}. [{t['priority'].upper()}] {t['title']}")
+                    lines.append(f"- **Projekt**: `{t['target_repo']}`")
+                    lines.append(f"- **Działanie**: {t.get('action', '—')}")
+                    lines.append(f"- **Kryteria ukończenia**: `{t.get('satisfied_when', '—')}`")
+                    lines.append("")
+                display_report('\n'.join(lines))
             return 0
         if args.mode == 'quality':
             from . import quality
