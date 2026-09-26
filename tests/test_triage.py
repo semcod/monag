@@ -322,3 +322,60 @@ def test_feed_cli_json_reports_partial_failure(tmp_path, capsys):
         with mock.patch.object(triage, "feed_to_planfile", return_value=result):
             assert cli.main(["--root", str(tmp_path), "--json", "triage", "--feed-planfile"]) == 1
     assert json.loads(capsys.readouterr().out) == result
+
+
+def test_agent_process_collision_and_dirty_worktrees(tmp_path, monkeypatch):
+    """Verify fleet process collision and dirty worktree detection."""
+    monkeypatch.setattr(triage, "_find_algocode_runner", lambda: None)
+    repo_dir = tmp_path / "target_repo"
+    repo_dir.mkdir()
+    (repo_dir / ".git").mkdir()
+    wt_dir = repo_dir / ".worktrees" / "ticket-100--active-feature"
+    wt_dir.mkdir(parents=True)
+    (wt_dir / ".git").mkdir()
+
+    # Mock active agent running in worktree
+    fake_processes = [
+        {
+            "pid": 99999,
+            "kind": "koru",
+            "cwd": str(wt_dir),
+            "working_directories": [str(wt_dir)],
+        }
+    ]
+
+    info = triage.check_agent_collision(repo_dir, fleet_processes=fake_processes)
+    assert info["has_collision"]
+    assert info["blocking"]
+    assert 99999 in info["active_agent_pids"]
+    assert "koru" in info["active_agent_kinds"]
+    assert "active agent process" in info["conflict_basis"]
+
+    # Verify action synthesis adds agent guardrail
+    cand = {"title": "Implement feature X", "priority": "high", "path": str(repo_dir)}
+    details = triage.synthesize_triage_action(cand, triage.CATEGORY_STRATEGIC_ARCHITECTURE, "target_repo", info)
+    assert any("koru (PID 99999)" in g for g in details["guardrails"])
+
+
+def test_classify_candidate_extended_classes():
+    """Verify categorization of operator/IDE alerts and fleet health diagnostics."""
+    # Operator / IDE Alert
+    mcp_cand = {
+        "title": "Bootstrap MCP telemetry server",
+        "origin": "feature",
+        "priority": "high",
+    }
+    cat, score = triage.classify_candidate(mcp_cand, "tellmesh/uri3", {"has_collision": False})
+    assert cat == triage.CATEGORY_OPERATOR_IDE_ALERT
+    assert 650 <= score < 800
+
+    # Fleet Health Diagnostic
+    health_cand = {
+        "title": "Prune stale git worktrees to reduce worktree footprint",
+        "origin": "autodiagnosis",
+        "priority": "medium",
+    }
+    cat, score = triage.classify_candidate(health_cand, "semcod/koru", {"has_collision": False})
+    assert cat == triage.CATEGORY_FLEET_HEALTH_DIAGNOSTIC
+    assert 500 <= score < 650
+
