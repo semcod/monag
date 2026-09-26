@@ -694,14 +694,34 @@ def dispatch_tickets_to_planfile(tickets: List[Dict[str, Any]], root: Path,
             except Exception:
                 pass
 
-        if "tasks" not in existing_data:
+        if "tasks" not in existing_data or not isinstance(existing_data["tasks"], list):
             existing_data["tasks"] = []
         if "schema" not in existing_data:
             existing_data["schema"] = "planfile.sprint/v1"
-        if "sprint" not in existing_data:
-            existing_data["sprint"] = sprint
+
+        # Koru native format expects sprint to be a dict: {id: ..., status: ..., tickets: {...}}
+        if not isinstance(existing_data.get("sprint"), dict):
+            sprint_id = existing_data.get("sprint") if isinstance(existing_data.get("sprint"), str) else sprint
+            existing_data["sprint"] = {
+                "id": sprint_id or sprint,
+                "status": "active",
+                "tickets": {},
+            }
+        elif "tickets" not in existing_data["sprint"] or not isinstance(existing_data["sprint"]["tickets"], dict):
+            existing_data["sprint"]["tickets"] = {}
 
         existing_titles = {tsk.get("title") for tsk in existing_data["tasks"] if isinstance(tsk, dict)}
+        for t_info in existing_data["sprint"]["tickets"].values():
+            if isinstance(t_info, dict):
+                title = t_info.get("title") or t_info.get("name")
+                if title:
+                    existing_titles.add(title)
+        if isinstance(existing_data.get("tickets"), dict):
+            for t_info in existing_data["tickets"].values():
+                if isinstance(t_info, dict):
+                    title = t_info.get("title") or t_info.get("name")
+                    if title:
+                        existing_titles.add(title)
 
         added_for_repo: List[str] = []
         for t in repo_tickets:
@@ -732,7 +752,7 @@ def dispatch_tickets_to_planfile(tickets: List[Dict[str, Any]], root: Path,
                 "title": t["title"],
                 "description": t["description"],
                 "priority": t.get("priority", "normal"),
-                "status": "todo",
+                "status": "ready",
                 "tier": t.get("tier", TIER_BACKLOG),
                 "labels": t.get("labels", []),
                 "source": t_source,
@@ -746,6 +766,37 @@ def dispatch_tickets_to_planfile(tickets: List[Dict[str, Any]], root: Path,
                 "created_at": t.get("created_at"),
             }
             existing_data["tasks"].append(task_entry)
+
+            # Koru native sprint tickets mapping
+            koru_ticket = {
+                "id": ticket_id,
+                "title": t["title"],
+                "name": t["title"],
+                "description": t["description"],
+                "priority": t.get("priority", "normal"),
+                "status": "ready",
+                "execution": {
+                    "state": "ready",
+                    "queue": "default",
+                    "attempt": 0,
+                    "max_attempts": 3,
+                },
+                "executor": t_executor,
+                "inputs": {
+                    "prompt": t["description"],
+                    **t_inputs,
+                },
+                "labels": list(t.get("labels", [])),
+                "tier": t.get("tier", TIER_BACKLOG),
+                "source": t_source,
+                "estimation": t.get("estimation"),
+                "satisfied_when": t.get("satisfied_when"),
+                "created_at": t.get("created_at"),
+            }
+            existing_data["sprint"]["tickets"][ticket_id] = koru_ticket
+            if isinstance(existing_data.get("tickets"), dict):
+                existing_data["tickets"][ticket_id] = koru_ticket
+
             added_for_repo.append(ticket_id)
             results["dispatched"] += 1
 
