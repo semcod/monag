@@ -1,5 +1,6 @@
 import http.client
 import json
+import os
 from pathlib import Path
 import socket
 import subprocess
@@ -12,6 +13,8 @@ from monag import panel
 
 class PanelTests(unittest.TestCase):
     def setUp(self):
+        os.environ['MONAG_DISABLE_SUBLLM'] = '1'
+        self.addCleanup(os.environ.pop, 'MONAG_DISABLE_SUBLLM', None)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)

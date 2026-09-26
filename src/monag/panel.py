@@ -53,10 +53,19 @@ button{background:#16202b;color:#d6e0ea;border:1px solid #2a3a4a;border-radius:4
 .badge-low,.badge-backlog{background:#8b949e;color:#fff}
 details summary{cursor:pointer;color:#58a6ff;font-size:.8rem}
 details code{background:#16202b;padding:2px 4px;border-radius:3px;font-family:monospace;display:block;margin-top:4px;word-break:break-all}
+.live-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#3fb950;margin-left:14px;font-weight:normal;vertical-align:middle}
+.pulse-dot{width:8px;height:8px;border-radius:50%;background:#3fb950;box-shadow:0 0 0 rgba(63,185,80,0.4);animation:pulse 2s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(63,185,80,0.7)}70%{box-shadow:0 0 0 8px rgba(63,185,80,0)}100%{box-shadow:0 0 0 0 rgba(63,185,80,0)}}
+.toast{position:fixed;bottom:20px;right:20px;background:#1f6feb;color:#fff;padding:10px 16px;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.5);z-index:9999;font-size:13px;opacity:0;transition:opacity .3s ease;pointer-events:none}
+.toast.show{opacity:1;pointer-events:auto}
+.btn-sm{font-size:11px;padding:3px 7px;border-radius:3px;cursor:pointer}
+.btn-koru{background:#238636;border:1px solid #2ea043;color:#fff}
+.btn-koru:hover{background:#2ea043}
 </style></head>
 <body>
-<h1>monag panel</h1>
+<h1>monag panel <span class="live-badge"><span class="pulse-dot"></span> <span>LIVE</span> <label style="margin-left:8px;font-size:12px;color:#8a9bb0"><input type="checkbox" id="autorefresh" checked onchange="toggleAutoRefresh(this.checked)"> auto-refresh (<span id="countdown">10s</span>)</label></span></h1>
 <div class="sub" id="meta">loading…</div>
+<div id="toast" class="toast"></div>
 
 <section><h2>Agents</h2><table id="agents"><thead><tr>
 <th>PID</th><th>Kind</th><th>Task</th><th>Working directory</th></tr></thead>
@@ -93,15 +102,24 @@ details code{background:#16202b;padding:2px 4px;border-radius:3px;font-family:mo
 
 <section><h2>Fleet Autodiagnosis & Koru Autonomous Delegations
 <button onclick="runAutodiagnosis()">run diagnosis</button>
-<button onclick="dispatchToKoru()" style="background:#1f4368;border-color:#388bfd;color:#fff">delegate to planfile / koru</button>
-<button onclick="syncWithGitHub()" style="background:#238636;border-color:#2ea043;color:#fff">sync with github</button>
-<button onclick="runDailyAutomation()" style="background:#238636;color:#fff;border:none">daily automation</button></h2>
+<button onclick="dispatchToKoru()" class="btn-koru">⚡ dispatch all to koru</button>
+<button onclick="syncWithGitHub()" style="background:#1f4368;border-color:#388bfd;color:#fff">sync with github</button>
+<button onclick="runDailyAutomation()" style="background:#21262d;border:1px solid #30363d;color:#c9d1d9">daily automation</button></h2>
 <div id="autodiag-summary" class="sub">loading autodiagnosis…</div>
 <table id="autodiagnosis"><thead><tr>
-<th>Target Repo</th><th>Tier</th><th>Priority</th><th>Title</th><th>Estimation (semcod)</th><th>Action</th></tr></thead>
+<th>Target Repo</th><th>Tier</th><th>Priority</th><th>Title</th><th>Estimation (semcod)</th><th>Actions</th></tr></thead>
 <tbody></tbody></table></section>
 
 <script>
+function showToast(msg, isError=false){
+  const el = document.getElementById('toast');
+  if(!el) return;
+  el.textContent = msg;
+  el.style.background = isError ? '#da3633' : '#238636';
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 3500);
+}
+
 function row(cells){const tr=document.createElement('tr');
   for(const c of cells){const td=document.createElement('td');td.textContent=c;tr.appendChild(td);}
   return tr;}
@@ -110,6 +128,27 @@ function fill(id, rows, empty){const tbody=document.querySelector('#'+id+' tbody
   if(!rows.length){const tr=document.createElement('tr');const td=document.createElement('td');
     td.colSpan=8;td.className='empty';td.textContent=empty;tr.appendChild(td);tbody.appendChild(tr);return;}
   for(const r of rows) tbody.appendChild(row(r));}
+
+let refreshSeconds = 10;
+let autoRefreshEnabled = true;
+
+function toggleAutoRefresh(enabled) {
+  autoRefreshEnabled = enabled;
+  const cd = document.getElementById('countdown');
+  if (cd) cd.textContent = enabled ? `${refreshSeconds}s` : 'paused';
+}
+
+function tickCountdown() {
+  if (!autoRefreshEnabled) return;
+  refreshSeconds--;
+  if (refreshSeconds <= 0) {
+    refreshSeconds = 10;
+    loadLive();
+  }
+  const cd = document.getElementById('countdown');
+  if (cd) cd.textContent = `${refreshSeconds}s`;
+}
+
 async function loadLive(){
   const [snap, res] = await Promise.all([
     fetch('/api/snapshot.json').then(r=>r.json()),
@@ -151,11 +190,11 @@ async function loadReportStatus(){
 }
 async function triggerReport(){
   const res = await fetch('/api/report/send-now.json').then(r=>r.json());
-  alert(res.status === 'ok' ? 'Report sent!' : 'Send failed: ' + (res.error || JSON.stringify(res.detail)));
+  showToast(res.status === 'ok' ? 'Report sent!' : 'Send failed: ' + (res.error || JSON.stringify(res.detail)), res.status !== 'ok');
 }
 async function disableReport(){
   const res = await fetch('/api/report/disable.json').then(r=>r.json());
-  alert(res.status === 'ok' ? 'Schedule disabled!' : 'Disable failed: ' + JSON.stringify(res.detail));
+  showToast(res.status === 'ok' ? 'Schedule disabled!' : 'Disable failed: ' + JSON.stringify(res.detail), res.status !== 'ok');
 }
 async function loadAutodiagnosis(){
   try{
@@ -188,57 +227,77 @@ function renderAutodiag(res){
     const tierClass = 'badge badge-' + (t.tier || 'backlog').toLowerCase();
     const prioClass = 'badge badge-' + (t.priority || 'normal').toLowerCase();
     const detailsHtml = t.verification_command ? `<details style="margin-top:4px"><summary>verify: <code>${t.verification_command}</code></summary><div style="font-size:11px;margin-top:4px;color:#8a9bb0">${(t.acceptance_criteria||[]).join('<br>')}</div></details>` : '';
+    const escapedRepo = encodeURIComponent(t.target_repo || '');
+    const escapedTitle = encodeURIComponent(t.title || '');
     tr.innerHTML = `<td><code>${t.target_repo}</code></td>
       <td><span class="${tierClass}">${tier}</span></td>
       <td><span class="${prioClass}">${prio}</span></td>
       <td><strong>${t.title}</strong>${detailsHtml}</td>
       <td>${estStr}</td>
-      <td>${(t.acceptance_criteria||[]).length} AC</td>`;
+      <td><button class="btn-sm btn-koru" onclick="dispatchSingleToKoru('${escapedRepo}','${escapedTitle}')">⚡ dispatch to koru</button></td>`;
     tbody.appendChild(tr);
   }
 }
 async function syncWithGitHub(){
-  document.getElementById('autodiag-summary').textContent = 'Synchronizing Planfile tickets with GitHub Issues…';
+  showToast('Synchronizing Planfile tickets with GitHub Issues…');
   try{
     const res = await fetch('/api/autodiagnosis/sync-github.json').then(r=>r.json());
-    alert('GitHub sync completed for ' + (res.synced_repositories || 0) + ' repositories!');
+    showToast('✓ GitHub sync completed for ' + (res.synced_repositories || 0) + ' repositories!');
     loadAutodiagnosis();
   }catch(e){
-    alert('GitHub sync failed: ' + e);
+    showToast('GitHub sync failed: ' + e, true);
   }
 }
 async function runAutodiagnosis(){
-  document.getElementById('autodiag-summary').textContent = 'Running fleet autodiagnosis…';
+  showToast('Running fleet autodiagnosis…');
   try{
     const res = await fetch('/api/autodiagnosis/run.json').then(r=>r.json());
     renderAutodiag(res);
+    showToast('✓ Fleet autodiagnosis completed!');
   }catch(e){
-    alert('Autodiagnosis failed: ' + e);
+    showToast('Autodiagnosis failed: ' + e, true);
+  }
+}
+async function dispatchSingleToKoru(encodedRepo, encodedTitle){
+  const repo = decodeURIComponent(encodedRepo);
+  const title = decodeURIComponent(encodedTitle);
+  showToast('Dispatching ' + repo + ' ticket to Koru…');
+  try{
+    const res = await fetch('/api/autodiagnosis/dispatch-koru.json', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({repo: repo, title: title})
+    }).then(r=>r.json());
+    const koruMsg = res.koru_active ? ' (Koru daemon PID ' + res.koru_pids.join(', ') + ' active)' : ' (Queued in Planfile)';
+    showToast('✓ Dispatched ' + repo + ' ticket to Planfile' + koruMsg);
+    loadAutodiagnosis();
+  }catch(e){
+    showToast('Dispatch failed: ' + e, true);
   }
 }
 async function dispatchToKoru(){
-  if(!confirm('Dispatch tickets to target repositories .planfile/sprints and prepare for Koru execution?')) return;
-  document.getElementById('autodiag-summary').textContent = 'Dispatching tickets to Planfile…';
+  showToast('Dispatching all synthesized tickets to Planfile for Koru…');
   try{
-    const res = await fetch('/api/autodiagnosis/dispatch.json').then(r=>r.json());
-    alert('Dispatched ' + res.dispatched_count + ' tickets to Planfile storage!');
+    const res = await fetch('/api/autodiagnosis/dispatch-koru.json', {method: 'POST'}).then(r=>r.json());
+    const koruMsg = res.koru_active ? ' (' + res.koru_pids.length + ' Koru processes active)' : '';
+    showToast('✓ Dispatched ' + res.dispatched_count + ' tickets to Planfile' + koruMsg);
     loadAutodiagnosis();
   }catch(e){
-    alert('Dispatch failed: ' + e);
+    showToast('Dispatch failed: ' + e, true);
   }
 }
 async function runDailyAutomation(){
-  document.getElementById('autodiag-summary').textContent = 'Executing daily automated diagnostic & delegation…';
+  showToast('Executing daily automated diagnostic & delegation…');
   try{
     const res = await fetch('/api/autodiagnosis/daily.json').then(r=>r.json());
-    alert('Daily automation completed! Tickets dispatched to Planfile for Koru Autonomous execution.');
+    showToast('✓ Daily automation completed! Tickets dispatched to Planfile for Koru Autonomous execution.');
     loadAutodiagnosis();
   }catch(e){
-    alert('Daily automation failed: ' + e);
+    showToast('Daily automation failed: ' + e, true);
   }
 }
 loadLive(); loadAudit(); loadCatalog(); loadExport(); loadReportStatus(); loadAutodiagnosis();
-setInterval(loadLive, 5000);
+setInterval(tickCountdown, 1000);
 </script>
 </body></html>"""
 
@@ -433,6 +492,38 @@ class State:
             'results': results,
         }
 
+    def autodiagnosis_dispatch_koru(self, target_repo=None, ticket_id=None):
+        """Dispatch autodiagnosis tickets to target repositories' Planfile and notify Koru."""
+        from . import autodiagnosis
+        data = self.autodiagnosis_run()
+        tickets = data.get('tickets', [])
+        if target_repo:
+            tickets = [t for t in tickets if t.get('target_repo') == target_repo]
+        if ticket_id:
+            tickets = [t for t in tickets if t.get('ticket_id') == ticket_id or t.get('title') == ticket_id]
+
+        results = autodiagnosis.dispatch_tickets_to_planfile(tickets, root=self.root, sync_github=True)
+
+        koru_pids = []
+        try:
+            agents = (self.snapshot or {}).get('agents', [])
+            for a in agents:
+                cmd = (a.get('command') or '') + ' ' + (a.get('kind') or '')
+                if 'koru' in cmd.lower():
+                    koru_pids.append(a.get('pid'))
+        except Exception:
+            pass
+
+        return {
+            'status': 'ok',
+            'action': 'dispatch_to_koru',
+            'dispatched_count': results.get('dispatched', 0),
+            'koru_active': bool(koru_pids),
+            'koru_pids': koru_pids,
+            'results': results,
+            'target_repo': target_repo,
+        }
+
 
 ROUTES = {'/api/snapshot.json': lambda s: s.snapshot,
           '/api/resume.json': lambda s: s.resume,
@@ -447,6 +538,8 @@ ROUTES = {'/api/snapshot.json': lambda s: s.snapshot,
           '/api/autodiagnosis/run.json': State.autodiagnosis_run,
           '/api/autodiagnosis/dispatch': State.autodiagnosis_dispatch,
           '/api/autodiagnosis/dispatch.json': State.autodiagnosis_dispatch,
+          '/api/autodiagnosis/dispatch-koru': State.autodiagnosis_dispatch_koru,
+          '/api/autodiagnosis/dispatch-koru.json': State.autodiagnosis_dispatch_koru,
           '/api/autodiagnosis/daily': State.autodiagnosis_daily_automation,
           '/api/autodiagnosis/daily.json': State.autodiagnosis_daily_automation,
           '/api/autodiagnosis/sync-github': State.autodiagnosis_sync_github,
@@ -584,6 +677,13 @@ def make_handler(state):
                 result = dsl_llm.execute(q, state.root, depth=state.depth, registry=state.registry)
                 self._send(json.dumps(result, ensure_ascii=True).encode(), 'application/json; charset=utf-8')
                 return
+            if parsed.path in {'/api/autodiagnosis/dispatch-koru', '/api/autodiagnosis/dispatch-koru.json'}:
+                params = parse_qs(parsed.query)
+                repo = (params.get('repo') or [None])[0]
+                ticket_id = (params.get('ticket_id') or params.get('title') or [None])[0]
+                res = state.autodiagnosis_dispatch_koru(target_repo=repo, ticket_id=ticket_id)
+                self._send(json.dumps(res, ensure_ascii=False).encode(), 'application/json; charset=utf-8')
+                return
             handler = ROUTES.get(parsed.path)
             if handler is None:
                 self._send(json.dumps({'error': 'not found', 'path': clean(self.path)}).encode(),
@@ -673,6 +773,16 @@ def make_handler(state):
                 from . import dsl_llm
                 result = dsl_llm.execute(q, state.root, depth=state.depth, registry=state.registry)
                 self._send(json.dumps(result, ensure_ascii=True).encode(), 'application/json; charset=utf-8')
+                return
+            if parsed.path in {'/api/autodiagnosis/dispatch-koru', '/api/autodiagnosis/dispatch-koru.json'}:
+                try:
+                    length = int(self.headers.get('Content-Length', 0))
+                    raw_data = self.rfile.read(length) if length > 0 else b''
+                    body = json.loads(raw_data) if raw_data else {}
+                except (ValueError, TypeError, json.JSONDecodeError):
+                    body = {}
+                res = state.autodiagnosis_dispatch_koru(target_repo=body.get('repo'), ticket_id=body.get('ticket_id') or body.get('title'))
+                self._send(json.dumps(res, ensure_ascii=False).encode(), 'application/json; charset=utf-8')
                 return
             self._send(json.dumps({'error': 'method not allowed'}).encode(),
                        'application/json; charset=utf-8', status=405)
