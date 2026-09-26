@@ -77,6 +77,8 @@ def sort_tickets_by_priority(tickets: List[Dict[str, Any]]) -> List[Dict[str, An
 
 def _find_subllm_runner() -> Optional[Callable[[str], str]]:
     """Locate SubLLM client runner or return None if unavailable."""
+    if os.environ.get("MONAG_DISABLE_SUBLLM") == "1":
+        return None
     # 1. Direct Python import
     try:
         from subllm import complete  # noqa: F401
