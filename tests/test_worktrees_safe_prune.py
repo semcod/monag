@@ -203,7 +203,7 @@ class TestWorktreesSafePrune(unittest.TestCase):
     @patch("monag.worktrees.audit_active_process_cwds", return_value=(set(), {}))
     def test_panel_worktrees_prune_safe_route(self, _mock_proc):
         from monag.panel import State
-        state = State(root=self.root, depth=1)
+        state = State(root=self.root, state_dir=self.root / "state", depth=1)
         res = state.worktrees_prune_safe(dry_run=True)
         self.assertIn("repositories_audited", res)
         self.assertIn("total_pruned", res)
