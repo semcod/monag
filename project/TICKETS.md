@@ -85,4 +85,5 @@
 | **ticket-093** | [`README.md`](./ticket-093/README.md) | - | - | - | - | [`changelog.md`](./ticket-093/changelog.md) |
 | **ticket-094** | [`README.md`](./ticket-094/README.md) | - | - | - | - | - |
 | **ticket-095** | [`README.md`](./ticket-095/README.md) | - | - | - | - | - |
+| **ticket-096** | [`README.md`](./ticket-096/README.md) | - | - | - | - | - |
 <!-- AUTO:TICKET_INDEX:END -->

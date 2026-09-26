@@ -174,3 +174,31 @@ def test_explicit_cooldown_exception_never_falls_back():
     assert out == ""
     assert "ProviderCooldownError" in error
     run.assert_not_called()
+
+
+def test_procache_unavailable_graceful_fallback(monkeypatch):
+    """When procache is not available, get_cache_runner and run_cached_gh return None."""
+    import monag.cache as cache
+    monkeypatch.setattr(cache, "PROCACHE_AVAILABLE", False)
+    cache.reset_cache_runner()
+    assert cache.get_cache_runner() is None
+    assert cache.run_cached_gh(["gh", "pr", "list", "--repo", "semcod/test-repo"]) is None
+
+    # Verify monitor.command delegates to subprocess.run seamlessly
+    with mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(["gh"], 0, "fallback output", "")) as mock_run:
+        out, err = command(["gh", "pr", "list", "--repo", "semcod/test-repo"])
+        assert out == "fallback output"
+        assert err is None
+        assert mock_run.call_count == 1
+
+
+def test_cli_main_entrypoint_execution():
+    """Verify python3 -m monag.cli entrypoint executes correctly."""
+    res = subprocess.run(
+        [os.sys.executable, "-m", "monag.cli", "--version"],
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0
+    assert "monag" in res.stdout
+

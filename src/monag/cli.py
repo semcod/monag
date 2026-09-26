@@ -1154,3 +1154,8 @@ def main(argv=None):
         parser.exit(1, f'monag: {e}\n')
     finally:
         stack.close()
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
+

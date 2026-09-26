@@ -6,9 +6,13 @@ import os
 from pathlib import Path
 from typing import Sequence, Tuple, Optional
 
-from procache import CachedReadCommand, SQLiteResponseCache
-
-PROCACHE_AVAILABLE = True
+try:
+    from procache import CachedReadCommand, SQLiteResponseCache
+    PROCACHE_AVAILABLE = True
+except ImportError:
+    CachedReadCommand = None  # type: ignore[assignment, misc]
+    SQLiteResponseCache = None  # type: ignore[assignment, misc]
+    PROCACHE_AVAILABLE = False
 
 _runner: Optional[CachedReadCommand] = None
 _cache_path: Optional[Path] = None
@@ -20,7 +24,7 @@ def get_cache_runner(
 ) -> Optional[CachedReadCommand]:
     """Return a shared CachedReadCommand runner or None if unavailable/disabled."""
     global _runner, _cache_path
-    if os.environ.get("MONAG_DISABLE_PROCACHE") == "1":
+    if not PROCACHE_AVAILABLE or os.environ.get("MONAG_DISABLE_PROCACHE") == "1":
         return None
 
     if _runner is not None and ttl is None and cache_path is None:
