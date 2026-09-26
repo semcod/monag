@@ -81,4 +81,5 @@
 | **ticket-089** | [`README.md`](./ticket-089/README.md) | - | - | - | - | [`changelog.md`](./ticket-089/changelog.md) |
 | **ticket-090** | [`README.md`](./ticket-090/README.md) | - | - | - | - | [`changelog.md`](./ticket-090/changelog.md) |
 | **ticket-091** | [`README.md`](./ticket-091/README.md) | - | - | - | - | [`changelog.md`](./ticket-091/changelog.md) |
+| **ticket-092** | [`README.md`](./ticket-092/README.md) | - | - | - | - | [`changelog.md`](./ticket-092/changelog.md) |
 <!-- AUTO:TICKET_INDEX:END -->

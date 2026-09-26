@@ -47,10 +47,15 @@ th{color:#8a9bb0;font-weight:600}
 button{background:#16202b;color:#d6e0ea;border:1px solid #2a3a4a;border-radius:4px;
        padding:.3rem .7rem;font-size:.8rem;cursor:pointer}
 .badge{display:inline-block;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;text-transform:uppercase}
-.badge-critical,.badge-floor{background:#da3633;color:#fff}
-.badge-high,.badge-mission{background:#d29922;color:#fff}
-.badge-medium,.badge-normal,.badge-hygiene{background:#1f6feb;color:#fff}
-.badge-low,.badge-backlog{background:#8b949e;color:#fff}
+.badge-critical,.badge-floor,.badge-immediate-blocker{background:#da3633;color:#fff}
+.badge-high,.badge-mission,.badge-core-foundation{background:#d29922;color:#fff}
+.badge-medium,.badge-normal,.badge-hygiene,.badge-operator-ide-alert{background:#1f6feb;color:#fff}
+.badge-fleet-health-diagnostic{background:#388bfd;color:#fff}
+.badge-strategic-architecture{background:#8957e5;color:#fff}
+.badge-low,.badge-backlog,.badge-code-smell-hygiene{background:#8b949e;color:#fff}
+.badge-safe{background:#238636;color:#fff}
+.badge-collision{background:#da3633;color:#fff}
+.badge-warning{background:#d29922;color:#fff}
 details summary{cursor:pointer;color:#58a6ff;font-size:.8rem}
 details code{background:#16202b;padding:2px 4px;border-radius:3px;font-family:monospace;display:block;margin-top:4px;word-break:break-all}
 .live-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#3fb950;margin-left:14px;font-weight:normal;vertical-align:middle}
@@ -108,6 +113,14 @@ details code{background:#16202b;padding:2px 4px;border-radius:3px;font-family:mo
 <div id="autodiag-summary" class="sub">loading autodiagnosis…</div>
 <table id="autodiagnosis"><thead><tr>
 <th>Target Repo</th><th>Tier</th><th>Priority</th><th>Title</th><th>Estimation (semcod)</th><th>Actions</th></tr></thead>
+<tbody></tbody></table></section>
+
+<section><h2>Holistic Triage & Agent Worktree Collision Monitor
+<button onclick="loadTriage()">refresh</button>
+<button onclick="dispatchTriageToKoru()" class="btn-koru">⚡ dispatch safe triage to koru</button></h2>
+<div id="triage-summary" class="sub">loading holistic triage…</div>
+<table id="triage"><thead><tr>
+<th>Step</th><th>Tier</th><th>Repo</th><th>Title</th><th>Score</th><th>Collision Safety</th><th>Suggested Action & Guardrails</th></tr></thead>
 <tbody></tbody></table></section>
 
 <script>
@@ -296,7 +309,78 @@ async function runDailyAutomation(){
     showToast('Daily automation failed: ' + e, true);
   }
 }
-loadLive(); loadAudit(); loadCatalog(); loadExport(); loadReportStatus(); loadAutodiagnosis();
+async function loadTriage(){
+  try{
+    const data = await fetch('/api/triage.json').then(r=>r.json());
+    renderTriage(data);
+  }catch(e){
+    const el = document.getElementById('triage-summary');
+    if(el) el.textContent = 'Failed loading triage: ' + e;
+  }
+}
+function renderTriage(data){
+  const el = document.getElementById('triage-summary');
+  if(!el) return;
+  const pids = (data.active_agent_pids||[]).join(', ');
+  el.innerHTML = `<strong>${data.total_candidates||0} candidates</strong> evaluated across <strong>${data.discovered_repos_count||0} repos</strong> · ` +
+    `<span style="color:${(data.collision_count||0) > 0 ? '#f85149' : '#3fb950'}">` +
+    `<strong>${data.collision_count||0} declared scope conflicts</strong> · <strong>${data.dirty_worktrees_count||0} dirty worktrees</strong></span> · ` +
+    `Active agent fleet: <strong>${data.active_agents_count||0}</strong> processes (PIDs: ${pids || 'none'})`;
+
+  const tbody = document.querySelector('#triage tbody');
+  if(!tbody) return;
+  tbody.innerHTML = '';
+  const steps = data.guidance_steps || [];
+  if(!steps.length){
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="7" class="empty">No guidance steps generated.</td>';
+    tbody.appendChild(tr);
+    return;
+  }
+  for(const s of steps){
+    const tr = document.createElement('tr');
+    const catClass = 'badge-' + (s.category || 'backlog').replace(/_/g, '-');
+    const safetyBadge = s.collision_safe === false
+      ? '<span class="badge badge-collision">⚠️ Active Agent / Conflict</span>'
+      : (s.collision_safe === true ? '<span class="badge badge-safe">✓ Safe</span>' : '<span class="badge badge-warning">Unverified</span>');
+    
+    const pidsInfo = (s.active_agent_pids && s.active_agent_pids.length) ? `<br><small style="color:#f85149">PIDs: ${s.active_agent_pids.join(', ')}</small>` : '';
+    const guardrails = (s.guardrails||[]).map(g=>`<li>${g}</li>`).join('');
+    const guardrailsHtml = guardrails ? `<details style="margin-top:4px"><summary>Guardrails</summary><ul style="margin:2px 0 0 16px;padding:0;font-size:11px;color:#8a9bb0">${guardrails}</ul></details>` : '';
+
+    const safeDispatch = s.collision_safe !== false
+      ? `<button class="btn-sm btn-koru" onclick="dispatchSingleToKoru('${encodeURIComponent(s.repo)}', '${encodeURIComponent(s.title)}')">⚡ dispatch</button>`
+      : '<span style="color:#da3633;font-size:11px">blocked</span>';
+
+    tr.innerHTML = `
+      <td><strong>${s.step}</strong></td>
+      <td><span class="badge ${catClass}">${s.category.replace(/_/g, ' ')}</span></td>
+      <td><code>${s.repo}</code></td>
+      <td>${s.title}${pidsInfo}</td>
+      <td><code>${s.score}</code></td>
+      <td>${safetyBadge}</td>
+      <td>
+        <div>${s.action}</div>
+        <details style="margin-top:2px"><summary>Command</summary><code>${s.command}</code></details>
+        ${guardrailsHtml}
+        <div style="margin-top:4px">${safeDispatch}</div>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+async function dispatchTriageToKoru(){
+  showToast('Dispatching safe triage steps to Planfile for Koru…');
+  try{
+    const res = await fetch('/api/triage/dispatch-koru.json', {method: 'POST'}).then(r=>r.json());
+    const koruMsg = res.koru_active ? ' (' + res.koru_pids.length + ' Koru processes active)' : '';
+    showToast('✓ Dispatched ' + res.dispatched_count + ' triage steps to Planfile' + koruMsg);
+    loadTriage();
+  }catch(e){
+    showToast('Dispatch failed: ' + e, true);
+  }
+}
+loadLive(); loadAudit(); loadCatalog(); loadExport(); loadReportStatus(); loadAutodiagnosis(); loadTriage();
 setInterval(tickCountdown, 1000);
 </script>
 </body></html>"""
@@ -319,6 +403,7 @@ class State:
         self._export, self._export_at = None, 0.0
         self._prs, self._prs_at = None, 0.0
         self._autodiag, self._autodiag_at = None, 0.0
+        self._triage, self._triage_at = None, 0.0
 
     def get_prs(self, ttl=60):
         with self.lock:
@@ -524,6 +609,76 @@ class State:
             'target_repo': target_repo,
         }
 
+    def get_triage(self, ttl=60):
+        with self.lock:
+            if self._triage is not None and time.monotonic() - self._triage_at < ttl:
+                return self._triage
+        from . import triage
+        data = triage.run_holistic_triage(self.root, self.depth)
+        with self.lock:
+            self._triage, self._triage_at = data, time.monotonic()
+        return data
+
+    def get_collisions(self, ttl=30):
+        triage_data = self.get_triage(ttl=ttl)
+        active_agents = triage_data.get('active_agents_count', 0)
+        active_pids = triage_data.get('active_agent_pids', [])
+        dirty_wts = triage_data.get('dirty_worktrees_count', 0)
+        collisions = triage_data.get('collision_count', 0)
+        recs = triage_data.get('recommendations', [])
+        colliding_items = [r for r in recs if r.get('collision', {}).get('has_collision') or r.get('collision', {}).get('blocking')]
+        return {
+            'active_agents_count': active_agents,
+            'active_agent_pids': active_pids,
+            'dirty_worktrees_count': dirty_wts,
+            'collision_count': collisions,
+            'colliding_items': colliding_items,
+        }
+
+    def triage_dispatch_koru(self, target_repo=None, ticket_id=None):
+        """Dispatch collision-safe triage guidance steps to Planfile for Koru execution."""
+        from . import triage, autodiagnosis
+        data = self.get_triage()
+        steps = data.get('guidance_steps', [])
+        safe_steps = [s for s in steps if s.get('collision_safe') is not False]
+        if target_repo:
+            safe_steps = [s for s in safe_steps if s.get('repo') == target_repo]
+        if ticket_id:
+            safe_steps = [s for s in safe_steps if s.get('title') == ticket_id or str(s.get('step')) == str(ticket_id)]
+
+        tickets = []
+        for s in safe_steps:
+            tickets.append({
+                'target_repo': s.get('repo'),
+                'title': s.get('title'),
+                'description': s.get('action'),
+                'priority': 'high' if s.get('category') in (triage.CATEGORY_IMMEDIATE_BLOCKER, triage.CATEGORY_CORE_FOUNDATION) else 'medium',
+                'verify_command': s.get('command'),
+                'guardrails': s.get('guardrails'),
+            })
+
+        results = autodiagnosis.dispatch_tickets_to_planfile(tickets, root=self.root, sync_github=False)
+
+        koru_pids = []
+        try:
+            agents = (self.snapshot or {}).get('agents', [])
+            for a in agents:
+                cmd = (a.get('command') or '') + ' ' + (a.get('kind') or '')
+                if 'koru' in cmd.lower():
+                    koru_pids.append(a.get('pid'))
+        except Exception:
+            pass
+
+        return {
+            'status': 'ok',
+            'action': 'triage_dispatch_koru',
+            'dispatched_count': results.get('dispatched', 0),
+            'koru_active': bool(koru_pids),
+            'koru_pids': koru_pids,
+            'results': results,
+            'target_repo': target_repo,
+        }
+
 
 ROUTES = {'/api/snapshot.json': lambda s: s.snapshot,
           '/api/resume.json': lambda s: s.resume,
@@ -532,6 +687,12 @@ ROUTES = {'/api/snapshot.json': lambda s: s.snapshot,
           '/api/catalog.json': State.get_catalog,
           '/api/export.json': State.get_export,
           '/api/advise.json': State.get_advise,
+          '/api/triage': State.get_triage,
+          '/api/triage.json': State.get_triage,
+          '/api/collisions': State.get_collisions,
+          '/api/collisions.json': State.get_collisions,
+          '/api/triage/dispatch-koru': State.triage_dispatch_koru,
+          '/api/triage/dispatch-koru.json': State.triage_dispatch_koru,
           '/api/autodiagnosis': State.get_autodiagnosis,
           '/api/autodiagnosis.json': State.get_autodiagnosis,
           '/api/autodiagnosis/run': State.autodiagnosis_run,
@@ -684,6 +845,13 @@ def make_handler(state):
                 res = state.autodiagnosis_dispatch_koru(target_repo=repo, ticket_id=ticket_id)
                 self._send(json.dumps(res, ensure_ascii=False).encode(), 'application/json; charset=utf-8')
                 return
+            if parsed.path in {'/api/triage/dispatch-koru', '/api/triage/dispatch-koru.json'}:
+                params = parse_qs(parsed.query)
+                repo = (params.get('repo') or [None])[0]
+                ticket_id = (params.get('ticket_id') or params.get('title') or [None])[0]
+                res = state.triage_dispatch_koru(target_repo=repo, ticket_id=ticket_id)
+                self._send(json.dumps(res, ensure_ascii=False).encode(), 'application/json; charset=utf-8')
+                return
             handler = ROUTES.get(parsed.path)
             if handler is None:
                 self._send(json.dumps({'error': 'not found', 'path': clean(self.path)}).encode(),
@@ -782,6 +950,16 @@ def make_handler(state):
                 except (ValueError, TypeError, json.JSONDecodeError):
                     body = {}
                 res = state.autodiagnosis_dispatch_koru(target_repo=body.get('repo'), ticket_id=body.get('ticket_id') or body.get('title'))
+                self._send(json.dumps(res, ensure_ascii=False).encode(), 'application/json; charset=utf-8')
+                return
+            if parsed.path in {'/api/triage/dispatch-koru', '/api/triage/dispatch-koru.json'}:
+                try:
+                    length = int(self.headers.get('Content-Length', 0))
+                    raw_data = self.rfile.read(length) if length > 0 else b''
+                    body = json.loads(raw_data) if raw_data else {}
+                except (ValueError, TypeError, json.JSONDecodeError):
+                    body = {}
+                res = state.triage_dispatch_koru(target_repo=body.get('repo'), ticket_id=body.get('ticket_id') or body.get('title'))
                 self._send(json.dumps(res, ensure_ascii=False).encode(), 'application/json; charset=utf-8')
                 return
             self._send(json.dumps({'error': 'method not allowed'}).encode(),
