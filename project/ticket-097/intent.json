@@ -1,0 +1,82 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-097",
+  "summary": "Remove raw git url dependency from pyproject.toml",
+  "workstream": "governance",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-097/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "pyproject.toml"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "f9b0acad578457ef1bc81df11485931572136682",
+    "targetBranch": "main",
+    "outcome": "Remove unpinned raw git+ URL dependency from pyproject.toml to comply with standard packaging and autodiagnosis.",
+    "nonGoals": [
+      "No change to monitor or CLI behavior.",
+      "No release and no registry publish."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 20,
+    "budgets": {
+      "maxImplementationFiles": 3,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Remove subactor-procache git URL from pyproject.toml dependencies since monag.cache implements dynamic graceful fallback.",
+      "components": [
+        {
+          "name": "packaging-metadata",
+          "paths": [
+            "pyproject.toml"
+          ]
+        },
+        {
+          "name": "ticket-carrier",
+          "paths": [
+            "project/ticket-097/**",
+            "project/TICKETS.md"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert commit to restore pyproject.toml dependencies."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "./project/governance-check.sh",
+          "python3 -m monag autodiagnose --root . --limit 5"
+        ],
+        "evidence": "Pending exact-head publication."
+      }
+    ]
+  }
+}
