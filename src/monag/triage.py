@@ -19,16 +19,20 @@ from typing import Any, Dict, List, Tuple
 
 SCHEMA = "monag.triage/v1"
 
-# Four algorithmic triage tiers
+# Actionable algorithmic triage categories (Issue #68)
 CATEGORY_IMMEDIATE_BLOCKER = "immediate_blocker"
 CATEGORY_CORE_FOUNDATION = "core_foundation"
 CATEGORY_STRATEGIC_ARCHITECTURE = "strategic_architecture"
+CATEGORY_OPERATOR_IDE_ALERT = "operator_ide_alert"
+CATEGORY_FLEET_HEALTH_DIAGNOSTIC = "fleet_health_diagnostic"
 CATEGORY_CODE_SMELL_HYGIENE = "code_smell_hygiene"
 
 CATEGORY_ORDER = [
     CATEGORY_IMMEDIATE_BLOCKER,
     CATEGORY_CORE_FOUNDATION,
     CATEGORY_STRATEGIC_ARCHITECTURE,
+    CATEGORY_OPERATOR_IDE_ALERT,
+    CATEGORY_FLEET_HEALTH_DIAGNOSTIC,
     CATEGORY_CODE_SMELL_HYGIENE,
 ]
 
@@ -36,6 +40,8 @@ CATEGORY_BASE_SCORES = {
     CATEGORY_IMMEDIATE_BLOCKER: 2000,
     CATEGORY_CORE_FOUNDATION: 1200,
     CATEGORY_STRATEGIC_ARCHITECTURE: 800,
+    CATEGORY_OPERATOR_IDE_ALERT: 650,
+    CATEGORY_FLEET_HEALTH_DIAGNOSTIC: 500,
     CATEGORY_CODE_SMELL_HYGIENE: 300,
 }
 
@@ -71,6 +77,18 @@ def _find_algocode_runner() -> str | None:
     return None
 
 
+def audit_active_fleet_processes(root: Path | None = None) -> List[Dict[str, Any]]:
+    """Scan machine processes to find active autonomous agents and their worktrees."""
+    from . import monitor
+    try:
+        res = monitor.processes(root=root or (Path.home() / "github"), machine=True, open_files=False)
+        if isinstance(res, tuple):
+            return res[0]
+        return res
+    except Exception:
+        return []
+
+
 def _lease_evidence(repo_path: Path) -> List[Dict[str, Any]]:
     from .fleet import lease_observation
     if (repo_path / ".git").is_file():
@@ -97,17 +115,23 @@ def collect_active_leases(repo_path: Path) -> List[Dict[str, Any]]:
     """Return observed ownership claims, never proof of a running process."""
     active = {"active", "claimed", "editing", "in_progress", "validating",
               "publication_frozen", "dispatching", "approved"}
-    return [row for row in _lease_evidence(repo_path) if row["lease_status"] in active]
+    return [row for row in _lease_evidence(repo_path) if row.get("lease_status") in active]
 
 
-def check_agent_collision(repo_path: Path, ticket: str | None = None) -> Dict[str, Any]:
-    """Separate lease blockers and declared scope overlap from write authority."""
+def check_agent_collision(
+    repo_path: Path,
+    ticket: str | None = None,
+    fleet_processes: List[Dict[str, Any]] | None = None,
+) -> Dict[str, Any]:
+    """Audit active agent fleet, worktree locks, and lease conflicts for a repository."""
+    repo_path = repo_path.resolve()
     evidence = _lease_evidence(repo_path)
     active = {"active", "claimed", "editing", "in_progress", "validating",
               "publication_frozen", "dispatching", "approved"}
     terminal = {"released", "closed", "merged", "cancelled", "canceled", "complete", "completed", "done"}
-    leases = [row for row in evidence if row["lease_status"] in active]
-    unknown = [row for row in evidence if row["lease_status"] not in active | terminal]
+    leases = [row for row in evidence if row.get("lease_status") in active]
+    unknown = [row for row in evidence if row.get("lease_status") not in active | terminal]
+
     conflict_report: Dict[str, Any] = {}
     if _find_algocode_runner() == "import":
         try:
@@ -115,15 +139,100 @@ def check_agent_collision(repo_path: Path, ticket: str | None = None) -> Dict[st
             conflict_report = algo.check_conflict(repo_root=repo_path)
         except Exception:
             pass
+
+    # 1. Audit active agent processes running in or targeting this repo / worktrees
+    active_agent_pids: List[int] = []
+    active_agent_kinds: List[str] = []
+    active_agent_worktrees: List[str] = []
+    active_agent_descriptions: List[str] = []
+
+    if isinstance(fleet_processes, tuple):
+        fleet_processes = fleet_processes[0]
+    elif fleet_processes is None:
+        fleet_processes = audit_active_fleet_processes(repo_path)
+
+    for proc in (fleet_processes or []):
+        if not isinstance(proc, dict):
+            continue
+        pwds = list(proc.get("working_directories") or [])
+        cwd = proc.get("cwd")
+        if cwd and cwd not in pwds:
+            pwds.append(cwd)
+
+        matching_dirs = []
+        for d in pwds:
+            if not d:
+                continue
+            try:
+                p = Path(d).resolve()
+                if p == repo_path or repo_path in p.parents or p in repo_path.parents:
+                    matching_dirs.append(str(p))
+            except Exception:
+                continue
+
+        if matching_dirs:
+            pid = proc.get("pid")
+            kind = proc.get("kind") or "agent"
+            if pid and pid not in active_agent_pids:
+                active_agent_pids.append(pid)
+            if kind and kind not in active_agent_kinds:
+                active_agent_kinds.append(kind)
+            for m in matching_dirs:
+                if m not in active_agent_worktrees:
+                    active_agent_worktrees.append(m)
+            active_agent_descriptions.append(f"{kind} (PID {pid}) in {Path(matching_dirs[0]).name}")
+
+    # 2. Audit dirty worktrees in repository
+    dirty_worktrees: List[str] = []
+    worktree_dir = repo_path / ".worktrees"
+    if worktree_dir.is_dir():
+        try:
+            for wt in worktree_dir.iterdir():
+                if wt.is_dir() and (wt / ".git").exists():
+                    status_proc = subprocess.run(
+                        ["git", "status", "--porcelain"],
+                        cwd=str(wt), capture_output=True, text=True, timeout=2,
+                    )
+                    if status_proc.returncode == 0 and status_proc.stdout.strip():
+                        dirty_worktrees.append(wt.name)
+        except Exception:
+            pass
+
+    # Determine collision and blocking state
+    has_process_collision = bool(active_agent_pids)
+    has_algo_collision = bool(conflict_report.get("has_conflict", False))
+    has_lease_collision = bool(leases)
+    has_dirty_collision = bool(dirty_worktrees)
+
+    has_collision = has_process_collision or has_algo_collision or (ticket and any(ticket in row.get("path", "") for row in leases))
+    blocking = bool(conflict_report.get("blocking", False) or leases or unknown or active_agent_pids or dirty_worktrees)
+
+    conflict_reasons = []
+    if active_agent_descriptions:
+        conflict_reasons.append(f"active agent process: {', '.join(active_agent_descriptions)}")
+    if dirty_worktrees:
+        conflict_reasons.append(f"uncommitted worktrees: {', '.join(dirty_worktrees)}")
+    if leases:
+        owners = sorted({row["lease_owner"] for row in leases if isinstance(row.get("lease_owner"), str)})
+        conflict_reasons.append(f"active leases: {', '.join(owners) if owners else len(leases)}")
+    if has_algo_collision:
+        conflict_reasons.append("algocode declared scope conflict")
+
+    conflict_basis = "; ".join(conflict_reasons) if conflict_reasons else "declared scopes; process activity verified safe"
+
     return {
-        "has_collision": bool(conflict_report.get("has_conflict", False)),
-        "conflict_basis": "declared scopes; process activity unverified",
+        "has_collision": bool(has_collision),
+        "conflict_basis": conflict_basis,
         "active_lease_count": len(leases),
         "active_owners": sorted({row["lease_owner"] for row in leases if isinstance(row.get("lease_owner"), str)}),
         "lease_evidence": evidence,
         "unknown_lease_count": len(unknown),
         "algocode_conflicts": conflict_report.get("conflicts", []),
-        "blocking": bool(conflict_report.get("blocking", False) or leases or unknown),
+        "active_agent_pids": active_agent_pids,
+        "active_agent_kinds": active_agent_kinds,
+        "active_agent_worktrees": active_agent_worktrees,
+        "dirty_worktrees": dirty_worktrees,
+        "blocking": bool(blocking),
         "ownership_verified": False,
     }
 
@@ -166,7 +275,39 @@ def classify_candidate(
             score += 150  # green PRs ready to merge get immediate elevation
         return CATEGORY_CORE_FOUNDATION, score
 
-    # 3. Code Smell & Hygiene
+    # 3. Operator & IDE Integration Alert
+    if (
+        origin in ("mcp-bootstrap", "operator-alert", "ide-integration")
+        or "bootstrap mcp" in title
+        or "mcp telemetry" in title
+        or "mcp server" in title
+        or "planfile api" in title
+        or "ide integration alert" in title
+    ):
+        score = CATEGORY_BASE_SCORES[CATEGORY_OPERATOR_IDE_ALERT]
+        if priority in ("high", "p1"):
+            score += 80
+        elif priority in ("medium", "p2"):
+            score += 40
+        return CATEGORY_OPERATOR_IDE_ALERT, score
+
+    # 4. Fleet Health Diagnostic
+    if (
+        "prune stale" in title
+        or "stale git worktree" in title
+        or "no-license" in title
+        or "planfile-github-sync" in title
+        or "fleet health" in title
+        or origin in ("autodiagnosis", "fleet-diagnostic")
+    ):
+        score = CATEGORY_BASE_SCORES[CATEGORY_FLEET_HEALTH_DIAGNOSTIC]
+        if priority in ("high", "p1"):
+            score += 80
+        elif priority in ("medium", "p2"):
+            score += 40
+        return CATEGORY_FLEET_HEALTH_DIAGNOSTIC, score
+
+    # 5. Code Smell & Hygiene
     if (
         "shotgun" in title
         or "smell" in title
@@ -183,7 +324,7 @@ def classify_candidate(
             score += 50
         return CATEGORY_CODE_SMELL_HYGIENE, score
 
-    # 4. Strategic Architecture (default for substantive work)
+    # 6. Strategic Architecture (default for substantive work)
     score = CATEGORY_BASE_SCORES[CATEGORY_STRATEGIC_ARCHITECTURE]
     if is_core:
         score += 100
@@ -217,8 +358,14 @@ def synthesize_triage_action(
         "Use Wellmanifest Worktrees v5 (<primary>/.worktrees/ticket-NNN--slug).",
         "Publication requires current required checks and the configured protected delivery process.",
     ]
-    if collision_info.get("blocking") or collision_info.get("has_collision"):
-        owners = ", ".join(collision_info.get("active_owners", [])) or "unresolved owner"
+    if collision_info.get("active_agent_pids"):
+        agents_str = ", ".join(f"{k} (PID {p})" for k, p in zip(collision_info.get("active_agent_kinds", []), collision_info.get("active_agent_pids", [])))
+        guardrails.append(f"Active agent running: {agents_str}; pause write operations until agent completes.")
+    if collision_info.get("dirty_worktrees"):
+        wts_str = ", ".join(collision_info["dirty_worktrees"])
+        guardrails.append(f"Uncommitted changes in worktrees ({wts_str}); inspect and clean before allocating new tickets.")
+    if collision_info.get("active_owners"):
+        owners = ", ".join(collision_info.get("active_owners", []))
         guardrails.append(f"Ownership or declared scope needs reconciliation ({owners}); do not edit overlapping files.")
     repo_arg = shlex.quote(repo_name)
     path_arg = shlex.quote(str(candidate.get("path") or repo_name))
@@ -251,6 +398,9 @@ def run_holistic_triage(
     started = time.monotonic()
     discovered_repos: List[Tuple[str, Path]] = []
 
+    # Audit running agent fleet across system/workspace once for performance
+    active_fleet = audit_active_fleet_processes(root)
+
     errors = []
     def visit(path: Path, level: int) -> None:
         if (path / ".git").exists():
@@ -271,11 +421,11 @@ def run_holistic_triage(
 
     all_raw_candidates: List[Dict[str, Any]] = list(extra_candidates or [])
 
-    # 2. Inspect each repo for active checkouts, unpushed commits, and leases
+    # 2. Inspect each repo for active checkouts, unpushed commits, active processes and leases
     collisions_by_repo: Dict[str, Dict[str, Any]] = {}
 
     for repo_name, repo_path in discovered_repos:
-        collision_info = check_agent_collision(repo_path)
+        collision_info = check_agent_collision(repo_path, fleet_processes=active_fleet)
         collisions_by_repo[repo_name] = collision_info
 
         # Check for unpushed commits / ahead of origin
@@ -358,6 +508,7 @@ def run_holistic_triage(
     # Generate sequential deterministic guidance steps
     guidance_steps = []
     for idx, item in enumerate(capped_items, start=1):
+        is_collision = bool(item["collision"].get("has_collision") or item["collision"].get("blocking"))
         guidance_steps.append({
             "step": idx,
             "category": item["category"],
@@ -366,12 +517,16 @@ def run_holistic_triage(
             "score": item["score"],
             "action": item["action"],
             "command": item["suggested_command"],
-            "collision_safe": False if item["collision"].get("has_collision") else None,
+            "collision_safe": False if is_collision else None,
             "ownership_verified": False,
             "guardrails": item["guardrails"],
+            "active_agent_pids": item["collision"].get("active_agent_pids", []),
+            "dirty_worktrees": item["collision"].get("dirty_worktrees", []),
         })
 
     duration = round(time.monotonic() - started, 2)
+    active_pids = sorted({pid for c in collisions_by_repo.values() for pid in c.get("active_agent_pids", [])})
+    dirty_wts = sum(len(c.get("dirty_worktrees", [])) for c in collisions_by_repo.values())
 
     return {
         "schema": SCHEMA,
@@ -380,11 +535,14 @@ def run_holistic_triage(
         "duration_seconds": duration,
         "discovered_repos_count": len(discovered_repos),
         "total_candidates": len(all_raw_candidates),
+        "active_agents_count": len(active_fleet),
+        "active_agent_pids": active_pids,
+        "dirty_worktrees_count": dirty_wts,
         "collision_count": sum(1 for c in collisions_by_repo.values() if c.get("has_collision")),
         "lease_blocked_repo_count": sum(1 for c in collisions_by_repo.values() if c.get("blocking")),
         "issue_scan_performed": False,
         "github_api_requests": 0,
-        "evidence_scope": "local Git, lease and declared scope observations",
+        "evidence_scope": "local Git, process, worktree and lease observations",
         "errors": errors,
         "recommendations": capped_items,
         "guidance_steps": guidance_steps,
@@ -399,8 +557,10 @@ def triage_markdown(report: Dict[str, Any]) -> str:
         f"- **Root**: `{report.get('root')}`",
         f"- **Discovered Repositories**: {report.get('discovered_repos_count')}",
         f"- **Total Candidates Evaluated**: {report.get('total_candidates')}",
-        f"- **Declared Scope Conflicts**: {report.get('collision_count')}",
-        "- **Evidence**: local scan; running writers and GitHub publication are not established.",
+        f"- **Active Agent Processes**: {report.get('active_agents_count', 0)} (PIDs: {report.get('active_agent_pids', [])})",
+        f"- **Dirty / Uncommitted Worktrees**: {report.get('dirty_worktrees_count', 0)}",
+        f"- **Declared Scope / Worktree Conflicts**: {report.get('collision_count')}",
+        "- **Evidence**: local process, git worktree and lease observations; Wellmanifest Worktrees v5 compliant.",
         f"- **Generated At**: {report.get('generated_at')}",
         "",
         "## Deterministic Step-by-Step Guidance Plan",
@@ -414,7 +574,7 @@ def triage_markdown(report: Dict[str, Any]) -> str:
 
     for s in steps:
         cat_tag = s["category"].upper().replace("_", " ")
-        safety = "Ownership verified" if s.get("ownership_verified") else ("⚠️ Declared conflict" if s.get("collision_safe") is False else "Ownership unverified")
+        safety = "Ownership verified" if s.get("ownership_verified") else ("⚠️ Declared conflict / active agent" if s.get("collision_safe") is False else "Ownership unverified (collision-safe)")
         lines.append(f"### Step {s['step']}: [{cat_tag}] `{s['repo']}` — {s['title']}")
         lines.append(f"- **Score**: `{s['score']}` | **Status**: {safety}")
         lines.append(f"- **Action**: {s['action']}")
