@@ -154,41 +154,14 @@ def audit_merged_branches(repo: Path) -> list[str]:
 
 
 def prune_and_remediate(repo: Path, stale_worktrees: list[dict], merged_branches: list[str]) -> dict:
-    """Remediate a repo by pruning worktrees and deleting merged ticket branches."""
-    pruned = []
-    deleted = []
-
-    # 1. Prune dead worktrees from git internals
-    command(['git', '-C', str(repo), 'worktree', 'prune'])
-
-    # 2. Remove stale/merged secondary worktrees
-    for wt in stale_worktrees:
-        if wt.get('is_primary'):
-            continue
-        wt_path = Path(wt['path'])
-        command(['git', '-C', str(repo), 'worktree', 'remove', '--force', str(wt_path)])
-        if not wt_path.exists():
-            pruned.append({'repo': repo.name, 'path': str(wt_path), 'branch': wt.get('branch', '')})
-        else:
-            try:
-                shutil.rmtree(wt_path, ignore_errors=True)
-                pruned.append({'repo': repo.name, 'path': str(wt_path), 'branch': wt.get('branch', '')})
-            except Exception:
-                pass
-
-    # 3. Prune worktrees again after directory removal
-    command(['git', '-C', str(repo), 'worktree', 'prune'])
-
-    # 4. Delete merged branches (including branches that were freed up by worktree removal)
-    active_merged = audit_merged_branches(repo)
-    candidates = list(dict.fromkeys(merged_branches + active_merged))
-    for b in candidates:
-        chk, _ = command(['git', '-C', str(repo), 'branch', '--list', b])
-        if chk.strip():
-            command(['git', '-C', str(repo), 'branch', '-D' if b.startswith(('ticket/', 'ticket-')) else '-d', b])
-            deleted.append({'repo': repo.name, 'branch': b})
-
-    return {'worktrees_pruned': pruned, 'branches_deleted': deleted}
+    """Remediate a repo by safely pruning worktrees and deleting merged ticket branches conforming to Wellmanifest v5."""
+    from . import worktrees
+    res = worktrees.prune_worktrees_safe(repo, dry_run=False)
+    return {
+        'worktrees_pruned': res['pruned'],
+        'branches_deleted': [{'repo': repo.name, 'branch': b} for b in res['deleted_branches']],
+        'protected': res['protected'],
+    }
 
 
 def diagnose(root: Path, fix: bool = False) -> dict:
