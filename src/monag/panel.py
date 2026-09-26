@@ -679,6 +679,12 @@ class State:
             'target_repo': target_repo,
         }
 
+    def worktrees_prune_safe(self, target_repo=None, dry_run=False):
+        from . import worktrees
+        return worktrees.prune_fleet_worktrees_safe(
+            self.root, depth=self.depth, dry_run=dry_run, target_repo=target_repo
+        )
+
 
 ROUTES = {'/api/snapshot.json': lambda s: s.snapshot,
           '/api/resume.json': lambda s: s.resume,
@@ -705,6 +711,8 @@ ROUTES = {'/api/snapshot.json': lambda s: s.snapshot,
           '/api/autodiagnosis/daily.json': State.autodiagnosis_daily_automation,
           '/api/autodiagnosis/sync-github': State.autodiagnosis_sync_github,
           '/api/autodiagnosis/sync-github.json': State.autodiagnosis_sync_github,
+          '/api/worktrees/prune-safe': State.worktrees_prune_safe,
+          '/api/worktrees/prune-safe.json': State.worktrees_prune_safe,
           '/api/report/status': State.get_report_status,
           '/api/report/status.json': State.get_report_status,
           '/api/report/disable': State.report_disable,
@@ -852,6 +860,13 @@ def make_handler(state):
                 res = state.triage_dispatch_koru(target_repo=repo, ticket_id=ticket_id)
                 self._send(json.dumps(res, ensure_ascii=False).encode(), 'application/json; charset=utf-8')
                 return
+            if parsed.path in {'/api/worktrees/prune-safe', '/api/worktrees/prune-safe.json'}:
+                params = parse_qs(parsed.query)
+                repo = (params.get('repo') or [None])[0]
+                dry_run = (params.get('dry_run') or ['false'])[0].lower() in {'1', 'true', 'yes'}
+                res = state.worktrees_prune_safe(target_repo=repo, dry_run=dry_run)
+                self._send(json.dumps(res, ensure_ascii=False).encode(), 'application/json; charset=utf-8')
+                return
             handler = ROUTES.get(parsed.path)
             if handler is None:
                 self._send(json.dumps({'error': 'not found', 'path': clean(self.path)}).encode(),
@@ -960,6 +975,16 @@ def make_handler(state):
                 except (ValueError, TypeError, json.JSONDecodeError):
                     body = {}
                 res = state.triage_dispatch_koru(target_repo=body.get('repo'), ticket_id=body.get('ticket_id') or body.get('title'))
+                self._send(json.dumps(res, ensure_ascii=False).encode(), 'application/json; charset=utf-8')
+                return
+            if parsed.path in {'/api/worktrees/prune-safe', '/api/worktrees/prune-safe.json'}:
+                try:
+                    length = int(self.headers.get('Content-Length', 0))
+                    raw_data = self.rfile.read(length) if length > 0 else b''
+                    body = json.loads(raw_data) if raw_data else {}
+                except (ValueError, TypeError, json.JSONDecodeError):
+                    body = {}
+                res = state.worktrees_prune_safe(target_repo=body.get('repo'), dry_run=body.get('dry_run', False))
                 self._send(json.dumps(res, ensure_ascii=False).encode(), 'application/json; charset=utf-8')
                 return
             self._send(json.dumps({'error': 'method not allowed'}).encode(),

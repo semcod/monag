@@ -1,0 +1,27 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-095",
+  "summary": "implement safe worktree pruner conforming to wellmanifest worktrees v5",
+  "workstream": "application",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-095/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/worktrees.py",
+    "src/monag/doctor.py",
+    "src/monag/cli.py",
+    "src/monag/panel.py",
+    "tests/test_worktrees*.py",
+    "tests/test_doctor*.py"
+  ],
+  "forbiddenPaths": ["project/ticket-*/user-*.md"],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}

@@ -212,6 +212,14 @@ def main(argv=None):
     status.add_argument('--record', action='store_true', help='save changes to local history')
     doctor_parser = sub.add_parser('doctor', parents=[common_sub_parser], help='diagnose dependencies, worktrees, and process visibility')
     doctor_parser.add_argument('--fix', action='store_true', help='automatically prune orphaned worktrees, remove merged ticket branches, and run housekeeping')
+    doctor_parser.add_argument('--safe-fix', dest='safe_fix', action='store_true', help='safely prune merged/clean worktrees and branches conforming to Wellmanifest Worktrees v5')
+    wt_parser = sub.add_parser('worktrees', aliases=['wt'], parents=[common_sub_parser],
+                               help='audit and safely prune worktrees conforming to Wellmanifest Worktrees v5')
+    wt_parser.add_argument('worktree_action', nargs='?', choices=['list', 'audit', 'prune'], default='list',
+                           help='action to perform: list (default) or prune')
+    wt_parser.add_argument('--repo', dest='target_repo', default=None, help='limit worktrees operation to a specific repository name')
+    wt_parser.add_argument('--dry-run', action='store_true', help='preview prunable and protected worktrees without deleting anything')
+    wt_parser.add_argument('--safe', action='store_true', default=True, help='enforce process, dirty, lease, and branch safety (default: true)')
     usage_parser = sub.add_parser('usage', parents=[common_sub_parser], help='read-only table of agent process usage '
                                               'and api-budget account ledgers')
     usage_parser.add_argument('--ledger', action='append', default=[], metavar='SOURCE',
@@ -491,7 +499,7 @@ def main(argv=None):
         if args.mode == 'watch' and not 1 <= args.retention_days <= 365:
             parser.error('retention-days must be between 1 and 365')
         if args.mode == 'doctor':
-            fix = getattr(args, 'fix', False)
+            fix = getattr(args, 'fix', False) or getattr(args, 'safe_fix', False)
             data = diagnose(args.root.expanduser().resolve(), fix=fix)
             if output_format in {'terminal', 'markdown'}:
                 display_report(presentation.doctor_markdown(data))
@@ -510,6 +518,29 @@ def main(argv=None):
         root = args.root.expanduser().resolve(strict=True)
         if not root.is_dir():
             parser.error('--root must be a directory')
+        if args.mode in {'worktrees', 'wt'}:
+            from . import worktrees
+            cmd = getattr(args, 'worktree_action', None) or 'list'
+            target_repo = getattr(args, 'target_repo', None) or getattr(args, 'repo', None)
+            if cmd in ('list', 'audit'):
+                data = worktrees.audit_fleet_worktrees(root, depth=args.depth, target_repo=target_repo)
+                if output_format == 'json':
+                    print(json.dumps(data, indent=2, ensure_ascii=False))
+                elif output_format in {'terminal', 'markdown'}:
+                    display_report(worktrees.markdown_audit(data))
+                else:
+                    print(worktrees.render_audit(data))
+                return 0
+            elif cmd == 'prune':
+                dry_run = getattr(args, 'dry_run', False)
+                data = worktrees.prune_fleet_worktrees_safe(root, depth=args.depth, dry_run=dry_run, target_repo=target_repo)
+                if output_format == 'json':
+                    print(json.dumps(data, indent=2, ensure_ascii=False))
+                elif output_format in {'terminal', 'markdown'}:
+                    display_report(worktrees.markdown_prune(data))
+                else:
+                    print(worktrees.render_prune(data))
+                return 0
         if args.mode == 'usage':
             from . import usage
             data = usage.scan(root, registry=registry, machine=args.machine,
