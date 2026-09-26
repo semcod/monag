@@ -192,14 +192,25 @@ class TestPlanfileDispatchAndKoruIntegration(unittest.TestCase):
         self.assertEqual(len(sprint_data["tasks"]), 1)
         task = sprint_data["tasks"][0]
         self.assertEqual(task["title"], "[subactor/runtime] fix: resolve uncommitted artifacts")
-        self.assertEqual(task["status"], "todo")
+        self.assertEqual(task["status"], "ready")
         self.assertEqual(task["priority"], "critical")
 
-        # Test idempotency - running dispatch again must not duplicate existing task
+        # Koru native format assertions
+        self.assertIn("sprint", sprint_data)
+        self.assertIsInstance(sprint_data["sprint"], dict)
+        self.assertIn("tickets", sprint_data["sprint"])
+        self.assertEqual(len(sprint_data["sprint"]["tickets"]), 1)
+        koru_ticket = list(sprint_data["sprint"]["tickets"].values())[0]
+        self.assertEqual(koru_ticket["status"], "ready")
+        self.assertEqual(koru_ticket["execution"]["state"], "ready")
+        self.assertEqual(koru_ticket["execution"]["queue"], "default")
+
+        # Test idempotency - running dispatch again must not duplicate existing task or ticket
         res2 = autodiagnosis.dispatch_tickets_to_planfile(tickets, root=self.root, sprint="current")
         self.assertEqual(res2["dispatched"], 0)
         sprint_data2 = yaml.safe_load(sprint_file.read_text())
         self.assertEqual(len(sprint_data2["tasks"]), 1)
+        self.assertEqual(len(sprint_data2["sprint"]["tickets"]), 1)
 
     def test_planfile_github_sync_and_koru_queue_contracts(self):
         repo_dir = self.root / "semcod" / "mcp"
@@ -237,6 +248,39 @@ class TestPlanfileDispatchAndKoruIntegration(unittest.TestCase):
         # 2. Compatibility with koru autonomous queue handoff
         self.assertIn("AC-01", saved_task["description"])
         self.assertIn("planfile ticket done", saved_task["description"])
+
+        # 3. Compatibility with koru planfile_compat and multi_agent
+        self.assertIn("sprint", data)
+        self.assertIn("tickets", data["sprint"])
+        koru_tkt = list(data["sprint"]["tickets"].values())[0]
+        self.assertEqual(koru_tkt["execution"]["state"], "ready")
+        self.assertEqual(koru_tkt["status"], "ready")
+
+    def test_koru_planfile_compat_intake_loads_dispatched_tickets(self):
+        repo_dir = self.root / "subactor" / "engine"
+        repo_dir.mkdir(parents=True)
+        subprocess.run(["git", "-C", str(repo_dir), "init"], check=True, capture_output=True)
+
+        tickets = [
+            {
+                "title": "[subactor/engine] perf: optimize cache lookup latency",
+                "description": "Reduce p99 lookup time.",
+                "target_repo": "subactor/engine",
+                "priority": "high",
+            }
+        ]
+        autodiagnosis.dispatch_tickets_to_planfile(tickets, root=self.root, sprint="current")
+
+        try:
+            from koru.planfile_compat import _raw_ticket_records
+            records, errors = _raw_ticket_records(repo_dir)
+            self.assertEqual(len(errors), 0)
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["title"], "[subactor/engine] perf: optimize cache lookup latency")
+            self.assertEqual(records[0]["status"], "ready")
+            self.assertEqual(records[0]["execution"]["state"], "ready")
+        except ImportError:
+            pass  # koru package not in environment
 
 
 class TestCLIAutodiagnose(unittest.TestCase):
