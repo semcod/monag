@@ -87,10 +87,16 @@ details code{background:#16202b;padding:2px 4px;border-radius:3px;font-family:mo
       <span>🎙️ Fleet Voice &amp; NL Assistant</span>
       <span class="badge badge-safe" style="font-size:9px">NL-DSL-LLM</span>
     </h2>
-    <span id="voice-indicator" style="font-size:11px;color:#8a9bb0;display:flex;align-items:center;gap:6px">
-      <span class="pulse-dot" id="mic-dot" style="background:#58a6ff;display:none"></span>
-      <span id="voice-status">Gotowy (Web Speech API)</span>
-    </span>
+    <div style="display:flex;align-items:center;gap:10px">
+      <button type="button" id="tts-toggle-btn" onclick="toggleTts()" title="Przełącz mowę asystenta (Text-to-Speech)"
+              style="background:#16202b;border:1px solid #2a3a4a;padding:.25rem .6rem;border-radius:4px;font-size:11px;color:#8a9bb0;cursor:pointer">
+        🔇 Głos: wył.
+      </button>
+      <span id="voice-indicator" style="font-size:11px;color:#8a9bb0;display:flex;align-items:center;gap:6px">
+        <span class="pulse-dot" id="mic-dot" style="background:#58a6ff;display:none"></span>
+        <span id="voice-status">Gotowy (Web Speech API)</span>
+      </span>
+    </div>
   </div>
 
   <div id="option-network-pills" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:.75rem">
@@ -508,6 +514,34 @@ function toggleVoiceRecognition() {
   }
 }
 
+let ttsEnabled = false;
+function toggleTts() {
+  ttsEnabled = !ttsEnabled;
+  const btn = document.getElementById('tts-toggle-btn');
+  if (btn) {
+    btn.textContent = ttsEnabled ? '🔊 Głos: wł.' : '🔇 Głos: wył.';
+    btn.style.color = ttsEnabled ? '#58a6ff' : '#8a9bb0';
+    btn.style.borderColor = ttsEnabled ? '#388bfd' : '#2a3a4a';
+  }
+}
+
+function speakTts(rawText) {
+  if (!('speechSynthesis' in window) || !rawText) return;
+  window.speechSynthesis.cancel();
+  let text = String(rawText)
+    .replace(/\bPR\b/g, 'Pull Request')
+    .replace(/\bPRs\b/g, 'Pull Requesty')
+    .replace(/\bCPU\b/g, 'procesor')
+    .replace(/\bRAM\b/g, 'pamięć RAM')
+    .replace(/\bOK\b/g, 'w porządku')
+    .replace(/\bNL\b/g, 'język naturalny')
+    .replace(/\bTTS\b/g, 'synteza mowy')
+    .replace(/\bSTT\b/g, 'rozpoznawanie mowy');
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = 'pl-PL';
+  window.speechSynthesis.speak(utterance);
+}
+
 function escapeHtml(str) {
   if (!str) return '';
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -549,6 +583,9 @@ async function sendAssistantPrompt(text) {
   try {
     const res = await fetch('/api/assistant?q=' + encodeURIComponent(trimmed)).then(r => r.json());
     appendChatMessage('assistant', res.answer || 'Brak odpowiedzi', res.cards || []);
+    if (ttsEnabled && res.answer) {
+      speakTts(res.answer);
+    }
   } catch (err) {
     appendChatMessage('assistant', 'Błąd komunikacji z asystentem: ' + err, []);
   }

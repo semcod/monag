@@ -64,6 +64,9 @@ class ConversationalAssistantTests(unittest.TestCase):
         self.assertIn('id="assistant-input"', html)
         self.assertIn('id="mic-btn"', html)
         self.assertIn('id="assistant-chat"', html)
+        self.assertIn('id="tts-toggle-btn"', html)
+        self.assertIn('toggleTts', html)
+        self.assertIn('speakTts', html)
         self.assertIn('initSpeechRecognition', html)
         self.assertIn('sendAssistantPrompt', html)
 

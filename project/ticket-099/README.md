@@ -20,6 +20,7 @@ to monitor fleet agents, triage, autodiagnosis, and Planfile tickets.
 - [x] AC-03: `/api/assistant` endpoint serving instant answers for agents, triage, autodiagnosis, tickets, and PRs from live state.
 - [x] AC-04: Enhanced intent parser in `src/monag/dsl.py` supporting conversational Polish/English queries.
 - [x] AC-05: Unit and integration tests in `tests/test_panel_conversational_assistant.py` passing cleanly with zero governance errors.
+- [x] AC-06: Text-to-Speech (TTS) speech feedback with phonetic normalization in panel assistant.
 
 ## Tracking boundary
 
