@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
+import re
 import threading
 import time
 from urllib.parse import parse_qs, urlparse
@@ -66,11 +67,60 @@ details code{background:#16202b;padding:2px 4px;border-radius:3px;font-family:mo
 .btn-sm{font-size:11px;padding:3px 7px;border-radius:3px;cursor:pointer}
 .btn-koru{background:#238636;border:1px solid #2ea043;color:#fff}
 .btn-koru:hover{background:#2ea043}
+.opt-pill{background:#16202b;border:1px solid #2a3a4a;color:#8fd3ff;border-radius:14px;padding:3px 10px;font-size:11px;cursor:pointer;transition:all .15s ease}
+.opt-pill:hover{background:#1f2d3d;border-color:#58a6ff;color:#fff}
+.mic-listening{background:#da3633!important;border-color:#f85149!important;color:#fff!important;animation:pulse-red 1.5s infinite}
+@keyframes pulse-red{0%{box-shadow:0 0 0 0 rgba(218,54,51,0.7)}70%{box-shadow:0 0 0 8px rgba(218,54,51,0)}100%{box-shadow:0 0 0 0 rgba(218,54,51,0)}}
+.chat-msg{padding:8px 12px;border-radius:6px;font-size:12px;line-height:1.4}
+.chat-user{background:#1c2733;color:#d6e0ea;align-self:flex-end;border:1px solid #2a3a4a;max-width:85%}
+.chat-assistant{background:#131c26;border-left:3px solid #388bfd;color:#d6e0ea;align-self:flex-start;width:100%}
+.assistant-card{background:#0b0f14;border:1px solid #1c2733;border-radius:4px;padding:6px 10px;margin-top:6px;font-size:11px}
 </style></head>
 <body>
 <h1>monag panel <span class="live-badge"><span class="pulse-dot"></span> <span>LIVE</span> <label style="margin-left:8px;font-size:12px;color:#8a9bb0"><input type="checkbox" id="autorefresh" checked onchange="toggleAutoRefresh(this.checked)"> auto-refresh (<span id="countdown">10s</span>)</label></span></h1>
 <div class="sub" id="meta">loading…</div>
 <div id="toast" class="toast"></div>
+
+<section id="assistant-section" style="background:#0f1722;border:1px solid #1f2d3d;border-radius:8px;padding:1rem;margin-bottom:1.5rem">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.6rem">
+    <h2 style="border-bottom:none;padding:0;margin:0;display:flex;align-items:center;gap:8px">
+      <span>🎙️ Fleet Voice &amp; NL Assistant</span>
+      <span class="badge badge-safe" style="font-size:9px">NL-DSL-LLM</span>
+    </h2>
+    <span id="voice-indicator" style="font-size:11px;color:#8a9bb0;display:flex;align-items:center;gap:6px">
+      <span class="pulse-dot" id="mic-dot" style="background:#58a6ff;display:none"></span>
+      <span id="voice-status">Gotowy (Web Speech API)</span>
+    </span>
+  </div>
+
+  <div id="option-network-pills" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:.75rem">
+    <button type="button" class="opt-pill" onclick="sendAssistantPrompt('pokaż aktywnych agentów')">🤖 Agenci &amp; Procesy</button>
+    <button type="button" class="opt-pill" onclick="sendAssistantPrompt('zbadaj kolizje worktree i triage')">⚡ Triage &amp; Kolizje</button>
+    <button type="button" class="opt-pill" onclick="sendAssistantPrompt('uruchom autodiagnozę floty')">🔬 Autodiagnoza</button>
+    <button type="button" class="opt-pill" onclick="sendAssistantPrompt('pokaż otwarte zadania i backlog')">📋 Otwarte zadania</button>
+    <button type="button" class="opt-pill" onclick="sendAssistantPrompt('pokaż pull requesty i gałęzie')">🔀 Pull Requesty</button>
+    <button type="button" class="opt-pill" onclick="sendAssistantPrompt('audyt pokrycia planfile vs github')">📊 Audyt pokrycia</button>
+    <button type="button" class="opt-pill" onclick="sendAssistantPrompt('stan projektów')">📁 Projekty z diffem</button>
+  </div>
+
+  <form id="assistant-form" onsubmit="handleAssistantSubmit(event)" style="display:flex;gap:8px;align-items:center">
+    <input type="text" id="assistant-input" placeholder="Zadaj pytanie głosem lub tekstem (np. 'kto pracuje?', 'czy są kolizje?', 'stan floty')..."
+           style="flex:1;background:#0b0f14;border:1px solid #2a3a4a;color:#d6e0ea;padding:.45rem .75rem;border-radius:5px;font-size:.85rem">
+    <button type="button" id="mic-btn" onclick="toggleVoiceRecognition()" title="Mów do asystenta (Web Speech API pl-PL)"
+            style="background:#16202b;border:1px solid #2a3a4a;padding:.45rem .75rem;border-radius:5px;font-size:.95rem;color:#58a6ff;cursor:pointer">
+      🎤
+    </button>
+    <button type="submit" style="background:#1f6feb;border:1px solid #388bfd;padding:.45rem .9rem;border-radius:5px;font-weight:600;font-size:.85rem">
+      Wyślij
+    </button>
+  </form>
+
+  <div id="assistant-chat" style="margin-top:.85rem;max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding-right:4px">
+    <div class="chat-msg chat-assistant">
+      <div>👋 <strong>Asystent floty gotowy.</strong> Możesz mówić po polsku lub po angielsku, albo wybrać sugerowane zapytanie powyżej.</div>
+    </div>
+  </div>
+</section>
 
 <section><h2>Agents</h2><table id="agents"><thead><tr>
 <th>PID</th><th>Kind</th><th>Task</th><th>Working directory</th></tr></thead>
@@ -380,6 +430,139 @@ async function dispatchTriageToKoru(){
     showToast('Dispatch failed: ' + e, true);
   }
 }
+let recognition = null;
+let isRecognizing = false;
+
+function initSpeechRecognition() {
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRec) {
+    const status = document.getElementById('voice-status');
+    if (status) status.textContent = 'Brak Web Speech API w przeglądarce';
+    return null;
+  }
+  const rec = new SpeechRec();
+  rec.lang = 'pl-PL';
+  rec.interimResults = false;
+  rec.maxAlternatives = 1;
+
+  rec.onstart = function() {
+    isRecognizing = true;
+    const btn = document.getElementById('mic-btn');
+    const dot = document.getElementById('mic-dot');
+    const status = document.getElementById('voice-status');
+    if (btn) btn.classList.add('mic-listening');
+    if (dot) dot.style.display = 'inline-block';
+    if (status) status.textContent = 'Słucham (mów teraz)...';
+  };
+
+  rec.onresult = function(event) {
+    const transcript = event.results[0][0].transcript;
+    const input = document.getElementById('assistant-input');
+    if (input) input.value = transcript;
+    const status = document.getElementById('voice-status');
+    if (status) status.textContent = 'Rozpoznano: "' + transcript + '"';
+    sendAssistantPrompt(transcript);
+  };
+
+  rec.onerror = function(event) {
+    isRecognizing = false;
+    const btn = document.getElementById('mic-btn');
+    const dot = document.getElementById('mic-dot');
+    const status = document.getElementById('voice-status');
+    if (btn) btn.classList.remove('mic-listening');
+    if (dot) dot.style.display = 'none';
+    if (status) status.textContent = 'Błąd mikrofonu: ' + (event.error || 'brak dostępu');
+  };
+
+  rec.onend = function() {
+    isRecognizing = false;
+    const btn = document.getElementById('mic-btn');
+    const dot = document.getElementById('mic-dot');
+    const status = document.getElementById('voice-status');
+    if (btn) btn.classList.remove('mic-listening');
+    if (dot) dot.style.display = 'none';
+    if (status && !status.textContent.startsWith('Rozpoznano')) {
+      status.textContent = 'Gotowy (Web Speech API)';
+    }
+  };
+
+  return rec;
+}
+
+function toggleVoiceRecognition() {
+  if (!recognition) {
+    recognition = initSpeechRecognition();
+  }
+  if (!recognition) {
+    showToast('Twoja przeglądarka nie obsługuje Web Speech API. Użyj pola tekstowego.', true);
+    return;
+  }
+  if (isRecognizing) {
+    recognition.stop();
+  } else {
+    try {
+      recognition.start();
+    } catch(err) {
+      console.warn('SpeechRecognition start error:', err);
+    }
+  }
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function appendChatMessage(role, text, cards=[]) {
+  const chat = document.getElementById('assistant-chat');
+  if (!chat) return;
+  const msgDiv = document.createElement('div');
+  msgDiv.className = 'chat-msg ' + (role === 'user' ? 'chat-user' : 'chat-assistant');
+  
+  let html = '<div>' + (role === 'user' ? '👤 <strong>Ty:</strong> ' : '🤖 <strong>Asystent:</strong> ') + escapeHtml(text) + '</div>';
+  if (cards && cards.length) {
+    html += '<div style="margin-top:6px;display:flex;flex-direction:column;gap:4px">';
+    cards.forEach(c => {
+      const tagClass = 'badge ' + (c.tag === 'critical' ? 'badge-critical' : (c.tag === 'high' ? 'badge-high' : (c.tag === 'safe' ? 'badge-safe' : (c.tag === 'collision' ? 'badge-collision' : 'badge-normal'))));
+      html += `<div class="assistant-card">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <strong>${escapeHtml(c.title || '')}</strong>
+          ${c.tag ? `<span class="${tagClass}">${escapeHtml(c.tag)}</span>` : ''}
+        </div>
+        ${c.detail ? `<div style="color:#8a9bb0;font-size:10px;margin-top:2px">${escapeHtml(c.detail)}</div>` : ''}
+      </div>`;
+    });
+    html += '</div>';
+  }
+  msgDiv.innerHTML = html;
+  chat.appendChild(msgDiv);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function sendAssistantPrompt(text) {
+  const trimmed = (text || '').trim();
+  if (!trimmed) return;
+  const input = document.getElementById('assistant-input');
+  if (input) input.value = trimmed;
+  appendChatMessage('user', trimmed);
+
+  try {
+    const res = await fetch('/api/assistant?q=' + encodeURIComponent(trimmed)).then(r => r.json());
+    appendChatMessage('assistant', res.answer || 'Brak odpowiedzi', res.cards || []);
+  } catch (err) {
+    appendChatMessage('assistant', 'Błąd komunikacji z asystentem: ' + err, []);
+  }
+}
+
+function handleAssistantSubmit(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  const input = document.getElementById('assistant-input');
+  if (!input) return;
+  const val = input.value;
+  input.value = '';
+  sendAssistantPrompt(val);
+}
+
 loadLive(); loadAudit(); loadCatalog(); loadExport(); loadReportStatus(); loadAutodiagnosis(); loadTriage();
 setInterval(tickCountdown, 1000);
 </script>
@@ -718,7 +901,9 @@ ROUTES = {'/api/snapshot.json': lambda s: s.snapshot,
           '/api/report/disable': State.report_disable,
           '/api/report/disable.json': State.report_disable,
           '/api/report/send-now': State.report_send_now,
-          '/api/report/send-now.json': State.report_send_now}
+          '/api/report/send-now.json': State.report_send_now,
+          '/api/assistant': lambda s: handle_assistant_query(s, ''),
+          '/api/assistant.json': lambda s: handle_assistant_query(s, '')}
 
 
 def render_report_config_page(cfg, updated=False, server_url=''):
@@ -779,6 +964,206 @@ a.back:hover{{color:#d6e0ea}}
 </body></html>"""
 
 
+def handle_assistant_query(state, query_str):
+    q = (query_str or "").strip()
+    if not q:
+        return {
+            "status": "error",
+            "error": "query required",
+            "query": query_str,
+            "answer": "Proszę zadać pytanie lub wybrać jedną z sugerowanych akcji powyżej.",
+            "cards": []
+        }
+    low = q.lower()
+
+    # 1. Agents / Status query
+    if any(k in low for k in ['agent', 'proces', 'kto pracuje', 'who is working', 'status', 'aktywn']):
+        agents = (state.snapshot or {}).get('agents', [])
+        count = len(agents)
+        if count == 0:
+            return {
+                "status": "ok",
+                "target": "agents",
+                "query": q,
+                "answer": "Brak aktywnych procesów agentów w monitorowanym ekosystemie.",
+                "cards": []
+            }
+        cards = []
+        for a in agents[:10]:
+            cards.append({
+                "title": f"PID {a.get('pid')} — {a.get('kind', 'agent')}",
+                "detail": f"Zadanie: {a.get('task') or 'brak'} | CWD: {a.get('cwd') or '-'}",
+                "tag": a.get('kind', 'agent')
+            })
+        return {
+            "status": "ok",
+            "target": "agents",
+            "query": q,
+            "answer": f"Wykryto {count} aktywnych agentów / procesów w ekosystemie.",
+            "cards": cards
+        }
+
+    # 2. Triage & Collisions query
+    if any(k in low for k in ['triage', 'kolizj', 'konflikt', 'bezpieczn', 'collision']):
+        try:
+            coll = state.get_collisions()
+            triage_data = state.get_triage()
+            recs = triage_data.get('recommendations', [])
+            col_count = coll.get('collision_count', 0)
+            safe_count = len([r for r in recs if not (r.get('collision', {}).get('has_collision') or r.get('collision', {}).get('blocking'))])
+
+            cards = []
+            for r in recs[:8]:
+                c = r.get('collision', {})
+                is_safe = not (c.get('has_collision') or c.get('blocking'))
+                cards.append({
+                    "title": f"[{'SAFE' if is_safe else 'COLLISION'}] {r.get('repo', '')} — {r.get('title', '')}",
+                    "detail": f"Tier: {r.get('tier', 'normal')} | Score: {r.get('score', 0)} | {r.get('suggested_action', '')}",
+                    "tag": "safe" if is_safe else "collision"
+                })
+            ans = f"Stan Triage & Kolizji: {len(recs)} rekomendacji ({safe_count} bezpiecznych do wdrożenia, {col_count} z kolizjami)."
+            return {
+                "status": "ok",
+                "target": "triage",
+                "query": q,
+                "answer": ans,
+                "cards": cards
+            }
+        except Exception as e:
+            return {
+                "status": "ok",
+                "target": "triage",
+                "query": q,
+                "answer": f"Błąd analizy triage: {e}",
+                "cards": []
+            }
+
+    # 3. Autodiagnosis query
+    if any(k in low for k in ['autodiagnoz', 'diagnoz', 'anomali', 'health', 'flot']):
+        try:
+            data = state.get_autodiagnosis()
+            tickets = data.get('tickets', [])
+            summary = data.get('summary', {})
+            cards = []
+            for t in tickets[:8]:
+                cards.append({
+                    "title": f"[{t.get('priority', 'normal').upper()}] {t.get('target_repo', '')} — {t.get('title', '')}",
+                    "detail": f"Tier: {t.get('tier', 'hygiene')} | Estymacja: {t.get('estimation', {}).get('cost_usd', '-')} USD",
+                    "tag": t.get('tier', 'hygiene')
+                })
+            ans = f"Autodiagnoza floty: zidentyfikowano {len(tickets)} anomalii/zadań (podsumowanie: {summary.get('total_anomalies', len(tickets))} wykrytych zagadnień)."
+            return {
+                "status": "ok",
+                "target": "autodiagnosis",
+                "query": q,
+                "answer": ans,
+                "cards": cards
+            }
+        except Exception as e:
+            return {
+                "status": "ok",
+                "target": "autodiagnosis",
+                "query": q,
+                "answer": f"Błąd autodiagnozy: {e}",
+                "cards": []
+            }
+
+    # 4. Tickets / Tasks / Backlog query
+    if any(k in low for k in ['ticket', 'zadania', 'zadanie', 'backlog', 'otwart', 'planfile']):
+        resume_data = state.resume or {}
+        projects = resume_data.get('projects', [])
+        all_tickets = []
+        for p in projects:
+            pname = p.get('name') or os.path.basename(p.get('path', ''))
+            for t in p.get('tickets', []):
+                all_tickets.append((pname, t))
+
+        cards = []
+        for pname, t in all_tickets[:10]:
+            cards.append({
+                "title": f"[{t.get('priority', 'normal').upper()}] {pname} / {t.get('id', '')}: {t.get('title', '')}",
+                "detail": f"Status: {t.get('status', 'open')} | Sprint: {t.get('sprint', 'current')}",
+                "tag": t.get('priority', 'normal')
+            })
+        ans = f"Znaleziono {len(all_tickets)} otwartych zadań Planfile w {len(projects)} projektach."
+        return {
+            "status": "ok",
+            "target": "tickets",
+            "query": q,
+            "answer": ans,
+            "cards": cards
+        }
+
+    # 5. Projects with local changes / Diff query
+    if any(k in low for k in ['projekt', 'diff', 'zmienion', 'dirty']):
+        repos = (state.snapshot or {}).get('repositories', [])
+        dirty_repos = [r for r in repos if r.get('changed_files', 0) > 0 or r.get('has_untracked')]
+        cards = []
+        for r in dirty_repos[:10]:
+            cards.append({
+                "title": f"{r.get('name') or os.path.basename(r.get('path', ''))} ({r.get('branch', 'main')})",
+                "detail": f"Zmienione pliki: {r.get('changed_files', 0)} | Untracked: {r.get('has_untracked', False)}",
+                "tag": "dirty"
+            })
+        ans = f"Wykryto {len(dirty_repos)} projektów z lokalnymi niezatwierdzonymi zmianami (na {len(repos)} monitorowanych)."
+        return {
+            "status": "ok",
+            "target": "projects",
+            "query": q,
+            "answer": ans,
+            "cards": cards
+        }
+
+    # 6. Pull Requests / Branches query
+    if re.search(r'(\bprs?\b|pull\s*request|ga[łl][ęe]z|branch|unpushed)', low):
+        try:
+            prs_data = state.get_prs()
+            open_prs = prs_data.get('prs', []) if isinstance(prs_data, dict) else []
+            cards = []
+            for item in open_prs[:8]:
+                cards.append({
+                    "title": f"{item.get('repo', '')} #{item.get('number', '')}: {item.get('title', '')}",
+                    "detail": f"Autor: {item.get('author', '')} | Stan: {item.get('state', 'open')}",
+                    "tag": item.get('state', 'open')
+                })
+            ans = f"Znaleziono {len(open_prs)} otwartych pull requestów i aktywnych gałęzi roboczych."
+            return {
+                "status": "ok",
+                "target": "prs",
+                "query": q,
+                "answer": ans,
+                "cards": cards
+            }
+        except Exception as e:
+            return {
+                "status": "ok",
+                "target": "prs",
+                "query": q,
+                "answer": f"Błąd odczytu PR: {e}",
+                "cards": []
+            }
+
+    # 7. Fallback to dsl.execute
+    try:
+        from . import dsl
+        res = dsl.execute(q, state.root, depth=state.depth)
+        return {
+            "status": "ok",
+            "target": res.get('target', 'dsl'),
+            "query": q,
+            "answer": res.get('summary') or res.get('error') or f"Wykonano zapytanie DSL dla domeny: {res.get('target')}",
+            "cards": []
+        }
+    except Exception as e:
+        return {
+            "status": "ok",
+            "target": "unknown",
+            "query": q,
+            "answer": f"Nie rozpoznano intencji dla zapytania: '{q}'. Skorzystaj z sugerowanych akcji powyżej.",
+            "cards": []
+        }
+
+
 def make_handler(state):
     class Handler(BaseHTTPRequestHandler):
         server_version = 'monag-panel/1'
@@ -834,6 +1219,14 @@ def make_handler(state):
                 from . import nl_contract
                 self._send(json.dumps(nl_contract.grammar()).encode(),
                            'application/json; charset=utf-8')
+                return
+            if parsed.path in {'/api/assistant', '/api/assistant.json'}:
+                params = parse_qs(parsed.query)
+                q = (params.get('q') or params.get('query') or params.get('nl') or [''])[0]
+                resp = handle_assistant_query(state, q)
+                self._send(json.dumps(resp, ensure_ascii=False).encode(),
+                           'application/json; charset=utf-8',
+                           status=400 if resp.get('status') == 'error' else 200)
                 return
             if parsed.path in {'/api/query', '/api/query.json'}:
                 params = parse_qs(parsed.query)
@@ -938,6 +1331,19 @@ def make_handler(state):
                 code = 200 if result['success'] else (400 if result['status'] == 'VALIDATION_ERROR' else 500)
                 self._send(json.dumps(result, ensure_ascii=True).encode(),
                            'application/json; charset=utf-8', status=code)
+                return
+            if parsed.path in {'/api/assistant', '/api/assistant.json'}:
+                try:
+                    length = int(self.headers.get('Content-Length', 0))
+                    raw_data = self.rfile.read(length) if length > 0 else b''
+                    body = json.loads(raw_data) if raw_data else {}
+                except (ValueError, TypeError, json.JSONDecodeError):
+                    body = {}
+                q = body.get('q') or body.get('query') or body.get('nl') or ''
+                resp = handle_assistant_query(state, q)
+                self._send(json.dumps(resp, ensure_ascii=False).encode(),
+                           'application/json; charset=utf-8',
+                           status=400 if resp.get('status') == 'error' else 200)
                 return
             if parsed.path in {'/api/query', '/api/query.json'}:
                 try:

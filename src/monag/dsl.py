@@ -155,7 +155,7 @@ def parse_natural_language(text):
     elif re.search(r'(scalon|zmergowan|merged)', low):
         state = 'merged'
 
-    if re.search(r'(advise|advice|porad|zaleceni|rekomendac)', low):
+    if re.search(r'(advise|advice|porad|zaleceni|rekomendac|autodiagnoz|diagnoz)', low):
         return Query('advise', raw_input=raw)
 
     # Domain 1: PRs & branches
@@ -174,7 +174,7 @@ def parse_natural_language(text):
         return Query('usage', hours=hours if hours is not None else 24.0, raw_input=raw)
 
     # Domain 4: Resume & worktrees
-    if re.search(r'(resume|wznowi|worktrees?|backlog|lease)', low):
+    if re.search(r'(resume|wznowi|worktrees?|backlog|lease|ticket|tickety|zadania|zadanie|otwart)', low):
         return Query('resume', hours=hours if hours is not None else 24.0, raw_input=raw)
 
     # Domain 5: Catalog
@@ -182,7 +182,7 @@ def parse_natural_language(text):
         return Query('catalog', raw_input=raw)
 
     # Domain 6: Agents & status snapshot
-    if re.search(r'(status|agent|proces|snapshot|co\s+robi|co\s+dzia[łl]a)', low):
+    if re.search(r'(status|agent|proces|snapshot|co\s+robi|co\s+dzia[łl]a|kto\s+pracuje|who\s+is\s+working)', low):
         return Query('status', hours=hours if hours is not None else 24.0, raw_input=raw)
 
     # Default fallback: if query is simple command name
