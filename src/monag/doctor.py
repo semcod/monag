@@ -181,13 +181,19 @@ def diagnose(root: Path, fix: bool = False) -> dict:
         errors.append('Linux /proc process data is unavailable')
 
     # Audit ecosystem CLI tools
+    from .ecosystem import audit_ecosystem_tools
+    eco_capabilities = audit_ecosystem_tools()
     tools = {
         'git': bool(git and not git_error),
         'gh': bool(shutil.which('gh')),
-        'diagit': bool(shutil.which('diagit')),
-        'redup': bool(shutil.which('redup')),
-        'prefact': bool(shutil.which('prefact')),
+        'diagit': bool(eco_capabilities.get('diagit') and eco_capabilities['diagit'].available),
+        'redup': bool(eco_capabilities.get('redup') and eco_capabilities['redup'].available),
+        'prefact': bool(eco_capabilities.get('prefact') and eco_capabilities['prefact'].available),
     }
+    # Populate other discovered ecosystem tools
+    for tool_name, cap in eco_capabilities.items():
+        if cap.available and tool_name not in tools:
+            tools[tool_name] = True
 
     # Audit repositories and worktrees
     repos = find_git_repositories(root)
@@ -225,12 +231,18 @@ def diagnose(root: Path, fix: bool = False) -> dict:
             f"Remediated {len(remediation_summary['worktrees_pruned'])} stale worktrees and {len(remediation_summary['branches_deleted'])} merged branches."
         )
 
-    if tools['redup']:
+    if tools.get('redup'):
         recommendations.append("reDUP is available for deep AST code duplication analysis ('redup scan').")
-    if tools['diagit']:
+    if tools.get('diagit'):
         recommendations.append("diagit is available for fleet git audits ('diagit worktrees').")
-    if tools['prefact']:
+    if tools.get('prefact'):
         recommendations.append("prefact is available for automated refactoring ('prefact fix').")
+    if tools.get('subllm'):
+        recommendations.append("SubLLM is available for centralized LLM proxy and gateway routing ('subllm usage').")
+    if tools.get('koru'):
+        recommendations.append("Koru is available for autonomous living execution ('koru autonomous').")
+    if tools.get('planfile'):
+        recommendations.append("Planfile is available for backlog and sprint ticket lifecycle ('planfile ticket').")
 
     result = {
         'python': sys.version.split()[0],
