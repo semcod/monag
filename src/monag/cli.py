@@ -428,7 +428,8 @@ def main(argv=None):
     watch = sub.add_parser('watch', parents=[common_sub_parser], help='refresh until Ctrl-C (default in a terminal)')
     watch.add_argument('--no-record', action='store_true', help='disable local history recording')
     watch.add_argument('--retention-days', type=int, default=7)
-    watch.add_argument('--interval', type=float, default=5)
+    tools_parser = sub.add_parser('tools', aliases=['apis'], parents=[common_sub_parser],
+                                  help='audit and list available ecosystem CLI tools, local APIs, and daemon capabilities')
     sub.add_parser('shell', parents=[common_sub_parser], help='interactive command shell (default in a terminal)')
     run = sub.add_parser('run', parents=[common_sub_parser], help='wrap an agent command with an explicit task description')
     run.add_argument('--agent-kind', default='reported', help='label for an otherwise unknown agent')
@@ -512,6 +513,16 @@ def main(argv=None):
                 display_report(presentation.history_markdown(data))
             else:
                 print(json.dumps(data, ensure_ascii=True) if output_format == 'json' else '\n'.join(event_line(e) for e in data) or 'No recorded observations.')
+            return 0
+        if args.mode in ('tools', 'apis'):
+            from . import ecosystem
+            overview = ecosystem.get_ecosystem_overview()
+            if output_format == 'json':
+                print(json.dumps(overview, indent=2, ensure_ascii=False))
+            elif output_format in {'terminal', 'markdown'}:
+                display_report(ecosystem.render_markdown(overview))
+            else:
+                print(ecosystem.render_terminal(overview))
             return 0
         if args.mode == 'run':
             return run_task(args)
