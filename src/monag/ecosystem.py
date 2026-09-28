@@ -185,19 +185,64 @@ def _check_tcp_port(port: int, host: str = "127.0.0.1") -> bool:
         return sock.connect_ex((host, port)) == 0
 
 
+def _probe_http_title(port: int, host: str = "127.0.0.1", default_label: str | None = None) -> tuple[str, str]:
+    """Fetch HTML <title> or fallback to default label, returning (label, endpoint)."""
+    import re
+    import urllib.request
+    import ssl
+
+    url = f"http://{host}:{port}/"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "monag-ecosystem/1.0"})
+        with urllib.request.urlopen(req, timeout=0.4) as resp:
+            body = resp.read(4096).decode("utf-8", errors="ignore")
+            m = re.search(r"<title>(.*?)</title>", body, re.IGNORECASE | re.DOTALL)
+            if m:
+                raw_title = m.group(1).strip()
+                if raw_title:
+                    low = raw_title.lower()
+                    if "planfile" in low:
+                        return "Planfile Queue Panel", url
+                    if "subllm" in low:
+                        return "SubLLM Usage Panel", url
+                    if "monag" in low:
+                        return "Monag Web Panel", url
+                    return raw_title[:45], url
+    except Exception as exc:
+        if hasattr(exc, "code") and getattr(exc, "code") in (401, 403):
+            return default_label or f"Authenticated Service (port {port})", url
+        # Check https for SSL gateway ports
+        try:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            https_url = f"https://{host}:{port}/"
+            req = urllib.request.Request(https_url, headers={"User-Agent": "monag-ecosystem/1.0"})
+            with urllib.request.urlopen(req, context=ctx, timeout=0.4) as resp:
+                pass
+            return default_label or f"HTTPS Service (port {port})", https_url
+        except Exception as e:
+            if hasattr(e, "code") and getattr(e, "code") in (401, 403):
+                return default_label or f"Authenticated Gateway (port {port})", f"https://{host}:{port}/"
+
+    return default_label or f"HTTP Service (port {port})", url
+
+
 def audit_local_services() -> list[ServiceCapability]:
     """Audit active local daemons, HTTP APIs, and IPC sockets."""
     services: list[ServiceCapability] = []
 
     # 1. Check known HTTP API ports
     api_ports = [
-        (18988, "SubLLM Usage Panel", "http://127.0.0.1:18988/"),
-        (8789, "SubLLM Unified Gateway Pilot", "https://127.0.0.1:8789/"),
-        (8765, "Monag Web Panel", "http://127.0.0.1:8765/"),
+        (8765, "Planfile Queue Panel"),
+        (18988, "SubLLM Usage Panel"),
+        (8789, "SubLLM Unified Gateway Pilot"),
+        (8090, "Monag Web Panel"),
     ]
-    for port, label, endpoint in api_ports:
+    for port, fallback_label in api_ports:
         is_listening = _check_tcp_port(port)
         if is_listening:
+            label, endpoint = _probe_http_title(port, default_label=fallback_label)
             services.append(
                 ServiceCapability(
                     name=label,
