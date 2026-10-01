@@ -13,7 +13,8 @@ Sources (all read-only):
 - ``{"env": PATH, "key": K}``: ``K=V`` in a dotenv file;
 - ``{"quadlet": PATH, "key": K}``: ``Environment=K=V`` in a systemd/quadlet unit;
 - ``{"text": PATH, "key": K}``: alias of ``env`` for plain ``K=V`` files;
-- ``{"http": URL, "json": "a.b.c"}``: GET, then a dotted path into the JSON.
+- ``{"http": URL, "json": "a.b.c"}``: GET, then a dotted path into the JSON;
+- ``{"jsonfile": PATH, "json": "a.b.c"}``: the same dotted path into a JSON file.
 
 File sources accept ``"ssh": "user@host"``; the file is read with ``cat``
 over SSH (BatchMode, no command other than ``cat``). ``"expect"`` on a copy
@@ -30,7 +31,7 @@ import urllib.request
 from pathlib import Path
 
 SCHEMA = 'monag.ssot-drift/v1'
-FILE_KINDS = ('oql', 'env', 'quadlet', 'text')
+FILE_KINDS = ('oql', 'env', 'quadlet', 'text', 'jsonfile')
 HTTP_TIMEOUT = 8
 SSH_TIMEOUT = 15
 
@@ -95,16 +96,7 @@ def _quadlet_value(text: str, key: str):
     raise SourceError(f'Environment={key} not set')
 
 
-def _http_value(source: dict, fetch=None):
-    url = source['http']
-    if fetch is not None:
-        payload = fetch(url)
-    else:
-        try:
-            with urllib.request.urlopen(url, timeout=HTTP_TIMEOUT) as response:  # noqa: S310 - spec-declared GET
-                payload = json.loads(response.read())
-        except (OSError, ValueError) as exc:
-            raise SourceError(str(exc)[:200]) from exc
+def _json_path(payload, source: dict):
     value = payload
     for part in source.get('json', '').split('.') if source.get('json') else []:
         if isinstance(value, dict) and part in value:
@@ -116,14 +108,33 @@ def _http_value(source: dict, fetch=None):
     return value
 
 
+def _http_value(source: dict, fetch=None):
+    url = source['http']
+    if fetch is not None:
+        payload = fetch(url)
+    else:
+        try:
+            with urllib.request.urlopen(url, timeout=HTTP_TIMEOUT) as response:  # noqa: S310 - spec-declared GET
+                payload = json.loads(response.read())
+        except (OSError, ValueError) as exc:
+            raise SourceError(str(exc)[:200]) from exc
+    return _json_path(payload, source)
+
+
 def read_source(source: dict, *, reader=None, fetch=None):
     """Return the normalised string value of one source or raise SourceError."""
     if 'http' in source:
         value = _http_value(source, fetch)
     else:
         kind = next((k for k in FILE_KINDS if k in source), None)
+        if kind == 'jsonfile':
+            try:
+                payload = json.loads(_read_file(source, kind, reader))
+            except ValueError as exc:
+                raise SourceError(f'invalid JSON: {exc}') from exc
+            return normalise(_json_path(payload, source))
         if kind is None or 'key' not in source:
-            raise SourceError('source needs oql/env/quadlet/text + key, or http')
+            raise SourceError('source needs oql/env/quadlet/text + key, jsonfile + json, or http')
         text = _read_file(source, kind, reader)
         parse = {'oql': _oql_value, 'quadlet': _quadlet_value}.get(kind, _env_value)
         value = parse(text, source['key'])

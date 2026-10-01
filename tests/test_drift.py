@@ -100,3 +100,13 @@ def test_relative_paths_resolve_against_the_spec(tmp_path, monkeypatch):
          'copies': [{'oql': 'copy.oql', 'key': 'node.stacknet.uart_tx'}]}]}))
     monkeypatch.chdir('/')
     assert drift.check(drift.load_spec(path))['summary']['match'] == 1
+
+
+def test_json_file_source(tmp_path):
+    (tmp_path / 'contract.json').write_text(json.dumps({'pins': {'tx': {'active_high': False}}}))
+    (tmp_path / 'tic.oql').write_text("CONFIG:\n  SET 'device.tic.active_high' 'false'\n")
+    path = tmp_path / 'spec.json'
+    path.write_text(json.dumps({'schema': drift.SCHEMA, 'facts': [
+        {'id': 'polarity', 'owner': {'oql': 'tic.oql', 'key': 'device.tic.active_high'},
+         'copies': [{'jsonfile': 'contract.json', 'json': 'pins.tx.active_high'}]}]}))
+    assert drift.check(drift.load_spec(path))['summary']['match'] == 1
