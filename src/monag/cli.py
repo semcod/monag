@@ -210,6 +210,9 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='mode')
     status = sub.add_parser('status', parents=[common_sub_parser], help='one snapshot and exit')
     status.add_argument('--record', action='store_true', help='save changes to local history')
+    drift_parser = sub.add_parser('drift', parents=[common_sub_parser],
+                                  help='read-only SSOT check: every fact has one owner, every copy must match')
+    drift_parser.add_argument('--spec', type=Path, required=True, help='monag.ssot-drift/v1 JSON specification')
     doctor_parser = sub.add_parser('doctor', parents=[common_sub_parser], help='diagnose dependencies, worktrees, and process visibility')
     doctor_parser.add_argument('--fix', action='store_true', help='automatically prune orphaned worktrees, remove merged ticket branches, and run housekeeping')
     doctor_parser.add_argument('--safe-fix', dest='safe_fix', action='store_true', help='safely prune merged/clean worktrees and branches conforming to Wellmanifest Worktrees v5')
@@ -499,6 +502,14 @@ def main(argv=None):
         registry = aliases(args.agent)
         if args.mode == 'watch' and not 1 <= args.retention_days <= 365:
             parser.error('retention-days must be between 1 and 365')
+        if args.mode == 'drift':
+            from . import drift
+            report = drift.check(drift.load_spec(args.spec.expanduser()))
+            if output_format == 'json':
+                print(json.dumps(report, indent=2, ensure_ascii=False))
+            else:
+                display_report(drift.markdown(report))
+            return int(report['drift'])
         if args.mode == 'doctor':
             fix = getattr(args, 'fix', False) or getattr(args, 'safe_fix', False)
             data = diagnose(args.root.expanduser().resolve(), fix=fix)
