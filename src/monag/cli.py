@@ -429,6 +429,8 @@ def main(argv=None):
     timeline.add_argument('--kind')
     timeline.add_argument('--search')
     watch = sub.add_parser('watch', parents=[common_sub_parser], help='refresh until Ctrl-C (default in a terminal)')
+    # ticket-100 dropped this option; validation and the README still rely on it.
+    watch.add_argument('--interval', type=float, default=5, help='refresh period in seconds (0.2..86400)')
     watch.add_argument('--no-record', action='store_true', help='disable local history recording')
     watch.add_argument('--retention-days', type=int, default=7)
     tools_parser = sub.add_parser('tools', aliases=['apis'], parents=[common_sub_parser],
