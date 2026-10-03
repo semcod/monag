@@ -32,6 +32,21 @@ class TestAdvancedAutodiagnosis(unittest.TestCase):
         self.assertEqual(codes["GIT_CONFLICT_MARKERS"]["tier"], "floor")
         self.assertEqual(codes["GIT_CONFLICT_MARKERS"]["severity"], "ERROR")
 
+    def test_ignore_decorative_separator_lines(self):
+        repo = self.root / "separator-repo"
+        repo.mkdir(parents=True)
+        subprocess.run(["git", "-C", str(repo), "init"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(repo), "config", "user.email", "test@test.com"], check=True)
+        subprocess.run(["git", "-C", str(repo), "config", "user.name", "Test User"], check=True)
+
+        clean_file = repo / "LICENSE"
+        clean_file.write_text("================================================================================\nNOTICE\n")
+        subprocess.run(["git", "-C", str(repo), "add", "LICENSE"], check=True)
+
+        anomalies = autodiagnosis.inspect_repository_anomalies(repo)
+        codes = {a["code"]: a for a in anomalies}
+        self.assertNotIn("GIT_CONFLICT_MARKERS", codes)
+
     def test_detect_broken_virtualenv(self):
         repo = self.root / "broken-venv-repo"
         repo.mkdir(parents=True)
