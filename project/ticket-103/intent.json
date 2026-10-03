@@ -1,0 +1,25 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-103",
+  "summary": "fix(autodiagnosis): avoid false positive conflict markers on decorative separator lines",
+  "workstream": "application",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "regression"
+  },
+  "allowedPaths": [
+    "project/ticket-103/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/autodiagnosis.py",
+    "tests/test_advanced_autodiagnosis_and_sync.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}

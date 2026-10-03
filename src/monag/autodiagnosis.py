@@ -278,7 +278,7 @@ def inspect_repository_anomalies(repo_path: Path) -> List[Dict[str, Any]]:
     # 6. Unresolved Git merge conflict markers
     try:
         proc_conflict = subprocess.run(
-            ["git", "-C", str(repo_path), "grep", "-I", "-l", "-E", "^(<<<<<<< |=======|>>>>>>> )"],
+            ["git", "-C", str(repo_path), "grep", "-I", "-l", "-E", "^(<{7} |={7}$|>{7} )"],
             capture_output=True, text=True, timeout=10
         )
         if proc_conflict.returncode == 0 and proc_conflict.stdout.strip():
