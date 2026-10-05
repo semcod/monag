@@ -148,7 +148,8 @@ def _find_subllm_runner() -> Optional[Callable[[str], str]]:
     return None
 
 
-def inspect_repository_anomalies(repo_path: Path) -> List[Dict[str, Any]]:
+def inspect_repository_anomalies(repo_path: Path,
+                                  willmux_config_dir: Optional[Path] = None) -> List[Dict[str, Any]]:
     """Fast, read-only inspection of repository technical state and anomalies."""
     anomalies: List[Dict[str, Any]] = []
     repo_name = repo_path.name
@@ -321,6 +322,154 @@ def inspect_repository_anomalies(repo_path: Path) -> List[Dict[str, Any]]:
                     "evidence": f"Virtualenv directory {vpath} does not contain bin/python or Scripts/python.exe.",
                 })
 
+    # 8. Runtime system service logs (willman, willmux, and workspace services)
+    # 8a. Willman daemon logs and task execution outcomes (.willman/logs)
+    willman_logs = repo_path / ".willman" / "logs"
+    if willman_logs.is_dir():
+        daemon_logs = sorted(willman_logs.glob("daemon-*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for dlog in daemon_logs[:3]:
+            try:
+                size = dlog.stat().st_size
+                with dlog.open("rb") as f:
+                    if size > 65536:
+                        f.seek(size - 65536)
+                    chunk = f.read().decode("utf-8", errors="replace")
+                matches = re.findall(
+                    r"(?:Traceback \(most recent call last\):[\s\S]{10,600}?(?:\w+Error|\w+Exception):[^\n]+|(?:CRITICAL|FATAL|BrokenPipeError):[^\n]+)",
+                    chunk,
+                )
+                if matches:
+                    last_err = matches[-1].strip()
+                    first_err_line = last_err.splitlines()[-1] if "\n" in last_err else last_err
+                    anomalies.append({
+                        "code": "SYSTEM_LOG_ERROR",
+                        "tier": TIER_FLOOR,
+                        "severity": "ERROR",
+                        "target": repo_name,
+                        "path": str(repo_path),
+                        "summary": f"Runtime system error detected in willman daemon log: {first_err_line[:120]}",
+                        "evidence": f"Error excerpt from {dlog.name}:\n{last_err[:400]}",
+                        "details": {
+                            "service": "willman",
+                            "file": str(dlog),
+                            "error": first_err_line,
+                        },
+                    })
+                    break
+            except Exception:
+                pass
+
+        if not any(a["code"] == "SYSTEM_LOG_ERROR" and a["target"] == repo_name for a in anomalies):
+            task_ndjsons = sorted(willman_logs.glob("*.ndjson"), key=lambda p: p.stat().st_mtime, reverse=True)
+            for tj in task_ndjsons[:10]:
+                try:
+                    with tj.open(encoding="utf-8", errors="replace") as f:
+                        for line in f:
+                            if '"status": "failed"' in line or '"error"' in line:
+                                try:
+                                    entry = json.loads(line)
+                                    if entry.get("status") == "failed" or entry.get("error"):
+                                        err_msg = entry.get("error") or entry.get("result", {}).get("error") or "Task execution failed"
+                                        anomalies.append({
+                                            "code": "SYSTEM_LOG_ERROR",
+                                            "tier": TIER_FLOOR,
+                                            "severity": "ERROR",
+                                            "target": repo_name,
+                                            "path": str(repo_path),
+                                            "summary": f"Failed task execution recorded in willman logs: {str(err_msg)[:120]}",
+                                            "evidence": f"Failed task entry in {tj.name}: {line.strip()[:400]}",
+                                            "details": {
+                                                "service": "willman",
+                                                "file": str(tj),
+                                                "entry": entry,
+                                            },
+                                        })
+                                        break
+                                except Exception:
+                                    pass
+                        if any(a["code"] == "SYSTEM_LOG_ERROR" and a["target"] == repo_name for a in anomalies):
+                            break
+                except Exception:
+                    pass
+
+    # 8b. Willmux agent and event logs
+    if "willmux" in repo_name or (repo_path / "agent" / "willmux_agent").is_dir():
+        candidate_dirs = [
+            repo_path / ".config" / "willmux",
+            Path.home() / ".config" / "willmux",
+        ]
+        if willmux_config_dir:
+            candidate_dirs.insert(0, Path(willmux_config_dir))
+
+        for cdir in candidate_dirs:
+            if not cdir.is_dir():
+                continue
+
+            agent_log = cdir / "agent-log.jsonl"
+            if agent_log.is_file():
+                try:
+                    with agent_log.open(encoding="utf-8", errors="replace") as f:
+                        lines = f.readlines()
+                    for line in reversed(lines[-50:]):
+                        if '"level": "error"' in line or '"level": "fatal"' in line:
+                            try:
+                                entry = json.loads(line)
+                                if entry.get("level") in ("error", "fatal"):
+                                    anomalies.append({
+                                        "code": "SYSTEM_LOG_ERROR",
+                                        "tier": TIER_FLOOR,
+                                        "severity": "ERROR",
+                                        "target": repo_name,
+                                        "path": str(repo_path),
+                                        "summary": f"willmux agent logged error: {entry.get('msg', '')[:120]}",
+                                        "evidence": f"Found error entry in {agent_log.name}: {line.strip()[:400]}",
+                                        "details": {
+                                            "service": "willmux",
+                                            "file": str(agent_log),
+                                            "entry": entry,
+                                        },
+                                    })
+                                    break
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+            events_file = cdir / "events.jsonl"
+            if events_file.is_file() and not any(a["code"] == "SYSTEM_LOG_ERROR" and a["target"] == repo_name for a in anomalies):
+                try:
+                    with events_file.open(encoding="utf-8", errors="replace") as f:
+                        lines = f.readlines()
+                    for line in reversed(lines[-100:]):
+                        if '"status": "failed"' in line:
+                            try:
+                                entry = json.loads(line)
+                                data = entry.get("data") or {}
+                                if data.get("status") == "failed" or any(s.get("status") == "failed" for s in data.get("steps", [])):
+                                    failed_steps = [s for s in data.get("steps", []) if s.get("status") == "failed"]
+                                    reason = failed_steps[0].get("reason", "unknown") if failed_steps else "unknown"
+                                    anomalies.append({
+                                        "code": "SYSTEM_LOG_ERROR",
+                                        "tier": TIER_FLOOR,
+                                        "severity": "ERROR",
+                                        "target": repo_name,
+                                        "path": str(repo_path),
+                                        "summary": f"willmux event store recorded failed plan step: {reason[:120]}",
+                                        "evidence": f"Failed step in {events_file.name} (seq {entry.get('seq')}): {line.strip()[:400]}",
+                                        "details": {
+                                            "service": "willmux",
+                                            "file": str(events_file),
+                                            "seq": entry.get("seq"),
+                                            "reason": reason,
+                                        },
+                                    })
+                                    break
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+            break
+
     return anomalies
 
 
@@ -453,6 +602,7 @@ def _parse_subllm_response(text: str, fallback_anomaly: Dict[str, Any]) -> Dict[
         "DEPENDENCY_GIT_URL_FOUND": "Replace unbounded git+ URL dependency with published package contract or bounded version pin.",
         "GIT_CONFLICT_MARKERS": "Resolve merge conflicts, remove conflict markers, and verify syntax with git status and tests.",
         "BROKEN_VENV": "Recreate damaged virtual environment (.venv) and reinstall project dependencies.",
+        "SYSTEM_LOG_ERROR": "Diagnose root cause of runtime system log error, apply code/configuration fix, and verify service stability with tests.",
     }
     action = action_map.get(code, f"Resolve {code} in {target}.")
     ac1 = f"AC-01: {fallback_anomaly.get('summary', 'Anomaly is remediated')}."
@@ -735,6 +885,8 @@ def dispatch_tickets_to_planfile(tickets: List[Dict[str, Any]], root: Path,
             t_inputs.setdefault("expect_files_changed", True)
             t_inputs.setdefault("patch_mode", True)
             t_inputs.setdefault("worktree", True)
+            t_inputs.setdefault("provider", "opencode")
+            t_inputs.setdefault("runner", "opencode")
             t_inputs.setdefault("risk_class", "R1")
             t_inputs.setdefault("llm_timeout_seconds", 300)
             t_inputs.setdefault("max_patch_attempts", 3)
@@ -746,6 +898,7 @@ def dispatch_tickets_to_planfile(tickets: List[Dict[str, Any]], root: Path,
             t_executor = dict(t.get("executor") or {})
             t_executor.setdefault("kind", "llm")
             t_executor.setdefault("mode", "automatic")
+            t_executor.setdefault("runner", "opencode")
 
             task_entry = {
                 "id": ticket_id,
