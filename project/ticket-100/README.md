@@ -2,8 +2,8 @@
 
 - **ID**: ticket-100
 - **Owner**: antigravity
-- **Status**: IN_PROGRESS
-- **Workflow state**: EDIT
+- **Status**: DONE
+- **Workflow state**: COMPLETE
 - **Created**: 2026-09-28
 
 ## Goal and scope
