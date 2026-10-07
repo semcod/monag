@@ -121,6 +121,27 @@ def verify_candidate_conflict(candidate: dict[str, Any], root: Path) -> dict[str
 
 
 
+# A failure seen once is an event, not a pattern; reflex groups repeats by fingerprint.
+REFLEX_MIN_REPEAT = 2
+
+
+def _patterns_from_proposals(proposals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Reduce reflex proposals to one pattern per category.
+
+    ``reflex analyze`` reports recurring failures as ``proposals``; it has no
+    ``patterns`` key, so reading one always yielded an empty list.
+    """
+    by_category: dict[str, dict[str, Any]] = {}
+    for proposal in proposals:
+        category = proposal.get('category')
+        if not category:
+            continue
+        pattern = by_category.setdefault(category, {'category': category, 'frequency': 0, 'groups': 0})
+        pattern['frequency'] += int(proposal.get('frequency') or 0)
+        pattern['groups'] += 1
+    return sorted(by_category.values(), key=lambda p: (-p['frequency'], p['category']))
+
+
 def collect_reflex_patterns(root: Path, state_dir: Path | None = None,
                             extra_sources: list[str] | None = None) -> dict[str, Any]:
     """Extract recurring failure patterns using subactor.reflex if available."""
@@ -162,10 +183,10 @@ def collect_reflex_patterns(root: Path, state_dir: Path | None = None,
             events = list(ingest_paths(sources[:20], max_lines=5000))
             if not events:
                 return {'available': True, 'patterns': [], 'proposals': [], 'event_count': 0}
-            analysis = analyze(events, min_repeat=1)
+            analysis = analyze(events, min_repeat=REFLEX_MIN_REPEAT)
             return {
                 'available': True,
-                'patterns': analysis.get('patterns', []),
+                'patterns': _patterns_from_proposals(analysis.get('proposals', [])),
                 'proposals': analysis.get('proposals', []),
                 'statistics': analysis.get('statistics', {}),
                 'event_count': len(events),
@@ -178,13 +199,13 @@ def collect_reflex_patterns(root: Path, state_dir: Path | None = None,
             cmd = ['reflex', 'analyze']
             for s in sources[:10]:
                 cmd.extend(['--source', str(s)])
-            cmd.extend(['--min-repeat', '1'])
+            cmd.extend(['--min-repeat', str(REFLEX_MIN_REPEAT)])
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
             if proc.returncode == 0 and proc.stdout:
                 data = json.loads(proc.stdout)
                 return {
                     'available': True,
-                    'patterns': data.get('patterns', []),
+                    'patterns': _patterns_from_proposals(data.get('proposals', [])),
                     'proposals': data.get('proposals', []),
                     'statistics': data.get('statistics', {}),
                 }
