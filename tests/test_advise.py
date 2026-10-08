@@ -484,3 +484,30 @@ def test_cli_planfile_emit_and_feed(tmp_path):
 
 
 
+
+
+def test_patterns_are_derived_from_reflex_proposals():
+    proposals = [
+        {'category': 'governance-friction', 'frequency': 4},
+        {'category': 'operational-failure', 'frequency': 36},
+        {'category': 'governance-friction', 'frequency': 3},
+        {'frequency': 9},
+    ]
+    patterns = advise._patterns_from_proposals(proposals)
+    assert patterns == [
+        {'category': 'operational-failure', 'frequency': 36, 'groups': 1},
+        {'category': 'governance-friction', 'frequency': 7, 'groups': 2},
+    ]
+
+
+def test_collect_reflex_patterns_reports_recurring_categories(tmp_path):
+    pytest.importorskip('reflex.ingest')
+    log = tmp_path / 'receipts'
+    log.mkdir()
+    lines = ['{"outcome": "failure", "summary": "GOV-INTENT-002 ERROR: Ticket intent is invalid"}'] * 3
+    lines.append('{"outcome": "failure", "summary": "one-off unique crash"}')
+    (log / 'run.jsonl').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    with mock.patch('monag.advise._find_reflex_runner', return_value='import'):
+        data = advise.collect_reflex_patterns(tmp_path / 'empty-root', extra_sources=[str(log)])
+    assert [p['category'] for p in data['patterns']] == ['governance-friction']
+    assert len(data['proposals']) == 1
