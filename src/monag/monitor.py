@@ -23,6 +23,40 @@ def inside(path, root):
     return path == root or root in path.parents
 
 
+UNKNOWN_TASK = 'unknown (process only)'
+# Canonical Wellmanifest Worktrees v5 delivery checkout: <primary>/.worktrees/ticket-NNN--slug
+TICKET_WORKTREE = re.compile(r'^(?P<primary>.+)/\.worktrees/(?P<ticket>ticket-[0-9]{3,})--[^/]+')
+
+
+def inferred_task(directories):
+    """Name the ticket an agent works on from its ticket worktree, when it reported none.
+
+    The result is an observation, not a claim of ownership or progress: it only says
+    which canonical ticket worktree the process tree has as a working directory.
+    """
+    found = []
+    for directory in directories:
+        match = TICKET_WORKTREE.match(str(directory))
+        if match:
+            key = (match.group('primary'), match.group('ticket'))
+            if key not in [k for k, _ in found]:
+                found.append((key, match.group(0)))
+    if not found:
+        return None
+    labels = []
+    for (primary, ticket), worktree in found[:3]:
+        summary = ''
+        try:
+            intent = json.loads((Path(worktree) / 'project' / ticket / 'intent.json').read_text(encoding='utf-8'))
+            summary = ' '.join(str(intent.get('summary', '')).split())[:100]
+        except (OSError, ValueError, AttributeError):
+            pass
+        label = f"{Path(primary).name} {ticket}"
+        labels.append(f"{label}: {summary}" if summary else label)
+    more = f" (+{len(found) - 3} more)" if len(found) > 3 else ''
+    return 'inferred from worktree: ' + '; '.join(labels) + more
+
+
 def command(args, cwd=None, timeout=8):
     env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
     env.update(GIT_OPTIONAL_LOCKS='0', GIT_TERMINAL_PROMPT='0', GH_PROMPT_DISABLED='1')
@@ -114,10 +148,11 @@ def processes(root, proc=Path('/proc'), registry=None, machine=False, all_users=
         if not machine and (not row['cwd'] or not inside(Path(row['cwd']), root)):
             continue
         descendants = children[pid]
+        directories = sorted({p['cwd'] for p in [row, *descendants] if p['cwd']})
         result = dict(row, children=len(descendants), descendants=descendants,
                       child_commands=sorted({p['executable'] for p in descendants}),
-                      task=row.get('reported_task', 'unknown (process only)'),
-                      working_directories=sorted({p['cwd'] for p in [row, *descendants] if p['cwd']}),
+                      task=row.get('reported_task') or inferred_task(directories) or UNKNOWN_TASK,
+                      working_directories=directories,
                       cpu_seconds_tree=round(sum(p['cpu_seconds'] for p in [row, *descendants]), 3))
         if open_files:
             files, failures, truncated = set(), 0, False
