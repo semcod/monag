@@ -177,6 +177,12 @@ def run_task(args):
 
 
 def main(argv=None):
+    try:
+        from .autoupdate import check_for_updates
+        check_for_updates("monag")
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(prog='monag', description='Monitor local agents and Git workspace activity (Linux). No command: interactive shell in a terminal, otherwise one snapshot.')
     parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
     parser.set_defaults(interval=5, no_record=False, retention_days=7)
