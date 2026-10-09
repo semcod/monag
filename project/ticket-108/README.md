@@ -2,7 +2,7 @@
 
 - **ID**: ticket-108
 - **Owner**: unresolved:human
-- **Status**: PLAN
+- **Status**: IN_PROGRESS
 - **Workflow state**: EDIT
 - **Created**: 2026-10-09
 
