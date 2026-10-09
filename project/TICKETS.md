@@ -94,4 +94,6 @@
 | **ticket-102** | [`README.md`](./ticket-102/README.md) | - | - | - | - | - |
 | **ticket-103** | [`README.md`](./ticket-103/README.md) | - | - | - | - | - |
 | **ticket-104** | [`README.md`](./ticket-104/README.md) | - | - | - | - | - |
+| **ticket-106** | [`README.md`](./ticket-106/README.md) | - | - | - | - | - |
+| **ticket-107** | [`README.md`](./ticket-107/README.md) | - | - | - | - | - |
 <!-- AUTO:TICKET_INDEX:END -->
