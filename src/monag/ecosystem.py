@@ -50,6 +50,7 @@ KNOWN_TOOLS: dict[str, dict[str, Any]] = {
     "mdflow": {"role": "markdown dependency analyzer", "aliases": ("mdflow",), "module": "mdflow"},
     "metrun": {"role": "execution intelligence and bottlenecks", "aliases": ("metrun",), "module": "metrun"},
     "paxlet": {"role": "lightweight task paxlet runner", "aliases": ("paxlet",), "module": "paxlet"},
+    "uncrash": {"role": "workspace state snapshots, agent session diagnostics, and disaster recovery", "aliases": ("uncrash",), "module": "uncrash"},
     "monag": {"role": "agent monitor, triage, doctor, and MCP server", "aliases": ("monag",), "module": "monag"},
 }
 

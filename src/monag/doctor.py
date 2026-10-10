@@ -164,7 +164,54 @@ def prune_and_remediate(repo: Path, stale_worktrees: list[dict], merged_branches
     }
 
 
-def diagnose(root: Path, fix: bool = False) -> dict:
+def audit_agent_storage_health(home: Path | None = None) -> dict:
+    """Audit local coding agent session storage integrity and panic history.
+
+    Delegates to semcod/uncrash diagnostics when available, with a lightweight
+    standalone SQLite quick_check fallback.
+    """
+    target_home = Path(home or Path.home())
+    try:
+        from uncrash.diagnostics import check_agent_storage_health
+        return check_agent_storage_health(target_home)
+    except ImportError:
+        pass
+
+    # Fallback lightweight audit
+    import sqlite3
+    agy_root = target_home / '.gemini/antigravity-cli'
+    if not agy_root.is_dir():
+        return {'status': 'NOT_PRESENT', 'corrupted_sessions': [], 'detected_panics': []}
+
+    corrupt = []
+    conv_dir = agy_root / 'conversations'
+    if conv_dir.is_dir():
+        for db in sorted(conv_dir.glob('*.db')):
+            try:
+                conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=1.0)
+                res = conn.execute("PRAGMA quick_check;").fetchone()
+                conn.close()
+                if not res or res[0] != 'ok':
+                    corrupt.append({'session_id': db.stem, 'path': str(db), 'error': res[0] if res else 'failed'})
+            except Exception as e:
+                corrupt.append({'session_id': db.stem, 'path': str(db), 'error': str(e)})
+
+    panics = []
+    log_dir = agy_root / 'log'
+    if log_dir.is_dir():
+        for lf in sorted(log_dir.glob('*.log'), key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)[:10]:
+            try:
+                txt = lf.read_text(encoding='utf-8', errors='replace')[:256 * 1024]
+                if 'panic' in txt.lower() or 'disk image is malformed' in txt.lower():
+                    panics.append({'log_name': lf.name, 'log_path': str(lf)})
+            except (OSError, UnicodeError):
+                continue
+
+    status = 'CORRUPTED' if corrupt else ('DEGRADED' if panics else 'HEALTHY')
+    return {'status': status, 'corrupted_sessions': corrupt, 'detected_panics': panics}
+
+
+def diagnose(root: Path, fix: bool = False, home: Path | None = None) -> dict:
     git, git_error = command(['git', '--version'])
     own = Path('/proc/self')
     try:
@@ -221,6 +268,17 @@ def diagnose(root: Path, fix: bool = False) -> dict:
             errors.append(f"Error auditing {repo.name}: {e}")
 
     recommendations = []
+    # Audit agent storage health
+    agent_health = audit_agent_storage_health(home=home)
+    if agent_health.get('corrupted_sessions'):
+        recommendations.append(
+            f"Detected {len(agent_health['corrupted_sessions'])} corrupted agent session database(s) in ~/.gemini/antigravity-cli. Run 'uncrash' or restore via SQLite dump (wellmanifest/session-recovery)."
+        )
+    elif agent_health.get('detected_panics'):
+        recommendations.append(
+            f"Detected {len(agent_health['detected_panics'])} recent agent panic/crash log(s). Inspect logs or run 'uncrash diagnose'."
+        )
+
     if not fix:
         if stale_worktrees or all_merged_branches:
             recommendations.append(
@@ -243,6 +301,8 @@ def diagnose(root: Path, fix: bool = False) -> dict:
         recommendations.append("Koru is available for autonomous living execution ('koru autonomous').")
     if tools.get('planfile'):
         recommendations.append("Planfile is available for backlog and sprint ticket lifecycle ('planfile ticket').")
+    if tools.get('uncrash'):
+        recommendations.append("Uncrash is available for workspace snapshots and agent session disaster recovery ('uncrash diagnose').")
 
     result = {
         'python': sys.version.split()[0],
@@ -250,6 +310,8 @@ def diagnose(root: Path, fix: bool = False) -> dict:
         'git': git.strip() or None,
         'github_cli': shutil.which('gh'),
         'ecosystem_tools': [k for k, v in tools.items() if v],
+        'agent_storage_status': agent_health.get('status', 'UNKNOWN'),
+        'corrupted_agent_sessions': len(agent_health.get('corrupted_sessions', [])),
         'pid_namespace': namespace,
         'visible_processes': process_count,
         'uid': os.getuid(),
