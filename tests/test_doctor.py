@@ -102,6 +102,24 @@ class DoctorTests(unittest.TestCase):
         code_fix = main(['doctor', '--root', str(repo), '--fix'])
         self.assertEqual(code_fix, 0)
 
+    def test_doctor_detects_corrupted_agent_session_storage(self):
+        fake_home = self.root / 'fake_home'
+        conv_dir = fake_home / '.gemini/antigravity-cli/conversations'
+        conv_dir.mkdir(parents=True)
+        bad_db = conv_dir / 'malformed.db'
+        bad_db.write_bytes(b'SQLite format 3\x00' + b'\xff' * 100)
+
+        diag = diagnose(self.root, home=fake_home)
+        self.assertEqual(diag['agent_storage_status'], 'CORRUPTED')
+        self.assertEqual(diag['corrupted_agent_sessions'], 1)
+        self.assertTrue(any('wellmanifest/session-recovery' in r or 'uncrash' in r.lower() for r in diag.get('recommendations', [])))
+
+    def test_uncrash_registered_in_ecosystem(self):
+        from monag.ecosystem import KNOWN_TOOLS
+        self.assertIn('uncrash', KNOWN_TOOLS)
+        self.assertIn('disaster recovery', KNOWN_TOOLS['uncrash']['role'])
+
 
 if __name__ == '__main__':
     unittest.main()
+
