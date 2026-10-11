@@ -83,17 +83,21 @@ def agent_name(argv):
     return identify(argv)[0]
 
 
-def process_record(path, registry=None):
+def process_cwd(path):
+    try:
+        return str((path / 'cwd').resolve(strict=True))
+    except FileNotFoundError:
+        return None
+
+
+def process_record(path, registry=None, *, read_cwd=True):
     fields = (path / 'stat').read_text().rsplit(')', 1)[1].split()
     argv = (path / 'cmdline').read_bytes().decode('utf-8', 'replace').strip('\0').split('\0')
     if len(argv) == 1 and ' ' in argv[0] and not Path(argv[0]).exists():
         # Electron and npm rewrite their title into one space-separated string.
         argv = argv[0].split(' ')
     kind, launcher = identify(argv, registry)
-    try:
-        cwd = str((path / 'cwd').resolve(strict=True))
-    except FileNotFoundError:
-        cwd = None
+    cwd = process_cwd(path) if read_cwd else None
     return {'pid': int(path.name), 'ppid': int(fields[1]), 'state': fields[0],
             'start': fields[19], 'kind': kind, 'launcher': launcher,
             'executable': Path(argv[0]).name, 'cwd': cwd,
@@ -111,7 +115,10 @@ def processes(root, proc=Path('/proc'), registry=None, machine=False, all_users=
             uid = path.stat().st_uid
             if not all_users and uid != os.getuid():
                 continue
-            row = process_record(path, registry)
+            # Identity and ancestry must be visible even for unrelated services.
+            # Their cwd is optional: Linux may protect it independently (e.g.
+            # ssh-agent or a container with different supplementary groups).
+            row = process_record(path, registry, read_cwd=False)
             row['uid'] = uid
             records[row['pid']] = row
         except PermissionError:
@@ -123,6 +130,30 @@ def processes(root, proc=Path('/proc'), registry=None, machine=False, all_users=
         if row and row['start'] == task['start'] and task['status'] == 'running':
             row['kind'] = row['kind'] or task.get('agent_kind', 'reported')
             row['reported_task'] = task['task']
+    # Resolve attribution only after identifying all agents, including reported
+    # agents and descendants that appear before their parent in /proc. Never
+    # drop a denied child: a missing checkout in an agent tree is still a gap.
+    for row in records.values():
+        pid, visited = row['pid'], set()
+        while pid in records and pid not in visited:
+            visited.add(pid)
+            if records[pid]['kind']:
+                try:
+                    row['cwd'] = process_cwd(proc / str(row['pid']))
+                    # Attribution is a second pass: bind it to the identity we
+                    # inventoried, rather than a new process reusing this PID.
+                    current = (proc / str(row['pid']) / 'stat').read_text().rsplit(')', 1)[1].split()
+                    if current[19] != row['start'] or int(current[1]) != row['ppid']:
+                        row['cwd'] = None
+                        denied += 1
+                except FileNotFoundError:
+                    row['cwd'] = None  # Process exited during the observation.
+                except PermissionError:
+                    denied += 1
+                except (OSError, ValueError, IndexError):
+                    denied += 1
+                break
+            pid = records[pid]['ppid']
     # Only collapse a runtime launcher and its direct same-kind child.
     # Separate native child agents retain their own identities.
     grouped = {}
