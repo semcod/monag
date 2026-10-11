@@ -1,0 +1,31 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-111",
+  "summary": "History: report observation gaps and correlate task attempts with receipts",
+  "workstream": "application",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-111/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/history.py",
+    "src/monag/monitor.py",
+    "src/monag/cli.py",
+    "src/monag/presentation.py",
+    "tests/test_activity.py",
+    "tests/test_presentation.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}

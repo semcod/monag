@@ -10,8 +10,8 @@ from unittest.mock import patch
 from concurrent.futures import ThreadPoolExecutor
 
 from monag.agents import aliases, identify
-from monag.history import record, read
-from monag.monitor import activity, processes, snapshot, task_records
+from monag.history import record, read, coverage, connect
+from monag.monitor import activity, processes, snapshot, task_records, infer_ticket, current_git_sha
 
 
 class ActivityTests(unittest.TestCase):
@@ -240,6 +240,156 @@ class ActivityTests(unittest.TestCase):
             _, err = child.communicate(timeout=5)
         self.assertEqual(child.returncode, 143, err)
         self.assertEqual(task_records(state, self.root)[0]['status'], 'failed')
+
+    def test_coverage_distinguishes_unavailable_empty_gaps_and_telemetry(self):
+        state = self.root / 'state'
+        # 1. Store unavailable
+        cov = coverage(state, hours=24)
+        self.assertEqual(cov['store_status'], 'unavailable')
+        self.assertEqual(cov['activity_status'], 'unavailable')
+        self.assertEqual(cov['task_telemetry_status'], 'unavailable')
+        self.assertTrue(cov['observation_gap'])
+
+        # 2. Store empty
+        conn = connect(state)
+        conn.close()
+
+        cov = coverage(state, hours=24)
+        self.assertEqual(cov['store_status'], 'empty')
+        self.assertEqual(cov['total_events'], 0)
+        self.assertEqual(cov['activity_status'], 'no_events')
+        self.assertEqual(cov['task_telemetry_status'], 'zero_tasks')
+        self.assertFalse(cov['observation_gap'])
+
+        # 3. Store with file churn only, but events exist
+        t0 = 100000.0
+        conn = connect(state)
+        conn.execute("INSERT INTO events(observed, scope, kind, payload) VALUES (?, ?, ?, ?)", (t0, 'scope', 'file_observed', json.dumps({'path': 'a.py'})))
+        conn.execute("INSERT INTO events(observed, scope, kind, payload) VALUES (?, ?, ?, ?)", (t0 + 10, 'scope', 'file_no_longer_dirty', json.dumps({'path': 'a.py'})))
+        conn.commit()
+        conn.close()
+
+        # Check with deterministic now = t0 + 3600 (1 hour after sample, window 24h)
+        cov = coverage(state, hours=24, now=t0 + 3600)
+        self.assertEqual(cov['store_status'], 'available')
+        self.assertEqual(cov['total_events'], 2)
+        self.assertEqual(cov['activity_status'], 'active')
+        self.assertEqual(cov['task_telemetry_status'], 'missing')
+        self.assertFalse(cov['observation_gap'])
+        self.assertEqual(cov['metadata_churn']['file_events'], 2)
+        self.assertEqual(cov['task_events'], 0)
+
+        # 4. Observation gap: deterministic now = t0 + 40 * 3600 (40 hours later, window 24h)
+        cov = coverage(state, hours=24, now=t0 + 40 * 3600)
+        self.assertTrue(cov['observation_gap'])
+        self.assertEqual(cov['activity_status'], 'gap_detected')
+        self.assertAlmostEqual(cov['observation_gap_seconds'], 40 * 3600 - 10, delta=1)
+
+        # 5. Task telemetry available
+        conn = connect(state)
+        conn.execute("INSERT INTO events(observed, scope, kind, payload) VALUES (?, ?, ?, ?)", (t0 + 20, 'scope', 'task_observed', json.dumps({'task': 't1', 'ticket': 'ticket-111', 'outcome': 'completed'})))
+        conn.commit()
+        conn.close()
+
+        cov = coverage(state, hours=24, now=t0 + 3600)
+        self.assertEqual(cov['task_telemetry_status'], 'available')
+        self.assertEqual(cov['task_events'], 1)
+
+    def test_history_read_churn_filtering_and_deterministic_now(self):
+        state = self.root / 'state_read'
+        state.mkdir(parents=True, exist_ok=True)
+        t0 = 200000.0
+        conn = connect(state)
+        conn.execute("INSERT INTO events(observed, scope, kind, payload) VALUES (?, ?, ?, ?)", (t0 - 100, 'scope', 'file_observed', json.dumps({'path': 'x.py'})))
+        conn.execute("INSERT INTO events(observed, scope, kind, payload) VALUES (?, ?, ?, ?)", (t0 - 50, 'scope', 'agent_observed', json.dumps({'pid': 1, 'kind': 'claude'})))
+        conn.execute("INSERT INTO events(observed, scope, kind, payload) VALUES (?, ?, ?, ?)", (t0 - 10, 'scope', 'file_no_longer_dirty', json.dumps({'path': 'x.py'})))
+        conn.execute("INSERT INTO events(observed, scope, kind, payload) VALUES (?, ?, ?, ?)", (t0, 'scope', 'task_observed', json.dumps({'task': 'build', 'ticket': 'ticket-111'})))
+        conn.commit()
+        conn.close()
+
+        # All events in window
+        all_events = read(state, hours=1, now=t0)
+        self.assertEqual(len(all_events), 4)
+
+        # Filter out file dirty/clean churn
+        no_churn = read(state, hours=1, now=t0, exclude_metadata_churn=True)
+        self.assertEqual(len(no_churn), 2)
+        self.assertEqual({e['kind'] for e in no_churn}, {'agent_observed', 'task_observed'})
+
+    def test_clean_files_never_infer_task_completion(self):
+        state = self.root / 'state_clean'
+        d = self.data()
+        r = dict(path='/repo', branch='ticket-111--fix', files=[dict(path='a.py', status=' M', modified=1)],
+                 commits=[], common_dir='/repo/.git', errors=[])
+        d['repositories'] = [r]
+        record(state, d)
+        # File is no longer dirty
+        r['files'] = []
+        events = record(state, d)
+        self.assertEqual([e['kind'] for e in events], ['file_no_longer_dirty'])
+        self.assertNotIn('task_observed', [e['kind'] for e in events])
+        # Verify coverage still marks task telemetry as missing
+        cov = coverage(state, hours=24)
+        self.assertEqual(cov['task_telemetry_status'], 'missing')
+
+    def test_task_records_normalizes_ticket_attempt_sha_and_receipt(self):
+        tasks_dir = self.root / 'tasks'
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        task_data = {
+            'id': 'abc-123',
+            'pid': 9999,
+            'start': '100',
+            'cwd': str(self.root),
+            'task': 'Implement Ticket-111 in monag',
+            'status': 'completed',
+            'outcome': 'completed',
+            'started_at': 1000.0,
+            'ended_at': 1015.5,
+            'queued_at': 990.0,
+            'queue_duration_seconds': 10.0,
+            'execution_duration_seconds': 15.5,
+            'ticket': 'ticket-111',
+            'attempt': 2,
+            'sha': '1234567890abcdef1234567890abcdef12345678',
+            'receipt': 'receipt-hash-xyz',
+            'retries': 1,
+            'updated': 1015.5
+        }
+        (tasks_dir / 'abc-123.json').write_text(json.dumps(task_data))
+        records = task_records(self.root, self.root)
+        self.assertEqual(len(records), 1)
+        r = records[0]
+        self.assertEqual(r['ticket'], 'ticket-111')
+        self.assertEqual(r['attempt'], 2)
+        self.assertEqual(r['sha'], '1234567890abcdef1234567890abcdef12345678')
+        self.assertEqual(r['outcome'], 'completed')
+        self.assertEqual(r['receipt'], 'receipt-hash-xyz')
+        self.assertEqual(r['execution_duration_seconds'], 15.5)
+        self.assertEqual(r['queue_duration_seconds'], 10.0)
+
+    def test_infer_ticket_and_git_sha(self):
+        self.assertEqual(infer_ticket('Fix ticket-123 bug'), 'ticket-123')
+        self.assertEqual(infer_ticket('Implement issue #456 (ticket-039)'), 'ticket-039')
+        self.assertIsNone(infer_ticket('General refactoring without ticket'))
+
+    def test_cli_run_records_ticket_attempt_sha_and_receipt(self):
+        state = self.root / 'state_run'
+        env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / 'src'))
+        cmd = [sys.executable, '-m', 'monag', '--state-dir', str(state),
+               'run', '--task', 'test run args', '--ticket', 'ticket-111',
+               '--attempt', '2', '--sha', 'deadbeef123', '--queued-at', '100.0',
+               '--receipt', 'my-receipt-123', '--', sys.executable, '-c', 'pass']
+        res = subprocess.run(cmd, env=env, capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        tasks = list((state / 'tasks').glob('*.json'))
+        self.assertEqual(len(tasks), 1)
+        data = json.loads(tasks[0].read_text())
+        self.assertEqual(data['ticket'], 'ticket-111')
+        self.assertEqual(data['attempt'], 2)
+        self.assertEqual(data['sha'], 'deadbeef123')
+        self.assertEqual(data['receipt'], 'my-receipt-123')
+        self.assertEqual(data['status'], 'completed')
+        self.assertIsNotNone(data['execution_duration_seconds'])
 
 
 if __name__ == '__main__':

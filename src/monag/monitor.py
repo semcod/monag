@@ -299,6 +299,41 @@ def github_activity(repo, since):
     return items, errors
 
 
+def infer_ticket(task=None, cwd=None):
+    """Extract ticket ID (e.g. ticket-110) from task text, cwd path, or git branch."""
+    import re
+    pattern = r'ticket-[0-9]{3,}'
+    if task:
+        m = re.search(pattern, str(task), re.IGNORECASE)
+        if m:
+            return m.group(0).lower()
+    if cwd:
+        m = re.search(pattern, str(cwd), re.IGNORECASE)
+        if m:
+            return m.group(0).lower()
+        try:
+            head_path = Path(cwd) / '.git' / 'HEAD'
+            if head_path.is_file():
+                content = head_path.read_text().strip()
+                m = re.search(pattern, content, re.IGNORECASE)
+                if m:
+                    return m.group(0).lower()
+        except OSError:
+            pass
+    return None
+
+
+def current_git_sha(cwd=None):
+    """Resolve current HEAD commit SHA if cwd is in a Git checkout."""
+    try:
+        out, err = command(['git', 'rev-parse', 'HEAD'], cwd=cwd or Path.cwd(), timeout=5)
+        if not err and out and len(out.strip()) == 40:
+            return out.strip()
+    except Exception:
+        pass
+    return None
+
+
 def task_records(state_dir, root, proc=Path('/proc'), machine=False):
     tasks = []
     for path in (state_dir / 'tasks').glob('*.json'):
@@ -309,7 +344,7 @@ def task_records(state_dir, root, proc=Path('/proc'), machine=False):
                     or not isinstance(row.get('cwd'), str) or not Path(row['cwd']).is_absolute()
                     or not isinstance(row.get('task'), str)
                     or not isinstance(row.get('updated'), (int, float))
-                    or row.get('status') not in {'running', 'completed', 'failed'}):
+                    or row.get('status') not in {'running', 'completed', 'failed', 'stale'}):
                 continue
             if not machine and not inside(Path(row['cwd']), root):
                 continue
@@ -322,6 +357,16 @@ def task_records(state_dir, root, proc=Path('/proc'), machine=False):
                 if not alive:
                     row['status'] = 'stale'
             row['id'] = path.stem
+            if not row.get('ticket'):
+                row['ticket'] = infer_ticket(task=row.get('task'), cwd=row.get('cwd'))
+            if not row.get('sha'):
+                row['sha'] = current_git_sha(row.get('cwd'))
+            if not row.get('receipt'):
+                row['receipt'] = str(path)
+            if not row.get('outcome'):
+                row['outcome'] = row.get('status')
+            if 'attempt' not in row:
+                row['attempt'] = 1
             tasks.append(row)
         except (OSError, ValueError, KeyError, TypeError):
             continue

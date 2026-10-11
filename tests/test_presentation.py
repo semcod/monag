@@ -81,22 +81,81 @@ class PresentationTests(unittest.TestCase):
         self.assertIn('No observations', history_markdown([]))
         self.assertIn('| Check | Result |', doctor_markdown({'git':'2.51'}))
 
+    def test_history_markdown_observation_gap_warning_and_task_telemetry(self):
+        cov_gap = {
+            'store_status': 'available',
+            'activity_status': 'gap_detected',
+            'task_telemetry_status': 'missing',
+            'total_events': 12000,
+            'window_hours': 24.0,
+            'window_events': 0,
+            'latest_observed': 100000.0,
+            'latest_observed_iso': '2026-10-09T20:00:00+00:00',
+            'last_sample_age_seconds': 144000.0,
+            'observation_gap': True,
+            'observation_gap_seconds': 57600.0,
+            'metadata_churn': {'file_events': 11700, 'total': 11700}
+        }
+        report = history_markdown([], coverage=cov_gap)
+        self.assertIn('> [!WARNING] Observation gap detected', report)
+        self.assertIn('> [!NOTE] Task telemetry missing', report)
+        self.assertIn('11700 file transitions', report)
+
+    def test_history_markdown_rich_task_correlation(self):
+        events = [{
+            'observed': 100000.0,
+            'kind': 'task_observed',
+            'task': {
+                'task': 'Implement Ticket-111',
+                'status': 'completed',
+                'outcome': 'completed',
+                'ticket': 'ticket-111',
+                'attempt': 1,
+                'sha': '6dd35febc1234567890abcdef1234567890abcdef',
+                'execution_duration_seconds': 12.3,
+                'queue_duration_seconds': 1.5,
+                'receipt': 'hash:abc1234',
+                'pid': 1234,
+                'cwd': '/repo'
+            }
+        }]
+        cov_ok = {
+            'store_status': 'available',
+            'activity_status': 'active',
+            'task_telemetry_status': 'available',
+            'total_events': 1,
+            'window_hours': 24.0,
+            'window_events': 1,
+            'latest_observed': 100000.0,
+            'latest_observed_iso': '2026-10-11T12:00:00+00:00',
+            'last_sample_age_seconds': 60.0,
+            'observation_gap': False,
+            'observation_gap_seconds': 0,
+            'metadata_churn': {'file_events': 0, 'total': 0}
+        }
+        report = history_markdown(events, coverage=cov_ok)
+        self.assertIn('ticket\\-111', report)
+        self.assertIn('6dd35feb', report)
+        self.assertIn('outcome: completed', report)
+
     def test_cli_export_is_markdown_and_json_remains_parseable(self):
         with tempfile.TemporaryDirectory() as root:
+            env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / 'src'))
             cmd = [sys.executable, '-m', 'monag', '--root', root, '--agents-only']
-            result = subprocess.run(cmd + ['--markdown', 'status'], capture_output=True, text=True)
+            result = subprocess.run(cmd + ['--markdown', 'status'], capture_output=True, text=True, env=env)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(result.stdout.startswith('# MONAG'))
             self.assertNotIn('\x1b', result.stdout)
-            result = subprocess.run(cmd + ['--json', 'status'], capture_output=True, text=True)
+            result = subprocess.run(cmd + ['--json', 'status'], capture_output=True, text=True, env=env)
             self.assertIn('agents', json.loads(result.stdout))
-            result = subprocess.run(cmd + ['--json', '--markdown', 'status'], capture_output=True)
+            result = subprocess.run(cmd + ['--json', '--markdown', 'status'], capture_output=True, env=env)
             self.assertEqual(result.returncode, 2)
 
     def test_live_terminal_restores_screen_after_interrupt(self):
         with tempfile.TemporaryDirectory() as root:
             master, slave = pty.openpty()
-            env = dict(os.environ, TERM='xterm-256color', COLUMNS='100', LINES='30')
+            env = dict(os.environ, TERM='xterm-256color', COLUMNS='100', LINES='30',
+                       PYTHONPATH=str(Path(__file__).resolve().parents[1] / 'src'))
             child = subprocess.Popen([sys.executable, '-m', 'monag', '--root', root,
                                       '--agents-only', '--format', 'terminal', '--view', 'tree',
                                       'watch', '--no-record', '--interval', '.2'],
