@@ -23,3 +23,5 @@ SESSION_EXECUTION_AUTHORIZATION: user explicitly approved repairing Monag as par
 maxActiveMinutes: 120; checkpointMinutes: 30. Only monitor.py and its tests are implementation scope; no privilege or admission policy changes.
 
 Validation: 498 passed, 1 skipped, 42 subtests passed; governance 0 errors/0 warnings. Host scan detected 19 agents with zero inaccessible relevant processes. Protected publication remains pending.
+
+Scope reconciliation: OneDev exact-head verification exposed an existing MCP CLI test dependency on ~/github in an isolated CI home. Include only tests/test_mcp.py to provide an explicit temporary root; product MCP behavior is unchanged. Existing session execution/publication authorization applies. No competing active owner was observed for that path.

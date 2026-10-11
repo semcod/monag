@@ -13,7 +13,8 @@
     "TODO.md",
     "project/TICKETS.md",
     "src/monag/monitor.py",
-    "tests/test_monitor.py"
+    "tests/test_monitor.py",
+    "tests/test_mcp.py"
   ],
   "forbiddenPaths": [
     "project/ticket-*/user-*.md"
@@ -36,8 +37,8 @@
     "complexity": "S",
     "estimatedMinutes": 45,
     "budgets": {
-      "maxImplementationFiles": 2,
-      "maxAffectedComponents": 1,
+      "maxImplementationFiles": 3,
+      "maxAffectedComponents": 2,
       "maxPublicInterfaceChanges": 0,
       "maxRuntimeDependencies": 0
     },
@@ -50,6 +51,12 @@
           "paths": [
             "src/monag/monitor.py",
             "tests/test_monitor.py"
+          ]
+        },
+        {
+          "name": "mcp-cli-test-fixture",
+          "paths": [
+            "tests/test_mcp.py"
           ]
         }
       ],

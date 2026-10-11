@@ -228,11 +228,14 @@ class McpTests(unittest.TestCase):
 
     def test_cli_mcp_health_and_diagnose(self):
         from monag import cli
+        workspace = tempfile.TemporaryDirectory()
+        self.addCleanup(workspace.cleanup)
+        root_args = ['--root', workspace.name, '--state-dir', str(Path(workspace.name) / 'state')]
 
         # Test mcp --health
         out_buf = StringIO()
         with patch('sys.stdout', out_buf):
-            ret = cli.main(['mcp', '--health', '--json'])
+            ret = cli.main([*root_args, 'mcp', '--health', '--json'])
         self.assertEqual(ret, 0)
         health_data = json.loads(out_buf.getvalue())
         self.assertEqual(health_data['schema'], 'monag.mcp/health/v1')
@@ -240,7 +243,7 @@ class McpTests(unittest.TestCase):
         # Test mcp --diagnose
         out_buf_diag = StringIO()
         with patch('sys.stdout', out_buf_diag):
-            ret_diag = cli.main(['mcp', '--diagnose', '--json'])
+            ret_diag = cli.main([*root_args, 'mcp', '--diagnose', '--json'])
         self.assertEqual(ret_diag, 0)
         diag_data = json.loads(out_buf_diag.getvalue())
         self.assertTrue(diag_data['ok'])
