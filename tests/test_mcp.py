@@ -120,6 +120,158 @@ class McpTests(unittest.TestCase):
         self.assertEqual(output_lines[1]['id'], 2)
         self.assertEqual(output_lines[1]['result'], {})
 
+    def test_monag_health_tool_and_resource(self):
+        # Test tool call (markdown default)
+        req_tool_md = {
+            'jsonrpc': '2.0',
+            'id': 10,
+            'method': 'tools/call',
+            'params': {
+                'name': 'monag_health',
+                'arguments': {},
+            },
+        }
+        resp_tool_md = mcp.process_message(req_tool_md, root=Path('/tmp'))
+        self.assertEqual(resp_tool_md['id'], 10)
+        content_md = resp_tool_md['result']['content'][0]['text']
+        self.assertIn('MONAG · MCP Transport & Session Health', content_md)
+        self.assertIn('CLI Fallbacks', content_md)
+
+        # Test tool call with as_json=True
+        req_tool_json = {
+            'jsonrpc': '2.0',
+            'id': 11,
+            'method': 'tools/call',
+            'params': {
+                'name': 'monag_health',
+                'arguments': {'as_json': True},
+            },
+        }
+        resp_tool_json = mcp.process_message(req_tool_json, root=Path('/tmp'))
+        content_json = resp_tool_json['result']['content'][0]['text']
+        data = json.loads(content_json)
+        self.assertEqual(data['schema'], 'monag.mcp/health/v1')
+        self.assertEqual(data['status'], 'healthy')
+        self.assertIn('cli_fallbacks', data)
+        self.assertIn('monag_status', data['cli_fallbacks'])
+
+        # Test resource read
+        req_res = {
+            'jsonrpc': '2.0',
+            'id': 12,
+            'method': 'resources/read',
+            'params': {'uri': 'monag://health'},
+        }
+        resp_res = mcp.process_message(req_res, root=Path('/tmp'))
+        self.assertEqual(resp_res['id'], 12)
+        text = resp_res['result']['contents'][0]['text']
+        self.assertIn('MONAG · MCP Transport & Session Health', text)
+        self.assertIn('Bounded Read-Only CLI Fallbacks', text)
+
+    def test_tool_exception_containment(self):
+        session = mcp.MCPSession()
+        req = {
+            'jsonrpc': '2.0',
+            'id': 20,
+            'method': 'tools/call',
+            'params': {
+                'name': 'monag_prs',
+                'arguments': {},
+            },
+        }
+        with patch('monag.dsl.execute', side_effect=RuntimeError('Database disk I/O failure')):
+            resp = mcp.process_message(req, root=Path('/tmp'), session=session)
+
+        self.assertEqual(resp['id'], 20)
+        self.assertTrue(resp['result']['isError'])
+        err_text = resp['result']['content'][0]['text']
+        self.assertIn('Database disk I/O failure', err_text)
+        self.assertIn('CLI fallback', err_text)
+        self.assertEqual(session.errors_total, 1)
+        self.assertIn('Database disk I/O failure', session.last_error['message'])
+
+    def test_client_reconnect_lifecycle(self):
+        session = mcp.MCPSession()
+        self.assertEqual(session.state, mcp.SessionState.UNINITIALIZED)
+        self.assertEqual(session.reconnect_count, 0)
+
+        # First init
+        req1 = {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}}
+        resp1 = mcp.process_message(req1, root=Path('/tmp'), session=session)
+        self.assertEqual(resp1['id'], 1)
+        self.assertEqual(session.state, mcp.SessionState.ACTIVE)
+        self.assertEqual(session.reconnect_count, 0)
+
+        # Reconnect init
+        req2 = {'jsonrpc': '2.0', 'id': 2, 'method': 'initialize', 'params': {}}
+        resp2 = mcp.process_message(req2, root=Path('/tmp'), session=session)
+        self.assertEqual(resp2['id'], 2)
+        self.assertEqual(session.state, mcp.SessionState.ACTIVE)
+        self.assertEqual(session.reconnect_count, 1)
+
+        # Close
+        session.close()
+        self.assertEqual(session.state, mcp.SessionState.CLOSED)
+
+        # Terminate
+        session.terminate('Forced teardown')
+        self.assertEqual(session.state, mcp.SessionState.TERMINATED)
+        self.assertEqual(session.last_error['message'], 'Forced teardown')
+
+    def test_diagnose_server(self):
+        result = mcp.diagnose_server(root='/tmp')
+        self.assertEqual(result['schema'], 'monag.mcp/diagnostics/v1')
+        self.assertTrue(result['ok'])
+        self.assertEqual(len(result['steps']), 6)
+        self.assertTrue(all(s['ok'] for s in result['steps']))
+        self.assertIn('PASS', result['markdown'])
+
+    def test_cli_mcp_health_and_diagnose(self):
+        from monag import cli
+
+        # Test mcp --health
+        out_buf = StringIO()
+        with patch('sys.stdout', out_buf):
+            ret = cli.main(['mcp', '--health', '--json'])
+        self.assertEqual(ret, 0)
+        health_data = json.loads(out_buf.getvalue())
+        self.assertEqual(health_data['schema'], 'monag.mcp/health/v1')
+
+        # Test mcp --diagnose
+        out_buf_diag = StringIO()
+        with patch('sys.stdout', out_buf_diag):
+            ret_diag = cli.main(['mcp', '--diagnose', '--json'])
+        self.assertEqual(ret_diag, 0)
+        diag_data = json.loads(out_buf_diag.getvalue())
+        self.assertTrue(diag_data['ok'])
+
+    def test_run_stdio_server_error_containment(self):
+        # Feed malformed JSON, then request triggering unhandled error, then valid ping
+        input_lines = (
+            '{not valid json\n' +
+            json.dumps({'jsonrpc': '2.0', 'id': 50, 'method': 'nonexistent_call'}) + '\n' +
+            json.dumps({'jsonrpc': '2.0', 'id': 51, 'method': 'ping'}) + '\n'
+        )
+        in_stream = StringIO(input_lines)
+        out_stream = StringIO()
+
+        mcp.run_stdio_server('/tmp', in_stream=in_stream, out_stream=out_stream)
+
+        output_lines = [json.loads(line) for line in out_stream.getvalue().splitlines() if line.strip()]
+        self.assertEqual(len(output_lines), 3)
+
+        # 1. Parse error
+        self.assertEqual(output_lines[0]['error']['code'], -32700)
+        self.assertIn('Parse error', output_lines[0]['error']['message'])
+
+        # 2. Method not found error
+        self.assertEqual(output_lines[1]['id'], 50)
+        self.assertEqual(output_lines[1]['error']['code'], -32601)
+
+        # 3. Valid ping response (server remained alive and responsive)
+        self.assertEqual(output_lines[2]['id'], 51)
+        self.assertEqual(output_lines[2]['result'], {})
+
 
 if __name__ == '__main__':
     unittest.main()
