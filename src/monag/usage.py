@@ -117,7 +117,75 @@ def uptime_seconds(row, proc, now=None):
     return round((now or time.time()) - boot - int(row['start']) / os.sysconf('SC_CLK_TCK'))
 
 
-def ledger_record(source, path, text, home=None):
+DEFAULT_MAX_AGE_SECONDS = 86400  # 24 hours
+CLOCK_SKEW_TOLERANCE_SECONDS = 300  # 5 minutes
+
+
+def parse_timestamp(value):
+    """Parse an ISO 8601 string or numeric unix timestamp into a float epoch."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        val = value.strip()
+        if not val:
+            return None
+        try:
+            return float(val)
+        except ValueError:
+            pass
+        try:
+            clean_val = val.replace('Z', '+00:00')
+            dt = datetime.fromisoformat(clean_val)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.timestamp()
+        except (ValueError, TypeError):
+            return 'malformed'
+    return 'malformed'
+
+
+def check_budget_freshness(row, now=None, max_age_seconds=DEFAULT_MAX_AGE_SECONDS):
+    """Evaluate freshness contract for an api-budget state observation.
+
+    Checks:
+    1. absent observed_at: missing or empty
+    2. malformed observed_at: cannot be parsed to timestamp
+    3. future observed_at: ahead of now beyond clock skew tolerance
+    4. old observed_at: older than max_age_seconds
+    5. expired reset window: reset_at is in the past (reset_at <= now)
+    6. malformed reset_at: present but unparseable
+
+    Returns (is_fresh: bool, freshness: str, reason: str | None).
+    """
+    now_ts = time.time() if now is None else float(now)
+    observed_raw = row.get('observed_at')
+    if observed_raw is None or (isinstance(observed_raw, str) and not observed_raw.strip()):
+        return False, 'unknown', 'absent_observed_at'
+
+    observed_ts = parse_timestamp(observed_raw)
+    if observed_ts == 'malformed' or observed_ts is None:
+        return False, 'unknown', 'malformed_observed_at'
+
+    if observed_ts > (now_ts + CLOCK_SKEW_TOLERANCE_SECONDS):
+        return False, 'unknown', 'future_observed_at'
+
+    if (now_ts - observed_ts) > max_age_seconds:
+        return False, 'unknown', 'stale_observed_at'
+
+    reset_raw = row.get('reset_at')
+    if reset_raw is not None and not (isinstance(reset_raw, str) and not reset_raw.strip()):
+        reset_ts = parse_timestamp(reset_raw)
+        if reset_ts == 'malformed':
+            return False, 'unknown', 'malformed_reset_at'
+        if reset_ts is not None and reset_ts <= now_ts:
+            return False, 'unknown', 'expired_reset_window'
+
+    return True, 'fresh', None
+
+
+def ledger_record(source, path, text, home=None, now=None, max_age_seconds=DEFAULT_MAX_AGE_SECONDS):
     """Normalize one api-budget state document; malformed input is an error row."""
     try:
         row = json.loads(text)
@@ -125,24 +193,50 @@ def ledger_record(source, path, text, home=None):
         return None, f'{source}: {path}: invalid JSON'
     if not isinstance(row, dict) or row.get('schema') != LEDGER_SCHEMA:
         return None, f'{source}: {path}: not a {LEDGER_SCHEMA} document'
+
+    now_ts = time.time() if now is None else float(now)
     reset_at = row.get('reset_at')
+    reset_ts = parse_timestamp(reset_at)
     provider = row.get('provider', 'unknown')
     account = row.get('account') or row.get('email')
     if not account:
         account = detect_provider_account(provider, home=home)
-    balance = row.get('balance')
-    if balance is None:
-        balance = row.get('balance_text')
-    return {'provider': provider,
-            'account': str(account) if account is not None else None,
-            'remaining': row.get('remaining') if isinstance(row.get('remaining'), (int, float)) else None,
-            'balance': str(balance) if balance is not None else None,
-            'reset_at': reset_at if isinstance(reset_at, (int, float)) else None,
-            'reset_in_seconds': (round(reset_at - time.time())
-                                 if isinstance(reset_at, (int, float)) else None),
-            'last_decision': row.get('last_decision'),
-            'observed_at': row.get('observed_at'),
-            'source': source, 'path': path}, None
+    raw_balance = row.get('balance')
+    if raw_balance is None:
+        raw_balance = row.get('balance_text')
+    raw_balance = str(raw_balance) if raw_balance is not None else None
+
+    raw_remaining = row.get('remaining') if isinstance(row.get('remaining'), (int, float)) else None
+
+    is_fresh, freshness, reason = check_budget_freshness(row, now=now_ts, max_age_seconds=max_age_seconds)
+
+    if is_fresh:
+        remaining = raw_remaining
+        balance = raw_balance
+    else:
+        remaining = None
+        balance = 'unknown'
+
+    reset_in_seconds = (round(reset_ts - now_ts)
+                        if isinstance(reset_ts, (int, float)) else None)
+
+    return {
+        'provider': provider,
+        'account': str(account) if account is not None else None,
+        'remaining': remaining,
+        'balance': balance,
+        'historical_remaining': raw_remaining,
+        'historical_balance': raw_balance,
+        'is_fresh': is_fresh,
+        'freshness': freshness,
+        'freshness_reason': reason,
+        'reset_at': reset_at if isinstance(reset_at, (int, float)) else (reset_ts if isinstance(reset_ts, (int, float)) else None),
+        'reset_in_seconds': reset_in_seconds,
+        'last_decision': row.get('last_decision'),
+        'observed_at': row.get('observed_at'),
+        'source': source,
+        'path': path,
+    }, None
 
 
 def _docker_ledgers(container):
@@ -173,7 +267,7 @@ def _docker_auto():
     return [name.strip() for name in out.splitlines() if 'coordinator' in name], []
 
 
-def read_ledgers(source, home=None):
+def read_ledgers(source, home=None, now=None, max_age_seconds=DEFAULT_MAX_AGE_SECONDS):
     """One --ledger source: a file, a directory of ledgers, or docker:NAME|auto."""
     rows, errors = [], []
     if source.startswith('docker:'):
@@ -185,7 +279,7 @@ def read_ledgers(source, home=None):
             documents, err = _docker_ledgers(name)
             errors += err
             for path, text in documents:
-                row, problem = ledger_record(f'docker:{name}', path, text, home=home)
+                row, problem = ledger_record(f'docker:{name}', path, text, home=home, now=now, max_age_seconds=max_age_seconds)
                 (rows.append(row) if row else errors.append(problem))
         return rows, errors
     path = Path(source).expanduser()
@@ -198,7 +292,7 @@ def read_ledgers(source, home=None):
         except OSError as e:
             errors.append(f'{file}: {type(e).__name__}')
             continue
-        row, problem = ledger_record(source, str(file), text, home=home)
+        row, problem = ledger_record(source, str(file), text, home=home, now=now, max_age_seconds=max_age_seconds)
         (rows.append(row) if row else errors.append(problem))
     return rows, errors
 
@@ -243,22 +337,22 @@ def agent_accounts(agents, ledgers, home=None):
             agent['account'] = detected[provider]
 
 
-def scan(root, registry=None, machine=False, all_users=False, ledgers=(), proc=Path('/proc'), home=None):
+def scan(root, registry=None, machine=False, all_users=False, ledgers=(), proc=Path('/proc'), home=None, now=None, max_age_seconds=DEFAULT_MAX_AGE_SECONDS):
     """One usage observation: agent tree resources plus declared ledger sources."""
     started = time.monotonic()
     agents, denied = processes(root, proc=proc, registry=registry,
                                machine=machine, all_users=all_users)
-    now = time.time()
+    now_ts = time.time() if now is None else float(now)
     for agent in agents:
         members = [agent, *agent.get('descendants', [])]
         rss = [resident_bytes(m['pid'], proc) for m in members]
         agent['rss_bytes'] = sum(r for r in rss if r is not None) if any(r is not None for r in rss) else None
-        agent['uptime_seconds'] = uptime_seconds(agent, proc, now)
+        agent['uptime_seconds'] = uptime_seconds(agent, proc, now_ts)
     agents.sort(key=lambda a: -(a.get('cpu_seconds_tree') or 0))
     sources = list(ledgers) if ledgers else default_ledgers(enabled=(proc == Path('/proc')))
     ledger_rows, errors = [], []
     for source in sources:
-        rows, err = read_ledgers(source, home=home)
+        rows, err = read_ledgers(source, home=home, now=now_ts, max_age_seconds=max_age_seconds)
         ledger_rows += rows
         errors += err
     agent_accounts(agents, ledger_rows, home=home)

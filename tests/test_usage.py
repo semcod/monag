@@ -1,8 +1,10 @@
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
 import sqlite3
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -33,10 +35,11 @@ class UsageTests(unittest.TestCase):
 
     def ledger(self, directory, name='api-budget-github.json', **overrides):
         directory.mkdir(parents=True, exist_ok=True)
+        now = time.time()
         row = {'schema': 'subactor.api-budget-state/v1', 'provider': 'github',
-               'remaining': 245, 'reset_at': 1789660247,
+               'remaining': 245, 'reset_at': round(now + 3600),
                'last_decision': 'conserve:reserve_publication_budget:0',
-               'observed_at': '2026-09-17T15:30:00Z'}
+               'observed_at': datetime.now(timezone.utc).isoformat()}
         row.update(overrides)
         (directory / name).write_text(json.dumps(row))
         return directory / name
@@ -74,9 +77,13 @@ class UsageTests(unittest.TestCase):
         row = rows[0]
         self.assertEqual(row['provider'], 'github')
         self.assertEqual(row['remaining'], 245)
-        self.assertEqual(row['reset_at'], 1789660247)
+        self.assertIsNotNone(row['reset_at'])
         self.assertIsNotNone(row['reset_in_seconds'])
         self.assertEqual(row['last_decision'], 'conserve:reserve_publication_budget:0')
+        self.assertTrue(row['is_fresh'])
+        self.assertEqual(row['freshness'], 'fresh')
+        self.assertIsNone(row['freshness_reason'])
+        self.assertEqual(row['historical_remaining'], 245)
 
     def test_ledger_rejects_foreign_json_and_missing_dir(self):
         state = self.root / 'state'
@@ -263,6 +270,157 @@ class UsageTests(unittest.TestCase):
         with patch('monag.usage.DEFAULT_LEDGER_DIRS', (state,)):
             discovered = usage.default_ledgers(enabled=True, ignore_env=True)
             self.assertEqual(discovered, [str(state)])
+
+    def test_stale_ledger_absent_observed_at(self):
+        state = self.root / 'state_absent'
+        self.ledger(state, observed_at=None)
+        rows, errors = usage.read_ledgers(str(state))
+        self.assertEqual(errors, [])
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertFalse(row['is_fresh'])
+        self.assertEqual(row['freshness'], 'unknown')
+        self.assertEqual(row['freshness_reason'], 'absent_observed_at')
+        self.assertIsNone(row['remaining'])
+        self.assertEqual(row['balance'], 'unknown')
+        self.assertEqual(row['historical_remaining'], 245)
+
+    def test_stale_ledger_malformed_observed_at(self):
+        state = self.root / 'state_malformed'
+        self.ledger(state, observed_at='invalid-iso-timestamp')
+        rows, errors = usage.read_ledgers(str(state))
+        self.assertEqual(errors, [])
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertFalse(row['is_fresh'])
+        self.assertEqual(row['freshness'], 'unknown')
+        self.assertEqual(row['freshness_reason'], 'malformed_observed_at')
+        self.assertIsNone(row['remaining'])
+        self.assertEqual(row['balance'], 'unknown')
+        self.assertEqual(row['historical_remaining'], 245)
+
+    def test_stale_ledger_old_observed_at(self):
+        state = self.root / 'state_old'
+        self.ledger(state, observed_at='2026-09-17T15:30:00Z', reset_at=time.time() + 3600)
+        rows, errors = usage.read_ledgers(str(state))
+        self.assertEqual(errors, [])
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertFalse(row['is_fresh'])
+        self.assertEqual(row['freshness'], 'unknown')
+        self.assertEqual(row['freshness_reason'], 'stale_observed_at')
+        self.assertIsNone(row['remaining'])
+        self.assertEqual(row['balance'], 'unknown')
+        self.assertEqual(row['historical_remaining'], 245)
+
+    def test_stale_ledger_future_observed_at(self):
+        state = self.root / 'state_future'
+        future_iso = datetime.fromtimestamp(time.time() + 86400, timezone.utc).isoformat()
+        self.ledger(state, observed_at=future_iso)
+        rows, errors = usage.read_ledgers(str(state))
+        self.assertEqual(errors, [])
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertFalse(row['is_fresh'])
+        self.assertEqual(row['freshness'], 'unknown')
+        self.assertEqual(row['freshness_reason'], 'future_observed_at')
+        self.assertIsNone(row['remaining'])
+        self.assertEqual(row['balance'], 'unknown')
+        self.assertEqual(row['historical_remaining'], 245)
+
+    def test_stale_ledger_expired_reset_window(self):
+        state = self.root / 'state_expired'
+        now = time.time()
+        recent_iso = datetime.fromtimestamp(now - 120, timezone.utc).isoformat()
+        self.ledger(state, observed_at=recent_iso, reset_at=now - 60)
+        rows, errors = usage.read_ledgers(str(state))
+        self.assertEqual(errors, [])
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertFalse(row['is_fresh'])
+        self.assertEqual(row['freshness'], 'unknown')
+        self.assertEqual(row['freshness_reason'], 'expired_reset_window')
+        self.assertIsNone(row['remaining'])
+        self.assertEqual(row['balance'], 'unknown')
+        self.assertEqual(row['historical_remaining'], 245)
+        self.assertLess(row['reset_in_seconds'], 0)
+        self.assertIn('expired', usage.reset_cell(row))
+
+    def test_stale_ledger_preserves_historical_balance_and_renders_unknown(self):
+        proc = self.fake_proc()
+        cwd = self.root / 'workspace'
+        cwd.mkdir()
+        state = self.root / 'state_stale_balance'
+        # Stale ledger with historical balance and remaining
+        self.ledger(state, balance='$25.00', remaining=150,
+                    observed_at='2026-09-17T15:30:00Z', reset_at=1789660247)
+        data = usage.scan(cwd, proc=proc, ledgers=[str(state)])
+        self.assertEqual(len(data['ledgers']), 1)
+        ledger = data['ledgers'][0]
+        self.assertFalse(ledger['is_fresh'])
+        self.assertIsNone(ledger['remaining'])
+        self.assertEqual(ledger['balance'], 'unknown')
+        self.assertEqual(ledger['historical_remaining'], 150)
+        self.assertEqual(ledger['historical_balance'], '$25.00')
+
+        text = usage.render(data)
+        self.assertIn('unknown', text)
+        self.assertNotIn('$25.00', text)
+
+        doc = usage.markdown(data)
+        self.assertIn('unknown', doc)
+        self.assertNotIn('$25.00', doc)
+
+    def test_check_budget_freshness_direct(self):
+        now = 1700000000.0
+        # Fresh
+        fresh_row = {'observed_at': now - 60, 'reset_at': now + 3600}
+        is_fresh, freshness, reason = usage.check_budget_freshness(fresh_row, now=now)
+        self.assertTrue(is_fresh)
+        self.assertEqual(freshness, 'fresh')
+        self.assertIsNone(reason)
+
+        # Absent observed_at
+        absent_row = {'observed_at': None}
+        is_fresh, freshness, reason = usage.check_budget_freshness(absent_row, now=now)
+        self.assertFalse(is_fresh)
+        self.assertEqual(reason, 'absent_observed_at')
+
+        # Empty observed_at
+        empty_row = {'observed_at': '   '}
+        is_fresh, freshness, reason = usage.check_budget_freshness(empty_row, now=now)
+        self.assertFalse(is_fresh)
+        self.assertEqual(reason, 'absent_observed_at')
+
+        # Malformed observed_at
+        malformed_row = {'observed_at': 'invalid'}
+        is_fresh, freshness, reason = usage.check_budget_freshness(malformed_row, now=now)
+        self.assertFalse(is_fresh)
+        self.assertEqual(reason, 'malformed_observed_at')
+
+        # Future observed_at (> now + 300s)
+        future_row = {'observed_at': now + 600}
+        is_fresh, freshness, reason = usage.check_budget_freshness(future_row, now=now)
+        self.assertFalse(is_fresh)
+        self.assertEqual(reason, 'future_observed_at')
+
+        # Stale observed_at (> max_age_seconds)
+        stale_row = {'observed_at': now - 90000}
+        is_fresh, freshness, reason = usage.check_budget_freshness(stale_row, now=now, max_age_seconds=86400)
+        self.assertFalse(is_fresh)
+        self.assertEqual(reason, 'stale_observed_at')
+
+        # Expired reset window
+        expired_row = {'observed_at': now - 60, 'reset_at': now - 1}
+        is_fresh, freshness, reason = usage.check_budget_freshness(expired_row, now=now)
+        self.assertFalse(is_fresh)
+        self.assertEqual(reason, 'expired_reset_window')
+
+        # Malformed reset_at
+        mal_reset_row = {'observed_at': now - 60, 'reset_at': 'bad-reset'}
+        is_fresh, freshness, reason = usage.check_budget_freshness(mal_reset_row, now=now)
+        self.assertFalse(is_fresh)
+        self.assertEqual(reason, 'malformed_reset_at')
 
 
 if __name__ == '__main__':
