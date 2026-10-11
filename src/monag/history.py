@@ -104,7 +104,17 @@ def record(state_dir, data, retention_days=7):
                     emit('github_observed', item)
             for key, task in current['tasks'].items():
                 if previous.get('tasks', {}).get(key) != task:
-                    emit('task_observed', {'task': task})
+                    task_payload = {
+                        'task': task,
+                        'ticket': task.get('ticket'),
+                        'attempt': task.get('attempt'),
+                        'sha': task.get('sha'),
+                        'outcome': task.get('outcome', task.get('status')),
+                        'execution_duration_seconds': task.get('execution_duration_seconds'),
+                        'queue_duration_seconds': task.get('queue_duration_seconds'),
+                        'receipt': task.get('receipt'),
+                    }
+                    emit('task_observed', task_payload)
             # Keep cached entities across incomplete scans; never infer a completed task.
             current['repos'] = {**previous['repos'], **current['repos']}
             current['github'] = {**previous['github'], **current['github']}
@@ -118,17 +128,155 @@ def record(state_dir, data, retention_days=7):
     return events
 
 
-def read(state_dir, limit=50, kind=None, search=None, hours=24):
+def coverage(state_dir, hours=24, now=None):
+    """Compute history coverage, observation gaps, and task telemetry status."""
+    path = Path(state_dir) / 'history.sqlite3'
+    now_ts = time.time() if now is None else float(now)
+    window_start = now_ts - float(hours) * 3600
+
+    if not path.is_file():
+        return {
+            'store_status': 'unavailable',
+            'total_events': 0,
+            'latest_observed': None,
+            'latest_observed_iso': None,
+            'last_sample_age_seconds': None,
+            'window_hours': float(hours),
+            'window_events': 0,
+            'observation_gap': True,
+            'observation_gap_seconds': None,
+            'task_events': 0,
+            'task_events_window': 0,
+            'completed_tasks': 0,
+            'failed_tasks': 0,
+            'running_tasks': 0,
+            'task_telemetry_status': 'unavailable',
+            'activity_status': 'unavailable',
+            'metadata_churn': {'file_events': 0, 'file_observed': 0, 'file_no_longer_dirty': 0, 'open_file_observed': 0, 'total': 0},
+        }
+
+    db = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)
+    try:
+        row = db.execute('SELECT COUNT(*), MIN(observed), MAX(observed) FROM events').fetchone()
+        total_events = row[0] if row else 0
+        latest_observed = row[2] if row and row[2] is not None else None
+
+        if total_events == 0 or latest_observed is None:
+            return {
+                'store_status': 'empty',
+                'total_events': 0,
+                'latest_observed': None,
+                'latest_observed_iso': None,
+                'last_sample_age_seconds': None,
+                'window_hours': float(hours),
+                'window_events': 0,
+                'observation_gap': False,
+                'observation_gap_seconds': None,
+                'task_events': 0,
+                'task_events_window': 0,
+                'completed_tasks': 0,
+                'failed_tasks': 0,
+                'running_tasks': 0,
+                'task_telemetry_status': 'zero_tasks',
+                'activity_status': 'no_events',
+                'metadata_churn': {'file_events': 0, 'file_observed': 0, 'file_no_longer_dirty': 0, 'open_file_observed': 0, 'total': 0},
+            }
+
+        last_sample_age = round(now_ts - latest_observed, 1)
+        from datetime import datetime, timezone
+        latest_iso = datetime.fromtimestamp(latest_observed, timezone.utc).isoformat()
+
+        w_row = db.execute('SELECT COUNT(*) FROM events WHERE observed >= ?', (window_start,)).fetchone()
+        window_events = w_row[0] if w_row else 0
+
+        kinds_all = dict(db.execute('SELECT kind, COUNT(*) FROM events GROUP BY kind').fetchall())
+        kinds_window = dict(db.execute('SELECT kind, COUNT(*) FROM events WHERE observed >= ? GROUP BY kind', (window_start,)).fetchall())
+
+        task_events_total = kinds_all.get('task_observed', 0)
+        task_events_window = kinds_window.get('task_observed', 0)
+
+        if task_events_total == 0:
+            task_telemetry_status = 'missing'
+        elif task_events_window == 0:
+            task_telemetry_status = 'zero_tasks'
+        else:
+            task_telemetry_status = 'available'
+
+        completed_tasks = 0
+        failed_tasks = 0
+        running_tasks = 0
+        for (payload_str,) in db.execute("SELECT payload FROM events WHERE kind='task_observed' AND observed >= ?", (window_start,)).fetchall():
+            try:
+                p = json.loads(payload_str)
+                task_obj = p.get('task') if isinstance(p.get('task'), dict) else p
+                status = (task_obj.get('outcome') or task_obj.get('status') or '').lower()
+                if status == 'completed':
+                    completed_tasks += 1
+                elif status == 'failed':
+                    failed_tasks += 1
+                elif status == 'running':
+                    running_tasks += 1
+            except (ValueError, TypeError):
+                pass
+
+        fo = kinds_window.get('file_observed', 0)
+        fnld = kinds_window.get('file_no_longer_dirty', 0)
+        ofo = kinds_window.get('open_file_observed', 0)
+        churn_total = fo + fnld + ofo
+
+        observation_gap = latest_observed < window_start
+        observation_gap_seconds = round(now_ts - latest_observed, 1) if observation_gap else None
+
+        if observation_gap:
+            activity_status = 'gap_detected'
+        elif window_events == 0:
+            activity_status = 'no_activity'
+        else:
+            activity_status = 'active'
+
+        return {
+            'store_status': 'available',
+            'total_events': total_events,
+            'latest_observed': latest_observed,
+            'latest_observed_iso': latest_iso,
+            'last_sample_age_seconds': last_sample_age,
+            'window_hours': float(hours),
+            'window_events': window_events,
+            'observation_gap': observation_gap,
+            'observation_gap_seconds': observation_gap_seconds,
+            'task_events': task_events_total,
+            'task_events_window': task_events_window,
+            'completed_tasks': completed_tasks,
+            'failed_tasks': failed_tasks,
+            'running_tasks': running_tasks,
+            'task_telemetry_status': task_telemetry_status,
+            'activity_status': activity_status,
+            'metadata_churn': {
+                'file_events': fo + fnld,
+                'file_observed': fo,
+                'file_no_longer_dirty': fnld,
+                'open_file_observed': ofo,
+                'total': churn_total,
+            },
+        }
+    finally:
+        db.close()
+
+
+def read(state_dir, limit=50, kind=None, search=None, hours=24, now=None, exclude_metadata_churn=False):
     path = state_dir / 'history.sqlite3'
     if not path.exists():
         return []
+    now_ts = time.time() if now is None else float(now)
     db = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)
     try:
         query = 'SELECT observed,kind,payload FROM events WHERE observed>=?'
-        values = [time.time() - hours * 3600]
+        values = [now_ts - hours * 3600]
         if kind:
             query += ' AND kind=?'
             values.append(kind)
+        elif exclude_metadata_churn:
+            query += " AND kind NOT IN ('file_observed', 'file_no_longer_dirty', 'open_file_observed')"
         if search:
             query += ' AND instr(payload,?)>0'
             values.append(search)

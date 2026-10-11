@@ -67,10 +67,17 @@ def event_line(event):
     subject = event.get('agent') or event.get('process') or event.get('task') or {}
     if not isinstance(subject, dict):
         subject = {'task': subject}
-    details = [str(subject.get('pid', event.get('agent_pid', ''))),
-               subject.get('kind', subject.get('executable', '')),
-               subject.get('cwd', event.get('project', '')),
-               event.get('file', event.get('subject', event.get('title', subject.get('task', ''))))]
+    if event['kind'] == 'task_observed':
+        ticket = event.get('ticket') or subject.get('ticket') or '-'
+        outcome = event.get('outcome') or subject.get('outcome') or subject.get('status') or '-'
+        sha = (event.get('sha') or subject.get('sha') or '-')[:8]
+        dur = f"dur={subject.get('execution_duration_seconds')}s" if subject.get('execution_duration_seconds') is not None else '-'
+        details = [str(subject.get('pid', '')), f"ticket={ticket}", f"outcome={outcome}", f"sha={sha}", dur, str(subject.get('task', ''))]
+    else:
+        details = [str(subject.get('pid', event.get('agent_pid', ''))),
+                   subject.get('kind', subject.get('executable', '')),
+                   subject.get('cwd', event.get('project', '')),
+                   event.get('file', event.get('subject', event.get('title', subject.get('task', ''))))]
     return safe(f"{stamp} {event['kind']:<23} " + ' | '.join(str(x) for x in details if x))
 
 
@@ -114,7 +121,11 @@ def render(data, limit=12):
     if data['tasks']:
         lines += ['', 'REPORTED TASKS']
         for t in data['tasks'][:limit]:
-            lines.append(f"  {t['status']:<9} PID {t['pid']} {t['task']} | {t['cwd']} | issue={t.get('issue') or '-'} PR={t.get('pr') or '-'}")
+            ticket_part = f" ticket={t['ticket']}" if t.get('ticket') else ""
+            sha_part = f" sha={t['sha'][:8]}" if t.get('sha') else ""
+            dur_part = f" dur={t['execution_duration_seconds']}s" if t.get('execution_duration_seconds') is not None else ""
+            att_part = f" attempt={t['attempt']}" if t.get('attempt') else ""
+            lines.append(f"  {t['status']:<9} PID {t['pid']} {t['task']} | {t['cwd']}{ticket_part}{sha_part}{att_part}{dur_part} | issue={t.get('issue') or '-'} PR={t.get('pr') or '-'}")
     if data['github']:
         lines += ['', 'RECENT GITHUB ISSUES / PULL REQUESTS']
         for e in data['github'][:limit]:
@@ -147,11 +158,37 @@ def run_task(args):
         raise ValueError('run requires a command after --')
     folder = args.state_dir / 'tasks'
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-    path = folder / f'{uuid.uuid4().hex}.json'
+    task_id = uuid.uuid4().hex
+    path = folder / f'{task_id}.json'
+
+    cwd_path = Path.cwd().resolve()
+    started_at = time.time()
+    from .monitor import infer_ticket, current_git_sha
+    ticket = getattr(args, 'ticket', None) or infer_ticket(task=args.task, cwd=cwd_path)
+    attempt = getattr(args, 'attempt', 1) or 1
+    sha = getattr(args, 'sha', None) or current_git_sha(cwd_path)
+    queued_at = getattr(args, 'queued_at', None)
+    receipt = getattr(args, 'receipt', None) or str(path)
+
+    queue_duration = None
+    if queued_at is not None:
+        try:
+            q_ts = float(queued_at)
+            if q_ts <= started_at:
+                queue_duration = round(started_at - q_ts, 3)
+        except (ValueError, TypeError):
+            pass
+
     child = subprocess.Popen(argv)
-    row = {'pid': child.pid, 'start': '', 'cwd': str(Path.cwd()), 'task': args.task,
-           'issue': args.issue, 'pr': args.pr, 'agent_kind': args.agent_kind,
-           'status': 'running', 'updated': time.time()}
+    row = {'id': task_id, 'pid': child.pid, 'start': '', 'cwd': str(cwd_path), 'task': args.task,
+           'ticket': ticket, 'attempt': attempt, 'sha': sha,
+           'issue': getattr(args, 'issue', None), 'pr': getattr(args, 'pr', None),
+           'agent_kind': getattr(args, 'agent_kind', 'reported'),
+           'status': 'running', 'outcome': 'running',
+           'started_at': started_at, 'queued_at': queued_at,
+           'queue_duration_seconds': queue_duration,
+           'receipt': receipt, 'retries': max(0, attempt - 1),
+           'updated': started_at}
     try:
         row['start'] = process_record(Path('/proc') / str(child.pid))['start']
     except (OSError, ValueError, IndexError):
@@ -171,7 +208,13 @@ def run_task(args):
     finally:
         for s, handler in handlers.items():
             signal.signal(s, handler)
-    row.update(status='completed' if code == 0 else 'failed', exit_code=code, updated=time.time())
+
+    ended_at = time.time()
+    execution_duration = round(ended_at - started_at, 3)
+    outcome = 'completed' if code == 0 else 'failed'
+    row.update(status=outcome, outcome=outcome, exit_code=code,
+               ended_at=ended_at, execution_duration_seconds=execution_duration,
+               updated=ended_at)
     save_task(path, row)
     return code if code >= 0 else 128 - code
 
@@ -434,6 +477,8 @@ def main(argv=None):
     timeline = sub.add_parser('history', parents=[common_sub_parser], help='read local recorded observations')
     timeline.add_argument('--kind')
     timeline.add_argument('--search')
+    timeline.add_argument('--coverage', action='store_true', help='report observation window coverage, gaps and store status')
+    timeline.add_argument('--no-churn', dest='no_churn', action='store_true', help='exclude high-frequency file dirty/clean transitions')
     watch = sub.add_parser('watch', parents=[common_sub_parser], help='refresh until Ctrl-C (default in a terminal)')
     # ticket-100 dropped this option; validation and the README still rely on it.
     watch.add_argument('--interval', type=float, default=5, help='refresh period in seconds (0.2..86400)')
@@ -447,6 +492,11 @@ def main(argv=None):
     run.add_argument('--task', required=True)
     run.add_argument('--issue')
     run.add_argument('--pr')
+    run.add_argument('--ticket', help='ticket identifier (e.g. ticket-123)')
+    run.add_argument('--attempt', type=int, default=1, help='execution attempt counter (default: 1)')
+    run.add_argument('--sha', help='exact git sha associated with this task attempt')
+    run.add_argument('--queued-at', type=float, default=None, help='epoch timestamp when task was queued')
+    run.add_argument('--receipt', help='receipt reference, hash or path')
     run.add_argument('command', nargs=argparse.REMAINDER)
     for sp in set(sub.choices.values()):
         if '--limit' not in sp._option_string_actions:
@@ -527,11 +577,39 @@ def main(argv=None):
                 print(json.dumps(data, indent=2) if output_format == 'json' else '\n'.join(safe(f'{k}: {v}') for k, v in data.items()))
             return int(bool(data['errors']))
         if args.mode == 'history':
-            data = history.read(args.state_dir, args.limit, args.kind, args.search, args.hours)
+            cov = history.coverage(args.state_dir, args.hours)
+            if getattr(args, 'coverage', False):
+                if output_format == 'json':
+                    print(json.dumps(cov, indent=2, ensure_ascii=False))
+                elif output_format in {'terminal', 'markdown'}:
+                    display_report(presentation.history_markdown([], coverage=cov))
+                else:
+                    lines = [
+                        f"Store: {cov['store_status']}",
+                        f"Activity: {cov['activity_status']}",
+                        f"Task telemetry: {cov['task_telemetry_status']}",
+                        f"Total events: {cov['total_events']}",
+                        f"Last sample age: {cov['last_sample_age_seconds']}s" if cov['last_sample_age_seconds'] is not None else "Last sample age: none",
+                        f"Observation gap: {cov['observation_gap']}"
+                    ]
+                    print('\n'.join(lines))
+                return 0
+            exclude_churn = getattr(args, 'no_churn', False)
+            data = history.read(args.state_dir, args.limit, args.kind, args.search, args.hours,
+                                exclude_metadata_churn=exclude_churn)
             if output_format in {'terminal', 'markdown'}:
-                display_report(presentation.history_markdown(data))
+                display_report(presentation.history_markdown(data, coverage=cov))
             else:
-                print(json.dumps(data, ensure_ascii=True) if output_format == 'json' else '\n'.join(event_line(e) for e in data) or 'No recorded observations.')
+                if output_format == 'json':
+                    print(json.dumps(data, ensure_ascii=True))
+                else:
+                    header = []
+                    if cov['observation_gap']:
+                        header.append(f"[WARNING] Observation gap detected: latest sample is {cov['last_sample_age_seconds']}s old (exceeds window of {cov['window_hours']}h).")
+                    elif cov['task_telemetry_status'] in ('missing', 'zero_tasks') and cov['total_events'] > 0:
+                        header.append(f"[NOTE] Task telemetry {cov['task_telemetry_status']}: {cov['total_events']} events, 0 tasks recorded.")
+                    lines = header + [event_line(e) for e in data]
+                    print('\n'.join(lines) if lines else 'No recorded observations.')
             return 0
         if args.mode in ('tools', 'apis'):
             from . import ecosystem

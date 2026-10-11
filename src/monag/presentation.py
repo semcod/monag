@@ -70,17 +70,44 @@ def fenced(text):
     return f'{fence}text\n{text}\n{fence}\n'
 
 
-def history_markdown(events):
+def history_markdown(events, coverage=None):
+    parts = ['# MONAG · Activity history\n']
+    if coverage:
+        if coverage.get('observation_gap'):
+            gap_h = (coverage.get('last_sample_age_seconds') or 0) / 3600
+            parts.append(f"> [!WARNING] Observation gap detected: last sample observed {gap_h:.1f}h ago ({coverage.get('latest_observed_iso')}). "
+                         f"No events in the selected {coverage.get('window_hours')}h window due to a monitoring gap.\n\n")
+        if coverage.get('task_telemetry_status') == 'missing':
+            parts.append(f"> [!NOTE] Task telemetry missing: 0 task records in store ({coverage.get('total_events', 0)} total events recorded).\n\n")
+        parts.append(f"**Coverage**: Store: {coverage.get('store_status')} ({coverage.get('total_events', 0)} total events) · "
+                     f"Window: {coverage.get('window_hours', 24)}h ({coverage.get('window_events', 0)} events)")
+        churn = coverage.get('metadata_churn', {}).get('total', 0)
+        if churn > 0:
+            parts.append(f" · Metadata churn: {churn} file transitions")
+        parts.append('\n\n')
+
     rows = []
     for event in events:
         subject = event.get('agent') or event.get('process') or event.get('task') or {}
         if not isinstance(subject, dict):
             subject = {'task': subject}
+        if event['kind'] == 'task_observed':
+            ticket = event.get('ticket') or subject.get('ticket') or '—'
+            outcome = event.get('outcome') or subject.get('outcome') or subject.get('status') or '—'
+            sha = (event.get('sha') or subject.get('sha') or '—')[:8]
+            dur = f" ({subject['execution_duration_seconds']}s)" if subject.get('execution_duration_seconds') is not None else ""
+            detail = f"ticket: {ticket} · outcome: {outcome} · sha: {sha}{dur} · {subject.get('task', '—')}"
+        else:
+            detail = event.get('file', event.get('subject', event.get('title', subject.get('task', '—'))))
         rows.append([datetime.fromtimestamp(event['observed']).strftime('%m-%d %H:%M:%S'),
                      event['kind'], subject.get('pid', event.get('agent_pid', '—')),
                      subject.get('cwd', event.get('project', '—')),
-                     event.get('file', event.get('subject', event.get('title', subject.get('task', '—'))))])
-    return '# MONAG · Activity history\n\n' + table(['Time', 'Observation', 'PID', 'Directory', 'Detail'], rows)
+                     detail])
+    if rows:
+        parts.append(table(['Time', 'Observation', 'PID', 'Directory', 'Detail'], rows))
+    else:
+        parts.append('No observations recorded in this window.\n')
+    return '\n'.join(parts).strip() + '\n'
 
 
 def doctor_markdown(data):
