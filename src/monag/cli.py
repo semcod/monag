@@ -346,7 +346,9 @@ def main(argv=None):
                              help='bypass rules if permissions allow')
     merge_parser.add_argument('--browser', action='store_true',
                              help='use browser CDP')
-    sub.add_parser('mcp', parents=[common_sub_parser], help='run Model Context Protocol (MCP) server over stdio for AI agents')
+    mcp_parser = sub.add_parser('mcp', parents=[common_sub_parser], help='run Model Context Protocol (MCP) server over stdio for AI agents')
+    mcp_parser.add_argument('--health', action='store_true', help='check and print MCP server transport health and CLI fallback options')
+    mcp_parser.add_argument('--diagnose', action='store_true', help='run complete MCP self-diagnostics test suite and exit')
     query_parser = sub.add_parser('query', aliases=['ask'], parents=[common_sub_parser],
                                   help='execute a natural language query or OBSERVE DSL command')
     query_parser.add_argument('query', nargs='+', help='natural language query phrase or OBSERVE DSL command')
@@ -785,6 +787,20 @@ def main(argv=None):
             return 0
         if args.mode == 'mcp':
             from . import mcp
+            if getattr(args, 'health', False):
+                health = mcp.get_transport_health()
+                if output_format == 'json':
+                    print(json.dumps(health, indent=2, ensure_ascii=False))
+                else:
+                    display_report(mcp.format_health_markdown(health))
+                return 0
+            if getattr(args, 'diagnose', False):
+                diag = mcp.diagnose_server(root, depth=args.depth)
+                if output_format == 'json':
+                    print(json.dumps(diag, indent=2, ensure_ascii=False))
+                else:
+                    display_report(diag['markdown'])
+                return 0 if diag['ok'] else 1
             mcp.run_stdio_server(root, depth=args.depth)
             return 0
         if args.mode in ('ask', 'dsl'):
