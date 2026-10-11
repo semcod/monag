@@ -74,6 +74,81 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(row['recent_committed_files'], ['file.txt'])
         self.assertFalse(errors)
 
+    def test_unrelated_service_cwd_is_not_required_for_agent_visibility(self):
+        proc = self.root / 'proc'
+        self.fake_process(proc, 10, 1, ['ssh-agent'], self.root)
+        self.fake_process(proc, 20, 10, ['codex'], self.root)
+        from monag.monitor import process_cwd
+
+        def restricted(path):
+            if path.name == '10':
+                raise PermissionError('protected service cwd')
+            return process_cwd(path)
+
+        with patch('monag.monitor.process_cwd', side_effect=restricted) as read:
+            rows, denied = processes(self.root, proc, machine=True)
+        self.assertEqual(denied, 0)
+        self.assertEqual([r['pid'] for r in rows], [20])
+        self.assertEqual([c.args[0].name for c in read.call_args_list], ['20'])
+
+    def test_agent_and_descendant_cwd_denials_remain_visible(self):
+        proc = self.root / 'proc'
+        # Child precedes its parent; an intermediate non-agent must not hide it.
+        self.fake_process(proc, 30, 20, ['git'], self.root)
+        self.fake_process(proc, 20, 10, ['bash'], self.root)
+        self.fake_process(proc, 10, 1, ['codex'], self.root)
+        from monag.monitor import process_cwd
+        for denied_pid in ('10', '20', '30'):
+            with self.subTest(pid=denied_pid):
+                def restricted(path):
+                    if path.name == denied_pid:
+                        raise PermissionError('protected cwd')
+                    return process_cwd(path)
+                with patch('monag.monitor.process_cwd', side_effect=restricted):
+                    rows, denied = processes(self.root, proc, machine=True)
+                self.assertEqual(denied, 1)
+                self.assertEqual([r['pid'] for r in rows], [10])
+                self.assertEqual({r['pid'] for r in rows[0]['descendants']}, {20, 30})
+
+    def test_reported_agent_requires_cwd_only_for_matching_live_identity(self):
+        proc = self.root / 'proc'
+        self.fake_process(proc, 10, 1, ['custom-worker'], self.root)
+        for start, status, expected in [('123', 'running', 1), ('old', 'running', 0),
+                                         ('123', 'finished', 0)]:
+            with self.subTest(start=start, status=status), patch(
+                    'monag.monitor.process_cwd', side_effect=PermissionError):
+                rows, denied = processes(self.root, proc, machine=True, reported=[
+                    dict(pid=10, start=start, status=status, task='governed job')])
+            self.assertEqual(denied, expected)
+            self.assertEqual(len(rows), expected)
+
+    def test_unreadable_metadata_still_invalidates_observation(self):
+        proc = self.root / 'proc'
+        self.fake_process(proc, 10, 1, ['ssh-agent'], self.root)
+        for field in ('stat', 'cmdline'):
+            method = 'read_text' if field == 'stat' else 'read_bytes'
+            original = getattr(Path, method)
+            def restricted(path, *args, **kwargs):
+                if path.name == field:
+                    raise PermissionError('protected metadata')
+                return original(path, *args, **kwargs)
+            with self.subTest(field=field), patch.object(Path, method, restricted):
+                rows, denied = processes(self.root, proc, machine=True)
+            self.assertEqual(rows, [])
+            self.assertEqual(denied, 1)
+
+    def test_pid_reuse_during_deferred_cwd_read_invalidates_attribution(self):
+        proc = self.root / 'proc'
+        self.fake_process(proc, 10, 1, ['codex'], self.root)
+        def reused(path):
+            stat = path / 'stat'
+            stat.write_text(stat.read_text().replace('123', '456'))
+            return str(self.root)
+        with patch('monag.monitor.process_cwd', side_effect=reused):
+            rows, denied = processes(self.root, proc, machine=True)
+        self.assertEqual(denied, 1)
+        self.assertIsNone(rows[0]['cwd'])
+
     def test_invalid_git_marker_does_not_hide_descendant_repositories(self):
         repo = self.repo()
         (self.root / '.git').mkdir()

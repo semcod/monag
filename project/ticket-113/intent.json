@@ -1,0 +1,85 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-113",
+  "summary": "Read process working directories only for identified agent trees",
+  "workstream": "application",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-113/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/monitor.py",
+    "tests/test_monitor.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "d1ad4ec5ed07d488dbcd02088480949aca556b17",
+    "targetBranch": "main",
+    "outcome": "Observe cwd only for recognized and reported agent trees while retaining fail-closed metadata coverage; publish through OneDev and independent Validator.",
+    "nonGoals": [
+      "No unscoped queue activation",
+      "No direct merge, approval synthesis or change to protected reviewer policy",
+      "No edits or cleanup of unrelated worktrees"
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 45,
+    "budgets": {
+      "maxImplementationFiles": 2,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Build complete identity/ancestry inventory before reading cwd for recognized or reported agents and their descendants.",
+      "components": [
+        {
+          "name": "process-observation",
+          "paths": [
+            "src/monag/monitor.py",
+            "tests/test_monitor.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the monitor change and retain incomplete observation failures."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "PYTHONPATH=src python3 -m pytest -q tests/test_monitor.py tests/test_activity.py"
+        ],
+        "evidence": "Scope and denial regression tests."
+      },
+      {
+        "criterion": "AC-03",
+        "commands": [
+          "bash project/governance-check.sh",
+          "PYTHONPATH=src python3 -m pytest -q"
+        ],
+        "evidence": "498 passed, 1 skipped; governance passed; exact-head protected publication pending."
+      }
+    ]
+  }
+}
