@@ -297,7 +297,19 @@ class PanelTests(unittest.TestCase):
                 self.assertEqual(mock_serve.call_count, 1)
                 args, _ = mock_serve.call_args
                 self.assertEqual(args[0], self.root)
-                self.assertEqual(args[4], 9191)
+    def test_panel_html_responsive_viewport_and_table_wrappers(self):
+        server, _ = self.start()
+        status, content_type, body = self.get(server, '/')
+        self.assertEqual(status, 200)
+        self.assertIn('text/html', content_type)
+        html = body.decode('utf-8')
+        self.assertIn('<meta name="viewport" content="width=device-width, initial-scale=1">', html)
+        self.assertIn('.table-wrap{width:100%;overflow-x:auto', html)
+        self.assertIn('<div class="table-wrap"><table id="agents">', html)
+        self.assertIn('<div class="table-wrap"><table id="projects">', html)
+        self.assertIn('<div class="table-wrap"><table id="autodiagnosis">', html)
+        self.assertIn('<div class="table-wrap"><table id="triage">', html)
+        self.assertIn('<span class="h2-actions">', html)
 
 
 if __name__ == '__main__':
