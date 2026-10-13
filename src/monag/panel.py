@@ -33,20 +33,27 @@ from .monitor import snapshot as monitor_snapshot
 from .presentation import clean
 
 PAGE = """<!doctype html>
-<html><head><meta charset="utf-8"><title>monag panel</title>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>monag panel</title>
 <style>
-body{font-family:system-ui,sans-serif;margin:1.5rem;background:#0b0f14;color:#d6e0ea}
-h1{font-size:1.1rem;margin:0 0 .25rem}
-.sub{color:#8a9bb0;font-size:.85rem;margin-bottom:1rem}
-section{margin-bottom:1.5rem}
-h2{font-size:.95rem;color:#8fd3ff;border-bottom:1px solid #223;padding-bottom:.25rem}
-table{border-collapse:collapse;width:100%;font-size:.85rem}
-td,th{border-bottom:1px solid #1c2733;padding:.3rem .5rem;text-align:left;vertical-align:top}
-th{color:#8a9bb0;font-weight:600}
+*, *:before, *:after{box-sizing:border-box}
+body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;margin:1rem;background:#0b0f14;color:#d6e0ea;max-width:100vw;overflow-x:hidden}
+@media(min-width:768px){body{margin:1.5rem}}
+h1{font-size:1.1rem;margin:0 0 .5rem;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.sub{color:#8a9bb0;font-size:.85rem;margin-bottom:1rem;word-break:break-word}
+section{margin-bottom:1.5rem;max-width:100%}
+.table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:.5rem;border-radius:4px}
+h2{font-size:.95rem;color:#8fd3ff;border-bottom:1px solid #223;padding-bottom:.4rem;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}
+.h2-actions{display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center}
+table{border-collapse:collapse;width:100%;font-size:.85rem;min-width:540px}
+td,th{border-bottom:1px solid #1c2733;padding:.4rem .5rem;text-align:left;vertical-align:top;word-break:break-word}
+th{color:#8a9bb0;font-weight:600;white-space:nowrap}
 .stale{color:#e0a04a}
 .empty{color:#5a6b7d;font-style:italic}
 button{background:#16202b;color:#d6e0ea;border:1px solid #2a3a4a;border-radius:4px;
-       padding:.3rem .7rem;font-size:.8rem;cursor:pointer}
+       padding:.35rem .75rem;font-size:.8rem;cursor:pointer;min-height:28px;
+       display:inline-flex;align-items:center;justify-content:center;gap:4px;touch-action:manipulation}
 .badge{display:inline-block;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;text-transform:uppercase}
 .badge-critical,.badge-floor,.badge-immediate-blocker{background:#da3633;color:#fff}
 .badge-high,.badge-mission,.badge-core-foundation{background:#d29922;color:#fff}
@@ -59,22 +66,22 @@ button{background:#16202b;color:#d6e0ea;border:1px solid #2a3a4a;border-radius:4
 .badge-warning{background:#d29922;color:#fff}
 details summary{cursor:pointer;color:#58a6ff;font-size:.8rem}
 details code{background:#16202b;padding:2px 4px;border-radius:3px;font-family:monospace;display:block;margin-top:4px;word-break:break-all}
-.live-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#3fb950;margin-left:14px;font-weight:normal;vertical-align:middle}
-.pulse-dot{width:8px;height:8px;border-radius:50%;background:#3fb950;box-shadow:0 0 0 rgba(63,185,80,0.4);animation:pulse 2s infinite}
+.live-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#3fb950;margin-left:auto;font-weight:normal;vertical-align:middle;flex-wrap:wrap}
+.pulse-dot{width:8px;height:8px;border-radius:50%;background:#3fb950;box-shadow:0 0 0 rgba(63,185,80,0.4);animation:pulse 2s infinite;flex-shrink:0}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(63,185,80,0.7)}70%{box-shadow:0 0 0 8px rgba(63,185,80,0)}100%{box-shadow:0 0 0 0 rgba(63,185,80,0)}}
-.toast{position:fixed;bottom:20px;right:20px;background:#1f6feb;color:#fff;padding:10px 16px;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.5);z-index:9999;font-size:13px;opacity:0;transition:opacity .3s ease;pointer-events:none}
+.toast{position:fixed;bottom:20px;right:20px;background:#1f6feb;color:#fff;padding:10px 16px;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.5);z-index:9999;font-size:13px;opacity:0;transition:opacity .3s ease;pointer-events:none;max-width:calc(100vw - 40px)}
 .toast.show{opacity:1;pointer-events:auto}
-.btn-sm{font-size:11px;padding:3px 7px;border-radius:3px;cursor:pointer}
+.btn-sm{font-size:11px;padding:4px 8px;border-radius:3px;cursor:pointer;min-height:26px}
 .btn-koru{background:#238636;border:1px solid #2ea043;color:#fff}
 .btn-koru:hover{background:#2ea043}
-.opt-pill{background:#16202b;border:1px solid #2a3a4a;color:#8fd3ff;border-radius:14px;padding:3px 10px;font-size:11px;cursor:pointer;transition:all .15s ease}
+.opt-pill{background:#16202b;border:1px solid #2a3a4a;color:#8fd3ff;border-radius:14px;padding:4px 12px;font-size:11px;cursor:pointer;min-height:28px;display:inline-flex;align-items:center;transition:all .15s ease;touch-action:manipulation}
 .opt-pill:hover{background:#1f2d3d;border-color:#58a6ff;color:#fff}
 .mic-listening{background:#da3633!important;border-color:#f85149!important;color:#fff!important;animation:pulse-red 1.5s infinite}
 @keyframes pulse-red{0%{box-shadow:0 0 0 0 rgba(218,54,51,0.7)}70%{box-shadow:0 0 0 8px rgba(218,54,51,0)}100%{box-shadow:0 0 0 0 rgba(218,54,51,0)}}
-.chat-msg{padding:8px 12px;border-radius:6px;font-size:12px;line-height:1.4}
+.chat-msg{padding:8px 12px;border-radius:6px;font-size:12px;line-height:1.4;word-break:break-word}
 .chat-user{background:#1c2733;color:#d6e0ea;align-self:flex-end;border:1px solid #2a3a4a;max-width:85%}
 .chat-assistant{background:#131c26;border-left:3px solid #388bfd;color:#d6e0ea;align-self:flex-start;width:100%}
-.assistant-card{background:#0b0f14;border:1px solid #1c2733;border-radius:4px;padding:6px 10px;margin-top:6px;font-size:11px}
+.assistant-card{background:#0b0f14;border:1px solid #1c2733;border-radius:4px;padding:6px 10px;margin-top:6px;font-size:11px;overflow-x:auto}
 </style></head>
 <body>
 <h1>monag panel <span class="live-badge"><span class="pulse-dot"></span> <span>LIVE</span> <label style="margin-left:8px;font-size:12px;color:#8a9bb0"><input type="checkbox" id="autorefresh" checked onchange="toggleAutoRefresh(this.checked)"> auto-refresh (<span id="countdown">10s</span>)</label></span></h1>
@@ -82,7 +89,7 @@ details code{background:#16202b;padding:2px 4px;border-radius:3px;font-family:mo
 <div id="toast" class="toast"></div>
 
 <section id="assistant-section" style="background:#0f1722;border:1px solid #1f2d3d;border-radius:8px;padding:1rem;margin-bottom:1.5rem">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.6rem">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.6rem;flex-wrap:wrap;gap:8px">
     <h2 style="border-bottom:none;padding:0;margin:0;display:flex;align-items:center;gap:8px">
       <span>🎙️ Fleet Voice &amp; NL Assistant</span>
       <span class="badge badge-safe" style="font-size:9px">NL-DSL-LLM</span>
@@ -109,9 +116,9 @@ details code{background:#16202b;padding:2px 4px;border-radius:3px;font-family:mo
     <button type="button" class="opt-pill" onclick="sendAssistantPrompt('stan projektów')">📁 Projekty z diffem</button>
   </div>
 
-  <form id="assistant-form" onsubmit="handleAssistantSubmit(event)" style="display:flex;gap:8px;align-items:center">
+  <form id="assistant-form" onsubmit="handleAssistantSubmit(event)" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
     <input type="text" id="assistant-input" placeholder="Zadaj pytanie głosem lub tekstem (np. 'kto pracuje?', 'czy są kolizje?', 'stan floty')..."
-           style="flex:1;background:#0b0f14;border:1px solid #2a3a4a;color:#d6e0ea;padding:.45rem .75rem;border-radius:5px;font-size:.85rem">
+           style="flex:1;min-width:200px;background:#0b0f14;border:1px solid #2a3a4a;color:#d6e0ea;padding:.45rem .75rem;border-radius:5px;font-size:.85rem">
     <button type="button" id="mic-btn" onclick="toggleVoiceRecognition()" title="Mów do asystenta (Web Speech API pl-PL)"
             style="background:#16202b;border:1px solid #2a3a4a;padding:.45rem .75rem;border-radius:5px;font-size:.95rem;color:#58a6ff;cursor:pointer">
       🎤
@@ -128,56 +135,56 @@ details code{background:#16202b;padding:2px 4px;border-radius:3px;font-family:mo
   </div>
 </section>
 
-<section><h2>Agents</h2><table id="agents"><thead><tr>
+<section><h2>Agents</h2><div class="table-wrap"><table id="agents"><thead><tr>
 <th>PID</th><th>Kind</th><th>Task</th><th>Working directory</th></tr></thead>
-<tbody></tbody></table></section>
+<tbody></tbody></table></div></section>
 
-<section><h2>Projects with local changes or open tickets</h2><table id="projects">
+<section><h2>Projects with local changes or open tickets</h2><div class="table-wrap"><table id="projects">
 <thead><tr><th>Path</th><th>Branch</th><th>Changed files</th><th>Agents</th></tr></thead>
-<tbody></tbody></table></section>
+<tbody></tbody></table></div></section>
 
-<section><h2>Open Planfile tickets</h2><table id="tickets"><thead><tr>
+<section><h2>Open Planfile tickets</h2><div class="table-wrap"><table id="tickets"><thead><tr>
 <th>Project</th><th>Ticket</th><th>Priority</th><th>Status</th><th>Title</th></tr></thead>
-<tbody></tbody></table></section>
+<tbody></tbody></table></div></section>
 
 <section><h2>Planfile / GitHub coverage audit
-<button onclick="loadAudit()">refresh</button></h2>
-<table id="audit"><thead><tr><th>Repository</th><th>GitHub issues</th>
+<span class="h2-actions"><button onclick="loadAudit()">refresh</button></span></h2>
+<div class="table-wrap"><table id="audit"><thead><tr><th>Repository</th><th>GitHub issues</th>
 <th>Planfile tickets</th><th>Untracked</th><th>Sync drift</th></tr></thead>
-<tbody></tbody></table></section>
+<tbody></tbody></table></div></section>
 
 <section><h2>Project catalog
-<button onclick="loadCatalog()">refresh</button></h2>
-<table id="catalog"><thead><tr><th>Name</th><th>Stacks</th>
-<th>Description</th></tr></thead><tbody></tbody></table></section>
+<span class="h2-actions"><button onclick="loadCatalog()">refresh</button></span></h2>
+<div class="table-wrap"><table id="catalog"><thead><tr><th>Name</th><th>Stacks</th>
+<th>Description</th></tr></thead><tbody></tbody></table></div></section>
 
 <section><h2>Candidate work (review only, nothing queued)
-<button onclick="loadExport()">refresh</button></h2>
-<table id="export"><thead><tr><th>Origin</th><th>Repository</th>
-<th>Title</th><th>Evidence</th></tr></thead><tbody></tbody></table></section>
+<span class="h2-actions"><button onclick="loadExport()">refresh</button></span></h2>
+<div class="table-wrap"><table id="export"><thead><tr><th>Origin</th><th>Repository</th>
+<th>Title</th><th>Evidence</th></tr></thead><tbody></tbody></table></div></section>
 
 <section><h2>Periodic Report & Architectural Advisory
-<button onclick="triggerReport()">send now</button>
-<button onclick="disableReport()">disable cron</button></h2>
+<span class="h2-actions"><button onclick="triggerReport()">send now</button>
+<button onclick="disableReport()">disable cron</button></span></h2>
 <div id="report-status" class="sub">loading…</div></section>
 
 <section><h2>Fleet Autodiagnosis & Koru Autonomous Delegations
-<button onclick="runAutodiagnosis()">run diagnosis</button>
+<span class="h2-actions"><button onclick="runAutodiagnosis()">run diagnosis</button>
 <button onclick="dispatchToKoru()" class="btn-koru">⚡ dispatch all to koru</button>
 <button onclick="syncWithGitHub()" style="background:#1f4368;border-color:#388bfd;color:#fff">sync with github</button>
-<button onclick="runDailyAutomation()" style="background:#21262d;border:1px solid #30363d;color:#c9d1d9">daily automation</button></h2>
+<button onclick="runDailyAutomation()" style="background:#21262d;border:1px solid #30363d;color:#c9d1d9">daily automation</button></span></h2>
 <div id="autodiag-summary" class="sub">loading autodiagnosis…</div>
-<table id="autodiagnosis"><thead><tr>
+<div class="table-wrap"><table id="autodiagnosis"><thead><tr>
 <th>Target Repo</th><th>Tier</th><th>Priority</th><th>Title</th><th>Estimation (semcod)</th><th>Actions</th></tr></thead>
-<tbody></tbody></table></section>
+<tbody></tbody></table></div></section>
 
 <section><h2>Holistic Triage & Agent Worktree Collision Monitor
-<button onclick="loadTriage()">refresh</button>
-<button onclick="dispatchTriageToKoru()" class="btn-koru">⚡ dispatch safe triage to koru</button></h2>
+<span class="h2-actions"><button onclick="loadTriage()">refresh</button>
+<button onclick="dispatchTriageToKoru()" class="btn-koru">⚡ dispatch safe triage to koru</button></span></h2>
 <div id="triage-summary" class="sub">loading holistic triage…</div>
-<table id="triage"><thead><tr>
+<div class="table-wrap"><table id="triage"><thead><tr>
 <th>Step</th><th>Tier</th><th>Repo</th><th>Title</th><th>Score</th><th>Collision Safety</th><th>Suggested Action & Guardrails</th></tr></thead>
-<tbody></tbody></table></section>
+<tbody></tbody></table></div></section>
 
 <script>
 function showToast(msg, isError=false){
