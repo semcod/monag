@@ -447,6 +447,8 @@ def main(argv=None):
                                      help='use SubLLM to synthesize root causes, AC, and Koru handoffs (default: true)')
     autodiagnose_parser.add_argument('--no-subllm', dest='subllm', action='store_false',
                                      help='disable SubLLM and use deterministic rule-based ticket synthesis')
+    autodiagnose_parser.add_argument('--no-cache', action='store_true',
+                                     help='collect fresh repository observations instead of cached diagnoses')
     autodiagnose_parser.add_argument('--feed-planfile', '--dispatch', dest='feed_planfile', action='store_true',
                                      help='directly write synthesized tickets into target projects .planfile/sprints storage')
     autodiagnose_parser.add_argument('--sync-github', action='store_true', default=False,
@@ -989,7 +991,12 @@ def main(argv=None):
             return 0
         if args.mode == 'autodiagnose':
             from . import autodiagnosis
-            diag_report = autodiagnosis.diagnose_fleet(root, depth=args.depth)
+            diag_report = autodiagnosis.diagnose_fleet(root, depth=args.depth,
+                use_cache=not args.no_cache, state_dir=args.state_dir)
+            database = diag_report.get('_database')
+            if database is not None:
+                # Synthesis still needs the cache; the CLI owns its lifetime.
+                stack.callback(database.close)
             runner = autodiagnosis._find_subllm_runner() if getattr(args, 'subllm', True) else None
             tickets = autodiagnosis.synthesize_tickets_with_subllm(diag_report, runner=runner)
 
@@ -1023,7 +1030,7 @@ def main(argv=None):
 
             if output_format == 'json':
                 print(json.dumps({
-                    'diagnosis': diag_report,
+                    'diagnosis': {key: value for key, value in diag_report.items() if not key.startswith('_')},
                     'tickets': tickets,
                 }, ensure_ascii=False, indent=2))
             else:
