@@ -1,6 +1,9 @@
 from datetime import datetime, timedelta, timezone
 from io import StringIO
+import hashlib
 import json
+import os
+import sys
 from pathlib import Path
 import subprocess
 import tempfile
@@ -262,29 +265,196 @@ class PrsTests(unittest.TestCase):
         self.assertEqual(prs_list[0]['title'], 'REST fallback PR')
         self.assertEqual(prs_list[0]['state'], 'OPEN')
 
-    def test_merge_pull_request_gh_success(self):
-        with patch('monag.prs.command', return_value=('Squashed and merged pull request #42', None)):
-            res = prs.merge_pull_request('semcod/monag#42', method='squash', admin_bypass=True, use_browser=False)
-            self.assertTrue(res['ok'])
-            self.assertEqual(res['status'], 'MERGED')
-            self.assertEqual(res['via'], 'gh')
-            self.assertEqual(res['number'], 42)
-            self.assertEqual(res['repo'], 'semcod/monag')
+    def publication_fixture(self, exit_code=0):
+        protected = self.root / 'protected'
+        (protected / 'bin').mkdir(parents=True)
+        marker = self.root / 'adapter-observation.json'
+        adapter = protected / 'bin/run-local-direct-pr.sh'
+        adapter.write_text(
+            '#!' + sys.executable + '\nimport json,os,sys\nfrom pathlib import Path\n'
+            + f'Path({str(marker)!r}).write_text(json.dumps({{"args":sys.argv[1:],'
+            + '"root":os.environ.get("VALIDATOR_ROOT"),'
+            + '"authorityMode":os.environ.get("DIRECT_PR_AUTHORITY_MODE"),'
+            + '"unselected":"MONAG_TEST_PRIVATE_SENTINEL" in os.environ}))\n'
+            + f'print("LOCAL_DIRECT_PR_REPORT path={self.root / "receipt.json"}")\n'
+            + f'raise SystemExit({exit_code})\n'
+        )
+        adapter.chmod(0o755)
+        environment = self.root / 'protected.env'
+        environment.write_text(f'VALIDATOR_ROOT={protected}\n'
+                               'DIRECT_PR_AUTHORITY_MODE=attested-sqlite-authority\n'
+                               'MONAG_TEST_PRIVATE_SENTINEL=never-export\n')
+        config = self.root / 'host-publication.json'
+        config.write_text(json.dumps({'environmentFile': str(environment),
+                                      'adapterSha256': hashlib.sha256(adapter.read_bytes()).hexdigest()}))
+        patcher = patch.dict(os.environ, {'MONAG_PUBLICATION_CONFIG': str(config)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop('MONAG_TEST_PRIVATE_SENTINEL', None)
+        return config, adapter, marker
 
-    def test_merge_pull_request_conflict(self):
-        with patch('monag.prs.command', return_value=('', 'GraphQL: Pull request has conflicts (mergePullRequest)')):
-            res = prs.merge_pull_request('https://github.com/semcod/planfile/pull/140', method='squash', use_browser=False)
-            self.assertFalse(res['ok'])
-            self.assertEqual(res['status'], 'CONFLICTING')
-            self.assertEqual(res['number'], 140)
+    def pr_observation(self, **changes):
+        return json.dumps({'number': 42, 'state': 'OPEN', 'isDraft': False,
+                           'headRefName': 'ticket/116-independent-publication-adapter',
+                           'headRefOid': 'a' * 40, **changes})
 
-    def test_merge_pull_request_fallback_to_browser(self):
-        with patch('monag.prs.command', return_value=('', 'API rate limit exceeded')):
-            with patch('monag.prs.merge_via_browser_cdp', return_value={'ok': True, 'status': 'MERGED'}) as mock_cdp:
-                res = prs.merge_pull_request('semcod/monag#56', method='squash', use_browser=False)
-                self.assertTrue(res['ok'])
-                self.assertEqual(res['via'], 'browser_cdp')
-                mock_cdp.assert_called_once_with('https://github.com/semcod/monag/pull/56', method='squash', admin_bypass=True, cdp_port=9222)
+    def test_independent_publication_binds_exact_head_and_reads_back_merge(self):
+        config, adapter, marker = self.publication_fixture()
+        with patch('monag.prs.command', side_effect=[(self.pr_observation(), None),
+                   (self.pr_observation(state='MERGED'), None)]) as query:
+            result = prs.merge_pull_request('https://github.com/maskservice/.github/pull/42')
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['via'], 'independent-validator')
+        self.assertEqual(result['head'], 'a' * 40)
+        self.assertEqual(result['ticket'], 'ticket-116')
+        self.assertEqual(result['receipt_path'], str(self.root / 'receipt.json'))
+        observed = json.loads(marker.read_text())
+        self.assertEqual(observed['args'], ['--repository', 'maskservice/.github', '--pull-request', '42',
+                         '--ticket', 'ticket-116', '--expected-head-sha', 'a' * 40, '--apply', '--merge'])
+        self.assertFalse(observed['unselected'])
+        self.assertEqual(observed['authorityMode'], 'attested-sqlite-authority')
+        self.assertEqual(observed['root'], str(adapter.parent.parent))
+        self.assertTrue(all(call.args[0][:3] == ['gh', 'pr', 'view'] for call in query.call_args_list))
+
+    def test_publication_rate_limit_never_switches_transport(self):
+        self.publication_fixture()
+        with patch('monag.prs.command', return_value=('', 'API rate limit exceeded')), \
+                patch('monag.prs.subprocess.run') as adapter, \
+                patch('monag.prs.merge_via_browser_cdp') as browser:
+            result = prs.merge_pull_request('semcod/monag#42')
+        self.assertEqual(result['status'], 'PR_OBSERVATION_FAILED')
+        adapter.assert_not_called()
+        browser.assert_not_called()
+
+    def test_adapter_refusal_preserves_blocked_result_without_fallback(self):
+        config, adapter, marker = self.publication_fixture(exit_code=17)
+        with patch('monag.prs.command', return_value=(self.pr_observation(), None)) as query, \
+                patch('monag.prs.merge_via_browser_cdp') as browser:
+            result = prs.merge_pull_request('semcod/monag#42')
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['status'], 'PUBLICATION_BLOCKED')
+        self.assertEqual(result['return_code'], 17)
+        self.assertTrue(marker.exists())
+        self.assertEqual(query.call_count, 1)
+        browser.assert_not_called()
+
+    def test_changed_head_is_not_reported_as_success(self):
+        self.publication_fixture()
+        with patch('monag.prs.command', side_effect=[(self.pr_observation(), None),
+                   (self.pr_observation(state='MERGED', headRefOid='b' * 40), None)]):
+            result = prs.merge_pull_request('semcod/monag#42')
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['status'], 'HEAD_CHANGED_AFTER_PUBLICATION')
+
+    def test_changed_adapter_bytes_cannot_execute(self):
+        config, adapter, marker = self.publication_fixture()
+        adapter.write_text(adapter.read_text() + '# changed\n')
+        with patch('monag.prs.command') as query:
+            result = prs.merge_pull_request('semcod/monag#42')
+        self.assertEqual(result['status'], 'PUBLICATION_CONFIG_INVALID')
+        self.assertFalse(marker.exists())
+        query.assert_not_called()
+
+    def test_bad_host_config_cannot_execute(self):
+        config, adapter, marker = self.publication_fixture()
+        originals = config.read_text()
+        for text in ['{}', '[]', 'x' * 65537,
+                     '{"environmentFile":"a","environmentFile":"b","adapterSha256":"x"}',
+                     json.dumps({'environmentFile': 'relative.env', 'adapterSha256': 'a' * 64})]:
+            with self.subTest(text=text[:40]), patch('monag.prs.command') as query:
+                config.write_text(text)
+                result = prs.merge_pull_request('semcod/monag#42')
+                self.assertEqual(result['status'], 'PUBLICATION_CONFIG_INVALID')
+                query.assert_not_called()
+                self.assertFalse(marker.exists())
+        config.write_text(originals)
+
+    def test_symlinked_publication_inputs_cannot_execute(self):
+        config, adapter, marker = self.publication_fixture()
+        for target in [config, self.root / 'protected.env', adapter, adapter.parent]:
+            original = target.with_name(target.name + '.original')
+            target.rename(original)
+            try:
+                target.symlink_to(original, target_is_directory=original.is_dir())
+            except OSError:
+                original.rename(target)
+                self.skipTest('symlinks unavailable')
+            with patch('monag.prs.command') as query:
+                result = prs.merge_pull_request('semcod/monag#42')
+            self.assertEqual(result['status'], 'PUBLICATION_CONFIG_INVALID')
+            query.assert_not_called()
+            self.assertFalse(marker.exists())
+            target.unlink()
+            original.rename(target)
+
+    def test_candidate_configuration_is_not_discovered(self):
+        config, adapter, marker = self.publication_fixture()
+        candidate = self.root / 'candidate'
+        (candidate / '.config/monag').mkdir(parents=True)
+        (candidate / '.config/monag/publication.json').write_bytes(config.read_bytes())
+        previous = Path.cwd()
+        try:
+            os.chdir(candidate)
+            with patch.dict(os.environ, {'XDG_CONFIG_HOME': str(self.root / 'missing-host-config')}), \
+                    patch('monag.prs.command') as query:
+                os.environ.pop('MONAG_PUBLICATION_CONFIG', None)
+                result = prs.merge_pull_request('semcod/monag#42')
+        finally:
+            os.chdir(previous)
+        self.assertEqual(result['status'], 'PUBLICATION_CONFIG_INVALID')
+        self.assertFalse(marker.exists())
+        query.assert_not_called()
+
+    def test_personal_and_browser_overrides_never_reach_mutation(self):
+        with patch('monag.prs.command') as query, patch('monag.prs.subprocess.run') as adapter, \
+                patch.object(prs.BrowserCDPMerger, '_get_page_targets') as tabs:
+            for override in [{'admin_bypass': True}, {'use_browser': True}, {'method': 'squash'}]:
+                self.assertFalse(prs.merge_pull_request('semcod/monag#42', **override)['ok'])
+            self.assertFalse(prs.merge_via_browser_cdp('https://github.com/semcod/monag/pull/42')['ok'])
+            self.assertFalse(prs.BrowserCDPMerger().merge_pr_page('https://github.com/semcod/monag/pull/42')['ok'])
+        query.assert_not_called()
+        adapter.assert_not_called()
+        tabs.assert_not_called()
+
+    def test_ticket_mismatch_cannot_execute_adapter(self):
+        self.publication_fixture()
+        with patch('monag.prs.command', return_value=(self.pr_observation(), None)), \
+                patch('monag.prs.subprocess.run') as adapter:
+            result = prs.merge_pull_request('semcod/monag#42', ticket='ticket-999')
+        self.assertEqual(result['status'], 'TICKET_HEAD_MISMATCH')
+        adapter.assert_not_called()
+
+    def test_merged_pr_still_requires_independent_historical_verification(self):
+        config, adapter, marker = self.publication_fixture()
+        with patch('monag.prs.command', return_value=(self.pr_observation(state='MERGED'), None)):
+            result = prs.merge_pull_request('semcod/monag#42')
+        self.assertTrue(marker.exists())
+        self.assertTrue(result['historical'])
+        self.assertEqual(result['status'], 'MERGED_VERIFIED')
+
+    def test_explicit_planfile_ticket_reaches_independent_adapter(self):
+        config, adapter, marker = self.publication_fixture()
+        with patch('monag.prs.command', side_effect=[
+                (self.pr_observation(headRefName='feature/legacy'), None),
+                (self.pr_observation(state='MERGED'), None)]):
+            result = prs.merge_pull_request('semcod/monag#42', ticket='PLF-42')
+        self.assertTrue(result['ok'])
+        self.assertIn('PLF-42', json.loads(marker.read_text())['args'])
+
+    def test_cli_personal_override_fails_without_gh_or_browser(self):
+        stdout = Output(False)
+        with patch('monag.prs.command') as query, patch('sys.stdout', stdout):
+            code = main(['--root', str(self.root), 'merge', 'semcod/monag#42', '--browser'])
+        self.assertEqual(code, 1)
+        query.assert_not_called()
+
+    def test_bulk_publication_preserves_failure_exit(self):
+        stdout = Output(False)
+        with patch('monag.prs.scan', return_value={'open_prs': []}), \
+                patch('monag.prs.merge_open_prs', return_value=[{'ok': False, 'status': 'PUBLICATION_BLOCKED'}]), \
+                patch('sys.stdout', stdout):
+            code = main(['--root', str(self.root), 'merge', '--all'])
+        self.assertEqual(code, 1)
 
     def test_merge_open_prs_and_markdown(self):
         open_prs = [
@@ -293,8 +463,8 @@ class PrsTests(unittest.TestCase):
         ]
         with patch('monag.prs.merge_pull_request') as mock_merge:
             mock_merge.side_effect = [
-                {'repo': 'semcod/monag', 'number': 56, 'ok': True, 'status': 'MERGED', 'via': 'browser_cdp'},
-                {'repo': 'semcod/planfile', 'number': 141, 'ok': False, 'status': 'CONFLICTING', 'via': 'gh', 'error': 'conflicts'},
+                {'repo': 'semcod/monag', 'number': 56, 'ok': True, 'status': 'MERGED', 'via': 'independent-validator'},
+                {'repo': 'semcod/planfile', 'number': 141, 'ok': False, 'status': 'CONFLICTING', 'via': 'independent-validator', 'error': 'conflicts'},
             ]
             results = prs.merge_open_prs(open_prs)
             self.assertEqual(len(results), 2)
@@ -316,12 +486,12 @@ class PrsTests(unittest.TestCase):
                 'status': 'MERGED',
                 'repo': 'semcod/monag',
                 'number': 56,
-                'via': 'browser_cdp',
+                'via': 'independent-validator',
                 'output': 'Merged',
             }
-            code = main(['--root', str(self.root), 'merge', 'semcod/monag#56', '--browser'])
+            code = main(['--root', str(self.root), 'merge', 'semcod/monag#56'])
             self.assertEqual(code, 0)
-            mock_merge.assert_called_once_with('semcod/monag#56', method='squash', admin_bypass=True, use_browser=True)
+            mock_merge.assert_called_once_with('semcod/monag#56', ticket=None, method=None, admin_bypass=False, use_browser=False)
             self.assertIn('semcod/monag', stdout.getvalue())
             self.assertIn('56', stdout.getvalue())
             self.assertIn('MERGED', stdout.getvalue())
