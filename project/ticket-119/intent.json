@@ -1,0 +1,85 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-119",
+  "summary": "Check resume status sets against the planfile ticket status contract",
+  "workstream": "application",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-119/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "tests/fixtures/planfile-ticket-status.v1.json",
+    "src/monag/resume.py",
+    "tests/test_resume.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "f8bff8cf165b90d4808f216de5cd74e544f4dd6b",
+    "targetBranch": "main",
+    "outcome": "monag tests pin the published planfile.ticket-status/v1 contract (semcod/planfile 6670b38) and fail if resume's OPEN/CLOSED/STALLED sets stop covering any planfile status by its class, so a new planfile status can no longer silently become unknown_statuses.",
+    "nonGoals": [
+      "No runtime dependency on planfile.",
+      "No change to resume classification behaviour."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 15,
+    "budgets": {
+      "maxImplementationFiles": 3,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Vendor the contract as a digest-pinned test fixture and assert coverage per status class.",
+      "components": [
+        {
+          "name": "resume-queue-summary",
+          "paths": [
+            "src/monag/resume.py",
+            "tests/test_resume.py",
+            "tests/fixtures/planfile-ticket-status.v1.json"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "git revert removes the fixture and test."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python3 -m pytest -q tests/test_resume.py"
+        ],
+        "evidence": "project/ticket-119/README.md"
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "bash project/governance-check.sh"
+        ],
+        "evidence": "project/ticket-119/README.md"
+      }
+    ]
+  }
+}

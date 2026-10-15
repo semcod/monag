@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -65,6 +66,19 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(result['unknown_statuses'], 0)
         self.assertEqual(result['remaining_ids'], ['A', 'B'])
         self.assertEqual(result['blocked'], 2)
+
+    def test_status_sets_cover_the_planfile_status_contract(self):
+        # semcod/planfile 6670b3813c197fd0bcd13e160f3b360629bdd57c planfile/schemas/ticket-status.v1.json
+        raw = (Path(__file__).parent / 'fixtures/planfile-ticket-status.v1.json').read_bytes()
+        self.assertEqual(hashlib.sha256(raw).hexdigest(),
+                         'cd8495ae67d4577692d9692c9f4633e6ed7d1adb13fc94d66b9530fe1cef3dd4')
+        contract = json.loads(raw)
+        self.assertEqual(contract['schema'], 'planfile.ticket-status/v1')
+        for status, entry in contract['statuses'].items():
+            with self.subTest(status=status):
+                self.assertIn(status, resume.OPEN if entry['pending'] else resume.CLOSED)
+                self.assertEqual(status in resume.STALLED, entry['class'] == 'stalled')
+                self.assertEqual(resume.summarize_tickets([{'id': 'X', 'status': status}])['unknown_statuses'], 0)
 
     def test_squash_merged_branch_is_only_an_ancestry_candidate(self):
         linked = self.repo / '.worktrees/ticket-020--squash'
