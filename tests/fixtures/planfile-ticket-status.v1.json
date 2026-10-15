@@ -1,0 +1,21 @@
+{
+  "schema": "planfile.ticket-status/v1",
+  "description": "Every planfile TicketStatus value and its class, for consumers that classify queues without importing planfile (e.g. monag resume, fleet admission). A status missing here is a contract defect, not an unknown value to tolerate.",
+  "classes": {
+    "ready": "Pending work that may be picked up now.",
+    "claimed": "Pending work held by an executor.",
+    "awaiting_review": "Pending work waiting for review.",
+    "stalled": "Pending work that needs triage before anyone may pick it up again; never ready.",
+    "terminal_success": "Finished with the intended outcome.",
+    "terminal_not_done": "Finished without delivering the outcome."
+  },
+  "statuses": {
+    "open": {"class": "ready", "pending": true},
+    "in_progress": {"class": "claimed", "pending": true},
+    "review": {"class": "awaiting_review", "pending": true},
+    "blocked": {"class": "stalled", "pending": true},
+    "failed": {"class": "stalled", "pending": true, "note": "Execution attempts exhausted; it may be reopened."},
+    "done": {"class": "terminal_success", "pending": false},
+    "canceled": {"class": "terminal_not_done", "pending": false}
+  }
+}

@@ -14,6 +14,8 @@ from .monitor import checkout_agents, command, processes
 from .presentation import table
 
 CLOSED = {'done', 'closed', 'cancelled', 'canceled', 'completed', 'merged'}
+# planfile.ticket-status/v1 (tests/fixtures) classifies every planfile status;
+# tests keep these sets covering it.
 # Planfile's own terminal-failure status needs triage like a blocked ticket:
 # it stays visible as remaining work but is never ready to pick up.
 STALLED = {'blocked', 'failed'}
