@@ -58,6 +58,14 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(result['conflicting_statuses'], 1)
         self.assertEqual(result['unknown_statuses'], 1)
 
+    def test_planfile_failed_status_is_blocked_remaining_work(self):
+        items = [{'id': 'A', 'status': 'failed'}, {'id': 'B', 'status': 'blocked'},
+                 {'id': 'C', 'status': 'done'}]
+        result = resume.summarize_tickets(items)
+        self.assertEqual(result['unknown_statuses'], 0)
+        self.assertEqual(result['remaining_ids'], ['A', 'B'])
+        self.assertEqual(result['blocked'], 2)
+
     def test_squash_merged_branch_is_only_an_ancestry_candidate(self):
         linked = self.repo / '.worktrees/ticket-020--squash'
         self.git('worktree', 'add', '-b', 'ticket/020-squash', str(linked))

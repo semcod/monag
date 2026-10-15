@@ -14,8 +14,11 @@ from .monitor import checkout_agents, command, processes
 from .presentation import table
 
 CLOSED = {'done', 'closed', 'cancelled', 'canceled', 'completed', 'merged'}
+# Planfile's own terminal-failure status needs triage like a blocked ticket:
+# it stays visible as remaining work but is never ready to pick up.
+STALLED = {'blocked', 'failed'}
 OPEN = {'open', 'todo', 'backlog', 'planned', 'plan', 'ready', 'in_progress',
-        'in-progress', 'active', 'review', 'blocked', 'pending'}
+        'in-progress', 'active', 'review', 'pending'} | STALLED
 PLANFILE_PRIORITIES = ('critical', 'high', 'medium', 'normal', 'low')
 PRIORITY_RANK = {value: len(PLANFILE_PRIORITIES) - index
                  for index, value in enumerate(PLANFILE_PRIORITIES)}
@@ -245,7 +248,7 @@ def summarize_tickets(items, priorities=None):
         unknown += bool(statuses - OPEN - CLOSED)
         if statuses & OPEN:
             pending.append(key)
-            blocked += 'blocked' in statuses
+            blocked += bool(statuses & STALLED)
             labels = sorted({str(label) for row in rows for label in row.get('labels', [])})
             import_evidence = sorted({str(finding) for row in rows
                                       for finding in row.get('import_evidence', [])})

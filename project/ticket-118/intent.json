@@ -1,0 +1,91 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-118",
+  "summary": "Classify the planfile failed status as blocked pending work",
+  "workstream": "application",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-118/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/resume.py",
+    "tests/test_resume.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "18649ba045f6277fac3ec42e762243f30f6b3b1b",
+    "targetBranch": "main",
+    "outcome": "monag resume classifies planfile's own terminal status 'failed' as stalled remaining work (like 'blocked') instead of an unknown status, so fleet admission no longer denies every repository holding a failed ticket with ambiguous_queue_state.",
+    "nonGoals": [
+      "No change to the fleet admission gate or its unknown-status rule.",
+      "No change to ticket data in any repository.",
+      "No monag release rollout into the willman controller (deployment step)."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 20,
+    "budgets": {
+      "maxImplementationFiles": 2,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Add a STALLED = {'blocked','failed'} subset of OPEN and count blocked from it.",
+      "components": [
+        {
+          "name": "resume-queue-summary",
+          "paths": [
+            "src/monag/resume.py",
+            "tests/test_resume.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "git revert; failed is reported as an unknown status again."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python3 -m pytest -q tests/test_resume.py"
+        ],
+        "evidence": "project/ticket-118/README.md"
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "python3 -m pytest -q tests"
+        ],
+        "evidence": "project/ticket-118/README.md"
+      },
+      {
+        "criterion": "AC-03",
+        "commands": [
+          "bash project/governance-check.sh"
+        ],
+        "evidence": "project/ticket-118/README.md"
+      }
+    ]
+  }
+}
