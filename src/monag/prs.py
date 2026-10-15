@@ -1,4 +1,4 @@
-"""Read-only audit of local Git branches, unpushed commits, and open Pull Requests.
+"""Audit Git activity and delegate PR publication to an independent Validator.
 
 Inspects local repositories under `--root` for:
 - branches with unpushed commits (`ahead > 0`),
@@ -850,7 +850,8 @@ def merge_pull_request(pr_url_or_number: Any, repo: Optional[str] = None, method
                'number,state,isDraft,headRefName,headRefOid']
     output, error = command(observe, timeout=30)
     if error:
-        return {**record, 'status': 'PR_OBSERVATION_FAILED', 'error': error}
+        return {**record, 'status': 'PR_OBSERVATION_FAILED', 'error': error,
+                'retry_pending': _rate_limited(error)}
     try:
         before = json.loads(output)
         head = before['headRefOid']
@@ -878,7 +879,8 @@ def merge_pull_request(pr_url_or_number: Any, repo: Optional[str] = None, method
         record['receipt_path'] = report[-1]
     if result.returncode:
         return {**record, 'status': 'PUBLICATION_BLOCKED', 'return_code': result.returncode,
-                'error': 'Independent adapter refused publication; retain its retry receipt.'}
+                'error': 'Independent adapter refused publication; retain its retry receipt.',
+                'retry_pending': _rate_limited((result.stdout or '') + (result.stderr or ''))}
     output, error = command(observe, timeout=30)
     if error:
         return {**record, 'status': 'PUBLICATION_READBACK_PENDING', 'error': error}
@@ -893,12 +895,27 @@ def merge_pull_request(pr_url_or_number: Any, repo: Optional[str] = None, method
     return {**record, 'ok': True, 'status': 'MERGED_VERIFIED' if record['historical'] else 'MERGED'}
 
 
+def _rate_limited(message):
+    text = message.lower()
+    return any(marker in text for marker in ('rate limit', 'http 429', 'retry-after'))
+
+
 def merge_open_prs(open_prs: List[Dict[str, Any]], method=None, admin_bypass=False,
                    use_browser=False, cdp_port=9222) -> List[Dict[str, Any]]:
-    """Delegate each observed PR separately; the adapter owns every decision."""
-    return [merge_pull_request(pr.get('url') or f"{pr.get('repo')}#{pr.get('number')}",
-                               repo=pr.get('repo'), method=method, admin_bypass=admin_bypass,
-                               use_browser=use_browser, cdp_port=cdp_port) for pr in open_prs]
+    """Delegate separately; stop API requests when a transport is rate limited."""
+    results = []
+    deferred = False
+    for pr in open_prs:
+        if deferred:
+            results.append({'repo': pr.get('repo'), 'number': pr.get('number'), 'ok': False,
+                            'status': 'PUBLICATION_DEFERRED', 'retry_pending': True})
+            continue
+        result = merge_pull_request(pr.get('url') or f"{pr.get('repo')}#{pr.get('number')}",
+                                    repo=pr.get('repo'), method=method, admin_bypass=admin_bypass,
+                                    use_browser=use_browser, cdp_port=cdp_port)
+        results.append(result)
+        deferred = bool(result.get('retry_pending'))
+    return results
 
 
 def merge_result_markdown(results: List[Dict[str, Any]]) -> str:
