@@ -323,6 +323,7 @@ class PrsTests(unittest.TestCase):
                 patch('monag.prs.merge_via_browser_cdp') as browser:
             result = prs.merge_pull_request('semcod/monag#42')
         self.assertEqual(result['status'], 'PR_OBSERVATION_FAILED')
+        self.assertTrue(result['retry_pending'])
         adapter.assert_not_called()
         browser.assert_not_called()
 
@@ -455,6 +456,15 @@ class PrsTests(unittest.TestCase):
                 patch('sys.stdout', stdout):
             code = main(['--root', str(self.root), 'merge', '--all'])
         self.assertEqual(code, 1)
+
+    def test_rate_limited_bulk_defers_remaining_without_more_requests(self):
+        with patch('monag.prs.merge_pull_request', return_value={
+                'ok': False, 'status': 'PR_OBSERVATION_FAILED', 'retry_pending': True}) as publish:
+            results = prs.merge_open_prs([{'repo': 'semcod/monag', 'number': 42},
+                                         {'repo': 'semcod/monag', 'number': 43}])
+        self.assertEqual(publish.call_count, 1)
+        self.assertEqual(results[1]['status'], 'PUBLICATION_DEFERRED')
+        self.assertFalse(results[1]['ok'])
 
     def test_merge_open_prs_and_markdown(self):
         open_prs = [

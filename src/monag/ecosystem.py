@@ -7,8 +7,8 @@ capabilities are available in the current environment.
 
 from __future__ import annotations
 
+import importlib.metadata
 import importlib.util
-import json
 import os
 import shutil
 import socket
@@ -82,23 +82,24 @@ class ServiceCapability:
         return asdict(self)
 
 
-def _probe_version(executable_path: str) -> str | None:
-    """Safely obtain version string from an executable."""
+def _distribution_version(name: str | None, subject: str) -> str | None:
+    """Read static metadata only when its RECORD owns the observed path.
+
+    A distribution in this interpreter need not own a CLI found elsewhere on
+    PATH. Unknown executable versions stay unknown; discovery never starts them.
+    """
+    if not name:
+        return None
     try:
-        proc = subprocess.run(
-            [executable_path, "--version"],
-            capture_output=True,
-            text=True,
-            timeout=1.0,
-            check=False,
-        )
-        if proc.returncode == 0 and proc.stdout:
-            first_line = proc.stdout.strip().splitlines()[0]
-            # Strip excessive length
-            return first_line[:60]
-    except (subprocess.SubprocessError, OSError):
-        pass
-    return None
+        distribution = importlib.metadata.distribution(name)
+        base = Path(distribution.locate_file('')).resolve()
+        relative = Path(os.path.relpath(Path(subject).resolve(), base)).as_posix()
+        if relative not in {str(item) for item in distribution.files or ()}:
+            return None
+        lines = str(distribution.version or '').strip().splitlines()
+        return lines[0][:60] if lines else None
+    except (importlib.metadata.PackageNotFoundError, OSError, ValueError, TypeError):
+        return None
 
 
 def audit_ecosystem_tools() -> dict[str, ToolCapability]:
@@ -115,7 +116,7 @@ def audit_ecosystem_tools() -> dict[str, ToolCapability]:
                 break
 
         if found_path:
-            version = _probe_version(found_path)
+            version = _distribution_version(meta.get('module'), found_path)
             results[tool_id] = ToolCapability(
                 name=tool_id,
                 role=meta["role"],
@@ -138,7 +139,7 @@ def audit_ecosystem_tools() -> dict[str, ToolCapability]:
                         available=True,
                         via="module",
                         path=spec.origin,
-                        version=None,
+                        version=_distribution_version(mod_name, spec.origin) if spec.origin else None,
                     )
                     continue
             except (ImportError, ValueError, AttributeError):
@@ -161,18 +162,18 @@ def audit_ecosystem_tools() -> dict[str, ToolCapability]:
             continue
         try:
             for item in d.iterdir():
+                name = item.name
+                if name in results or not name.startswith(('semcod-', 'subactor-')):
+                    continue
                 if item.is_file() and os.access(item, os.X_OK):
-                    name = item.name
-                    # Filter relevant prefixes if not already recorded
-                    if (name.startswith("semcod-") or name.startswith("subactor-")) and name not in results:
-                        results[name] = ToolCapability(
-                            name=name,
-                            role="dynamically discovered ecosystem executable",
-                            available=True,
-                            via="PATH",
-                            path=str(item),
-                            version=_probe_version(str(item)),
-                        )
+                    results[name] = ToolCapability(
+                        name=name,
+                        role="dynamically discovered ecosystem executable",
+                        available=True,
+                        via="PATH",
+                        path=str(item),
+                        version=None,
+                    )
         except (OSError, PermissionError):
             continue
 

@@ -1,0 +1,103 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-117",
+  "summary": "Keep discovery non-executing and defer rate-limited publication",
+  "workstream": "application",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-117/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/ecosystem.py",
+    "src/monag/prs.py",
+    "tests/test_ecosystem_tools.py",
+    "tests/test_prs.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "d23feeb5899434002020068fc7bf974b8c51ef3c",
+    "targetBranch": "main",
+    "outcome": "Discover executable paths and distribution metadata without starting unknown programs; isolate ecosystem tests from host tools/services; preserve pending publication batches after API rate limits.",
+    "nonGoals": [
+      "No attribution of real owner merges to the probe without causal evidence",
+      "No personal publication, browser fallback, approval fabrication or required gate removal",
+      "No deployment before independent source publication",
+      "No host program execution to query unknown version behavior"
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 25,
+    "budgets": {
+      "maxImplementationFiles": 4,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 1,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Keep the existing independent publication adapter and transport its genuine remaining rate-limit delta from archived ticket-116. Replace CLI version processes with static package metadata and nullable versions for unknown binaries. Use deterministic local fixtures for tool/service tests.",
+      "components": [
+        {
+          "name": "nonexecuting-discovery",
+          "paths": [
+            "src/monag/ecosystem.py",
+            "tests/test_ecosystem_tools.py"
+          ]
+        },
+        {
+          "name": "publication-backoff",
+          "paths": [
+            "src/monag/prs.py",
+            "tests/test_prs.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "Explicit pending/deferred publication batch outcomes"
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Retain a prior independently approved immutable runtime for read-only operations; keep publication blocked if approved adapter configuration is unavailable."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python -m pytest -q tests/test_ecosystem_tools.py"
+        ],
+        "evidence": "project/ticket-117/README.md"
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "python -m pytest -q tests/test_prs.py tests/test_mcp.py"
+        ],
+        "evidence": "project/ticket-117/README.md"
+      },
+      {
+        "criterion": "AC-03",
+        "commands": [
+          "./project/governance-check.sh"
+        ],
+        "evidence": "project/ticket-117/README.md"
+      }
+    ]
+  }
+}
