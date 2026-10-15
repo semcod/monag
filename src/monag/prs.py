@@ -14,20 +14,24 @@ Use `--all-repos` to force querying GitHub across all discovered repositories.
 import base64
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import shlex
 import socket
+import subprocess
 import struct
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional
 import urllib.parse
 import urllib.request
 
 from .audit import targets as discover_targets
 from .monitor import command, github_repo
 from .presentation import table
+from .resume import registrations
 
 SCHEMA = 'monag.prs/v1'
 
@@ -239,7 +243,6 @@ def inspect_branches(path, now=None):
     return branches, current_branch, errors
 
 
-from .resume import registrations
 
 
 def audit_local_repo(path, cutoff_dt=None, now=None):
@@ -685,14 +688,14 @@ class BrowserCDPMerger:
             body['params'] = params
         msg = json.dumps(body).encode('utf-8')
         mask = os.urandom(4)
-        l = len(msg)
+        length = len(msg)
 
-        if l < 126:
-            h = bytearray([0x81, 0x80 | l])
-        elif l < 65536:
-            h = bytearray([0x81, 0x80 | 126] + list(struct.pack('!H', l)))
+        if length < 126:
+            h = bytearray([0x81, 0x80 | length])
+        elif length < 65536:
+            h = bytearray([0x81, 0x80 | 126] + list(struct.pack('!H', length)))
         else:
-            h = bytearray([0x81, 0x80 | 127] + list(struct.pack('!Q', l)))
+            h = bytearray([0x81, 0x80 | 127] + list(struct.pack('!Q', length)))
         h.extend(mask)
         h.extend(bytearray(b ^ mask[i % 4] for i, b in enumerate(msg)))
         s.sendall(h)
@@ -736,185 +739,166 @@ class BrowserCDPMerger:
     def navigate(self, path: str, url: str) -> None:
         self._send_cmd(path, 'Page.navigate', {'url': url})
 
-    def merge_pr_page(self, pr_url: str, method: str = 'squash', admin_bypass: bool = True) -> Dict[str, Any]:
-        targets = self._get_page_targets()
-        if not targets:
-            return {'ok': False, 'status': 'NO_BROWSER_TABS', 'error': 'No active browser tabs found on CDP port'}
-
-        target = next((t for t in targets if 'github.com' in t.get('url', '')), None)
-        if not target:
-            target = next((t for t in targets if not t.get('url', '').startswith('chrome://')), targets[0])
-
-        ws_url = target.get('webSocketDebuggerUrl', '')
-        path = urllib.parse.urlparse(ws_url).path
-
-        self.navigate(path, pr_url)
-
-        # Wait for page & merge box to load
-        for _ in range(8):
-            time.sleep(1.0)
-            loaded = self.eval(path, """(() => {
-                const b = document.body ? document.body.innerText : '';
-                if (b.includes('Loading merge status') || b.includes('Checking mergeability')) return false;
-                if (document.querySelector('[data-testid=\"mergebox-border-container\"]') || document.querySelector('.branch-action-item')) return true;
-                if (document.querySelector('.State--purple, .State--red')) return true;
-                return false;
-            })()""")
-            if loaded:
-                break
-
-        # Check existing state
-        state = self.eval(path, """(() => {
-            const body = document.body ? document.body.innerText : '';
-            const isMerged = !!document.querySelector('.State--purple, [title*=\"Status: Merged\"], [aria-label*=\"Status: Merged\"]') || body.includes('Pull request successfully merged and closed');
-            const isClosed = !isMerged && (!!document.querySelector('.State--red, [title*=\"Status: Closed\"], [aria-label*=\"Status: Closed\"]') || body.includes('closed this in'));
-            const hasConflicts = body.includes('This branch has conflicts that must be resolved') || body.includes('Conflicts must be resolved');
-            return {isMerged, isClosed, hasConflicts};
-        })()""")
-
-        if not state:
-            return {'ok': False, 'status': 'EVAL_FAILED', 'error': 'Could not read DOM from browser'}
-
-        if state.get('isMerged'):
-            return {'ok': True, 'status': 'ALREADY_MERGED', 'message': 'Pull request is already merged'}
-
-        if state.get('isClosed'):
-            return {'ok': False, 'status': 'ALREADY_CLOSED', 'error': 'Pull request is closed'}
-
-        if state.get('hasConflicts'):
-            return {'ok': False, 'status': 'CONFLICTING', 'error': 'This branch has conflicts that must be resolved'}
-
-        # Update branch if out of date
-        self.eval(path, """(() => {
-            const btn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.trim() === 'Update branch' && !b.disabled);
-            if (btn) btn.click();
-        })()""")
-        time.sleep(2.0)
-
-        # Bypass rules if needed and available
-        if admin_bypass:
-            self.eval(path, """(() => {
-                const lbl = Array.from(document.querySelectorAll('label')).find(l => l.innerText && l.innerText.includes('bypass rules'));
-                if (!lbl) return;
-                const forId = lbl.getAttribute('for');
-                const cb = forId ? document.getElementById(forId) : lbl.querySelector('input');
-                if (cb && !cb.checked) cb.click();
-            })()""")
-            time.sleep(1.0)
-
-        # Click merge button
-        merge_label = 'Squash and merge' if method == 'squash' else ('Rebase and merge' if method == 'rebase' else 'Merge pull request')
-        clicked_btn = self.eval(path, f"""(() => {{
-            const btns = Array.from(document.querySelectorAll('button, input[type=submit]'));
-            const bypassBtn = btns.find(b => b.innerText && b.innerText.includes('Bypass rules and merge') && !b.disabled);
-            if (bypassBtn) {{ bypassBtn.click(); return 'Bypass rules and merge'; }}
-            const targetBtn = btns.find(b => b.innerText && b.innerText.includes('{merge_label}') && !b.disabled);
-            if (targetBtn) {{ targetBtn.click(); return '{merge_label}'; }}
-            const anyMerge = btns.find(b => /merge pull request|squash and merge|rebase and merge/i.test(b.innerText || b.value) && !b.disabled);
-            if (anyMerge) {{ anyMerge.click(); return anyMerge.innerText.trim(); }}
-            return null;
-        }})()""")
-
-        time.sleep(1.5)
-
-        # Confirm merge
-        confirmed = self.eval(path, """(() => {
-            const btns = Array.from(document.querySelectorAll('button, input[type=submit]'));
-            const confirmBtn = btns.find(b => b.innerText && b.innerText.toLowerCase().includes('confirm') && !b.disabled);
-            if (confirmBtn) {
-                confirmBtn.click();
-                return confirmBtn.innerText.trim();
-            }
-            return null;
-        })()""")
-
-        time.sleep(3.5)
-
-        # Verify final merge state
-        final_state = self.eval(path, """(() => {
-            const body = document.body ? document.body.innerText : '';
-            return !!document.querySelector('.State--purple, [title*=\"Status: Merged\"], [aria-label*=\"Status: Merged\"]') || body.includes('Pull request successfully merged and closed');
-        })()""")
-
-        if final_state:
-            return {'ok': True, 'status': 'MERGED', 'method': method, 'button': clicked_btn}
-
-        return {'ok': False, 'status': 'FAILED', 'error': 'Merge confirmation did not transition to Merged'}
+    def merge_pr_page(self, pr_url: str, method=None, admin_bypass=False) -> Dict[str, Any]:
+        return _personal_publication_refused()
 
 
-def merge_via_browser_cdp(pr_url: str, method: str = 'squash', admin_bypass: bool = True, cdp_port: int = 9222) -> Dict[str, Any]:
-    merger = BrowserCDPMerger(port=cdp_port)
-    if not merger.is_available():
-        return {'ok': False, 'status': 'CDP_UNAVAILABLE', 'error': f'Chromium CDP endpoint not reachable at 127.0.0.1:{cdp_port}'}
-    return merger.merge_pr_page(pr_url, method=method, admin_bypass=admin_bypass)
+def _personal_publication_refused():
+    return {'ok': False, 'status': 'PERSONAL_PUBLICATION_FORBIDDEN',
+            'error': 'Publication requires the configured independent Validator adapter.'}
 
 
-def merge_pull_request(pr_url_or_number: Any, repo: Optional[str] = None, method: str = 'squash',
-                       admin_bypass: bool = True, use_browser: bool = False, cdp_port: int = 9222) -> Dict[str, Any]:
-    """Merge a GitHub Pull Request using gh CLI with automated fallback to Browser CDP."""
-    target_str = str(pr_url_or_number).strip()
-    pr_url = ''
-    pr_number = None
+def merge_via_browser_cdp(pr_url: str, method=None, admin_bypass=False, cdp_port=9222):
+    return _personal_publication_refused()
 
-    url_match = re.search(r'https?://github\.com/([a-zA-Z0-9_\-]+/[a-zA-Z0-9_\-]+)/pull/(\d+)', target_str)
-    if url_match:
-        repo = url_match.group(1)
-        pr_number = int(url_match.group(2))
-        pr_url = target_str
-    elif '#' in target_str:
-        parts = target_str.split('#', 1)
-        repo = parts[0].strip()
-        pr_number = int(parts[1].strip())
-        pr_url = f'https://github.com/{repo}/pull/{pr_number}'
-    elif target_str.isdigit():
-        pr_number = int(target_str)
-        if not repo:
-            repo = repo_remote('.')
-        if not repo:
-            return {'ok': False, 'status': 'NO_REPO', 'error': 'Could not detect GitHub repository for PR number'}
-        pr_url = f'https://github.com/{repo}/pull/{pr_number}'
+
+def _protected_file(path):
+    if (not path.is_absolute() or '..' in path.parts
+            or any(part.is_symlink() for part in (path, *path.parents)) or not path.is_file()):
+        raise ValueError('PUBLICATION_PROTECTED_PATH_INVALID')
+    return path
+
+
+def _bounded_text(path):
+    with _protected_file(path).open('rb') as source:
+        content = source.read(65537)
+    if len(content) > 65536:
+        raise ValueError('PUBLICATION_CONFIG_TOO_LARGE')
+    return content.decode('utf-8')
+
+
+def _unique_config(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('PUBLICATION_CONFIG_DUPLICATE_KEY')
+        result[key] = value
+    return result
+
+
+def _publication_adapter():
+    config_root = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')
+    config = Path(os.environ.get('MONAG_PUBLICATION_CONFIG') or config_root / 'monag' / 'publication.json')
+    value = json.loads(_bounded_text(config), object_pairs_hook=_unique_config)
+    if (not isinstance(value, dict) or set(value) != {'environmentFile', 'adapterSha256'}
+            or not isinstance(value['environmentFile'], str)
+            or not isinstance(value['adapterSha256'], str)
+            or not re.fullmatch('[0-9a-f]{64}', value['adapterSha256'])):
+        raise ValueError('PUBLICATION_CONFIG_INVALID')
+    allowed = {'VALIDATOR_ROOT', 'VALIDATOR_PYTHON', 'DIRECT_PR_REGISTRY_PATH',
+               'DIRECT_PR_REGISTRY_EXPECTED_DIGEST', 'VALIDATOR_APP_PRIVATE_KEY_FILE',
+               'VALIDATOR_SUBLLM_ROOT', 'VALIDATOR_APP_SLUG', 'VALIDATOR_APP_ID',
+               'VALIDATOR_APP_CLIENT_ID', 'EXECUTION_PROFILE', 'DIRECT_PR_AUTHORITY_MODE',
+               'DIRECT_PR_SQLITE_SNAPSHOT', 'DIRECT_PR_SQLITE_MANIFEST',
+               'DIRECT_PR_SQLITE_EXPECTED_DIGEST', 'DIRECT_PR_SQLITE_MANIFEST_EXPECTED_DIGEST'}
+    selected = {}
+    for line in _bounded_text(Path(value['environmentFile'])).splitlines():
+        key, separator, text = line.partition('=')
+        if separator and key in allowed:
+            parts = shlex.split(text)
+            if key in selected or len(parts) != 1:
+                raise ValueError('PUBLICATION_ENVIRONMENT_INVALID')
+            selected[key] = parts[0]
+    if 'VALIDATOR_ROOT' not in selected:
+        raise ValueError('PUBLICATION_VALIDATOR_ROOT_REQUIRED')
+    adapter = _protected_file(Path(selected['VALIDATOR_ROOT']) / 'bin' / 'run-local-direct-pr.sh')
+    hasher = hashlib.sha256()
+    with adapter.open('rb') as source:
+        for chunk in iter(lambda: source.read(65536), b''):
+            hasher.update(chunk)
+    digest = hasher.hexdigest()
+    if digest != value['adapterSha256']:
+        raise ValueError('PUBLICATION_ADAPTER_DIGEST_MISMATCH')
+    if not os.access(adapter, os.X_OK):
+        raise ValueError('PUBLICATION_ADAPTER_NOT_EXECUTABLE')
+    return adapter, {**os.environ, **selected}
+
+
+def merge_pull_request(pr_url_or_number: Any, repo: Optional[str] = None, method=None,
+                       admin_bypass=False, use_browser=False, cdp_port=9222,
+                       ticket: Optional[str] = None) -> Dict[str, Any]:
+    """Delegate exact-head publication to an operator-pinned independent adapter.
+
+    Host configuration is outside the candidate; it selects the protected
+    Validator environment and the SHA256 of its published adapter. No failure
+    authorizes personal GitHub mutation or a browser transport.
+    """
+    if admin_bypass or use_browser or method is not None:
+        return _personal_publication_refused()
+    target = str(pr_url_or_number).strip()
+    match = re.fullmatch(r'https?://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/([1-9][0-9]*)/?', target)
+    if match:
+        repo, number = match.groups()
+    elif '#' in target:
+        repo, number = target.split('#', 1)
+    elif target.isdecimal():
+        number = target
+        repo = repo or repo_remote('.')
     else:
-        return {'ok': False, 'status': 'INVALID_TARGET', 'error': f'Unrecognized PR target: {pr_url_or_number}'}
+        return {'ok': False, 'status': 'INVALID_TARGET'}
+    if (not isinstance(repo, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo)
+            or not re.fullmatch(r'[1-9][0-9]*', number)):
+        return {'ok': False, 'status': 'INVALID_TARGET'}
+    record = {'repo': repo, 'number': int(number), 'url': f'https://github.com/{repo}/pull/{number}',
+              'method': 'protected-registry', 'via': 'independent-validator', 'ok': False}
+    try:
+        adapter, environment = _publication_adapter()
+    except (OSError, ValueError, TypeError, KeyError):
+        return {**record, 'status': 'PUBLICATION_CONFIG_INVALID',
+                'error': 'Configure the protected environmentFile and adapterSha256 in host monag/publication.json.'}
+    observe = ['gh', 'pr', 'view', number, '--repo', repo, '--json',
+               'number,state,isDraft,headRefName,headRefOid']
+    output, error = command(observe, timeout=30)
+    if error:
+        return {**record, 'status': 'PR_OBSERVATION_FAILED', 'error': error}
+    try:
+        before = json.loads(output)
+        head = before['headRefOid']
+        if before['number'] != int(number) or not re.fullmatch('[0-9a-f]{40}', head):
+            raise ValueError('invalid head')
+        if before['state'] not in {'OPEN', 'MERGED'} or before['isDraft']:
+            return {**record, 'status': 'PR_NOT_READY'}
+        branch = re.fullmatch(r'ticket/([0-9]{3,})-[a-z0-9-]+', before['headRefName'])
+        bound_ticket = ticket or ('ticket-' + branch[1] if branch else '')
+        if not re.fullmatch(r'(?:ticket-[0-9]{3,}|PLF-[0-9]+)', bound_ticket):
+            return {**record, 'status': 'TICKET_BINDING_REQUIRED'}
+        if branch and bound_ticket.split('-')[-1] != branch[1]:
+            return {**record, 'status': 'TICKET_HEAD_MISMATCH'}
+    except (ValueError, TypeError, KeyError):
+        return {**record, 'status': 'PR_OBSERVATION_INVALID'}
+    record.update(head=head, ticket=bound_ticket, historical=before['state'] == 'MERGED')
+    arguments = [str(adapter), '--repository', repo, '--pull-request', number,
+                 '--ticket', bound_ticket, '--expected-head-sha', head, '--apply', '--merge']
+    try:
+        result = subprocess.run(arguments, env=environment, capture_output=True, text=True, check=False)
+    except OSError:
+        return {**record, 'status': 'PUBLICATION_ADAPTER_UNAVAILABLE'}
+    report = re.findall(r'(?m)^LOCAL_DIRECT_PR_REPORT path=(.+)$', result.stdout or '')
+    if report and Path(report[-1]).is_absolute():
+        record['receipt_path'] = report[-1]
+    if result.returncode:
+        return {**record, 'status': 'PUBLICATION_BLOCKED', 'return_code': result.returncode,
+                'error': 'Independent adapter refused publication; retain its retry receipt.'}
+    output, error = command(observe, timeout=30)
+    if error:
+        return {**record, 'status': 'PUBLICATION_READBACK_PENDING', 'error': error}
+    try:
+        after = json.loads(output)
+        if after['number'] != int(number) or after['headRefOid'] != head:
+            return {**record, 'status': 'HEAD_CHANGED_AFTER_PUBLICATION'}
+        if after['state'] != 'MERGED':
+            return {**record, 'status': 'PUBLICATION_READBACK_PENDING'}
+    except (ValueError, TypeError, KeyError):
+        return {**record, 'status': 'PUBLICATION_READBACK_INVALID'}
+    return {**record, 'ok': True, 'status': 'MERGED_VERIFIED' if record['historical'] else 'MERGED'}
 
-    record = {
-        'repo': repo,
-        'number': pr_number,
-        'url': pr_url,
-        'method': method,
-    }
 
-    # If browser is not forced, try gh pr merge first
-    if not use_browser:
-        cmd = ['gh', 'pr', 'merge', str(pr_number), '--repo', repo, f'--{method}']
-        if admin_bypass:
-            cmd.append('--admin')
-        out, err = command(cmd, timeout=30)
-        if not err and ('merged' in (out or '').lower() or 'already' in (out or '').lower()):
-            record.update(ok=True, status='MERGED', via='gh', output=out)
-            return record
-        # Check if error was rate limit or permission that can be handled via browser
-        err_lower = (err or '').lower()
-        if 'conflict' in err_lower:
-            record.update(ok=False, status='CONFLICTING', via='gh', error=err)
-            return record
-
-    # Browser CDP fallback or forced browser mode
-    b_res = merge_via_browser_cdp(pr_url, method=method, admin_bypass=admin_bypass, cdp_port=cdp_port)
-    record.update(b_res)
-    record['via'] = 'browser_cdp'
-    return record
-
-
-def merge_open_prs(open_prs: List[Dict[str, Any]], method: str = 'squash', admin_bypass: bool = True,
-                   use_browser: bool = False, cdp_port: int = 9222) -> List[Dict[str, Any]]:
-    """Merge a list of open PR dictionaries."""
-    results = []
-    for pr in open_prs:
-        url = pr.get('url') or f"https://github.com/{pr.get('repo')}/pull/{pr.get('number')}"
-        res = merge_pull_request(url, repo=pr.get('repo'), method=method,
-                                admin_bypass=admin_bypass, use_browser=use_browser, cdp_port=cdp_port)
-        results.append(res)
-    return results
+def merge_open_prs(open_prs: List[Dict[str, Any]], method=None, admin_bypass=False,
+                   use_browser=False, cdp_port=9222) -> List[Dict[str, Any]]:
+    """Delegate each observed PR separately; the adapter owns every decision."""
+    return [merge_pull_request(pr.get('url') or f"{pr.get('repo')}#{pr.get('number')}",
+                               repo=pr.get('repo'), method=method, admin_bypass=admin_bypass,
+                               use_browser=use_browser, cdp_port=cdp_port) for pr in open_prs]
 
 
 def merge_result_markdown(results: List[Dict[str, Any]]) -> str:

@@ -1,0 +1,95 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-116",
+  "summary": "Route Monag publication through a pinned independent adapter",
+  "workstream": "application",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-116/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/cli.py",
+    "src/monag/prs.py",
+    "tests/test_prs.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "5ca3cdd093e68eeeb301644a4e58ebd8b7c66076",
+    "targetBranch": "main",
+    "outcome": "Replace Monag personal/admin/browser publication with a digest-pinned independent Validator adapter selected by host configuration, preserving exact-head observation and failure state without fallback.",
+    "nonGoals": [
+      "No evidence that Monag caused the observed owner merges",
+      "No personal or admin publication, browser fallback or bypass option",
+      "No caller-authored approval, fake statuses or waived checks",
+      "No credentials in repository files, logs or CLI arguments"
+    ],
+    "complexity": "M",
+    "estimatedMinutes": 45,
+    "budgets": {
+      "maxImplementationFiles": 3,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 2,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Use an explicit host publication configuration outside candidate repositories. Derive the adapter from the protected Validator environment, require its immutable SHA256 before execution, fetch and freeze the actual PR head, delegate authority entirely to the independent adapter, and read back the result. Retain blocked results and never switch transports.",
+      "components": [
+        {
+          "name": "publication-transport",
+          "paths": [
+            "src/monag/prs.py",
+            "src/monag/cli.py"
+          ]
+        },
+        {
+          "name": "security-regressions",
+          "paths": [
+            "tests/test_prs.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "Monag merge and prs publication entrypoints delegate to independent adapter",
+        "Host publication adapter configuration"
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Restore the previous independently published tool release; do not publish a candidate through personal fallback."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python -m pytest -q tests/test_prs.py"
+        ],
+        "evidence": "project/ticket-116/README.md"
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "./project/governance-check.sh"
+        ],
+        "evidence": "project/ticket-116/README.md"
+      }
+    ]
+  }
+}

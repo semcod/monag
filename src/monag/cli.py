@@ -329,23 +329,25 @@ def main(argv=None):
                             help='merge open Pull Requests observed in scan')
     prs_parser.add_argument('--merge-pr', dest='merge_pr', default=None, metavar='TARGET',
                             help='merge a specific Pull Request (PR number, repo#number, or full GitHub PR URL)')
-    prs_parser.add_argument('--method', choices=['squash', 'merge', 'rebase'], default='squash',
-                            help='merge strategy to apply (default: squash)')
-    prs_parser.add_argument('--bypass', action='store_true', default=True,
-                            help='bypass branch protection rules if permissions allow (default: True)')
+    prs_parser.add_argument('--method', choices=['squash', 'merge', 'rebase'], default=None,
+                            help='deprecated: the protected registry chooses the merge method')
+    prs_parser.add_argument('--bypass', action='store_true', default=False,
+                            help='deprecated: personal publication is refused')
     prs_parser.add_argument('--browser', action='store_true',
-                            help='use Browser CDP instead of gh CLI')
-    merge_parser = sub.add_parser('merge', parents=[common_sub_parser], help='merge a GitHub Pull Request via gh or browser CDP')
+                            help='deprecated: browser publication is refused')
+    merge_parser = sub.add_parser('merge', parents=[common_sub_parser], help='publish a GitHub Pull Request through the independent Validator')
     merge_parser.add_argument('target', nargs='?', default=None,
                              help='PR number, repo#number, or full GitHub PR URL')
     merge_parser.add_argument('--all', dest='merge_all', action='store_true',
                              help='merge all open PRs in active repositories')
-    merge_parser.add_argument('--method', choices=['squash', 'merge', 'rebase'], default='squash',
-                             help='merge strategy (default: squash)')
-    merge_parser.add_argument('--bypass', action='store_true', default=True,
-                             help='bypass rules if permissions allow')
+    merge_parser.add_argument('--method', choices=['squash', 'merge', 'rebase'], default=None,
+                             help='deprecated: the protected registry chooses the merge method')
+    merge_parser.add_argument('--bypass', action='store_true', default=False,
+                             help='deprecated: personal publication is refused')
     merge_parser.add_argument('--browser', action='store_true',
-                             help='use browser CDP')
+                             help='deprecated: browser publication is refused')
+    merge_parser.add_argument('--ticket', help='explicit native ticket or Planfile ticket binding')
+    prs_parser.add_argument('--ticket', help='explicit binding for --merge-pr')
     mcp_parser = sub.add_parser('mcp', parents=[common_sub_parser], help='run Model Context Protocol (MCP) server over stdio for AI agents')
     mcp_parser.add_argument('--health', action='store_true', help='check and print MCP server transport health and CLI fallback options')
     mcp_parser.add_argument('--diagnose', action='store_true', help='run complete MCP self-diagnostics test suite and exit')
@@ -488,7 +490,7 @@ def main(argv=None):
     watch.add_argument('--interval', type=float, default=5, help='refresh period in seconds (0.2..86400)')
     watch.add_argument('--no-record', action='store_true', help='disable local history recording')
     watch.add_argument('--retention-days', type=int, default=7)
-    tools_parser = sub.add_parser('tools', aliases=['apis'], parents=[common_sub_parser],
+    sub.add_parser('tools', aliases=['apis'], parents=[common_sub_parser],
                                   help='audit and list available ecosystem CLI tools, local APIs, and daemon capabilities')
     sub.add_parser('shell', parents=[common_sub_parser], help='interactive command shell (default in a terminal)')
     run = sub.add_parser('run', parents=[common_sub_parser], help='wrap an agent command with an explicit task description')
@@ -712,6 +714,8 @@ def main(argv=None):
             from . import prs
             target = getattr(args, 'target', None)
             if getattr(args, 'merge_all', False) or (target and target.lower() in ('--all', 'all')):
+                if getattr(args, 'ticket', None):
+                    parser.error('--ticket applies to one PR; bulk publication derives each ticket separately')
                 if output_format != 'json' and sys.stderr.isatty():
                     print('MONAG: merging all open pull requests across active repositories...',
                           file=sys.stderr, flush=True)
@@ -722,18 +726,18 @@ def main(argv=None):
                                 unpushed_only=False,
                                 all_repos=False)
                 results = prs.merge_open_prs(data.get('open_prs', []),
-                                             method=getattr(args, 'method', 'squash'),
-                                             admin_bypass=getattr(args, 'bypass', True),
+                                             method=getattr(args, 'method', None),
+                                             admin_bypass=getattr(args, 'bypass', False),
                                              use_browser=getattr(args, 'browser', False))
                 if output_format == 'json':
                     print(json.dumps({'merged': results}, ensure_ascii=True))
                 else:
                     display_report(prs.merge_result_markdown(results))
-                return 0
+                return 0 if all(item.get('ok') for item in results) else 1
             if not target:
                 parser.error('target PR number or full URL required (or use --all)')
-            res = prs.merge_pull_request(target, method=getattr(args, 'method', 'squash'),
-                                         admin_bypass=getattr(args, 'bypass', True),
+            res = prs.merge_pull_request(target, ticket=getattr(args, 'ticket', None), method=getattr(args, 'method', None),
+                                         admin_bypass=getattr(args, 'bypass', False),
                                          use_browser=getattr(args, 'browser', False))
             if output_format == 'json':
                 print(json.dumps(res, ensure_ascii=True))
@@ -744,9 +748,9 @@ def main(argv=None):
         if args.mode in ('prs', 'pr'):
             from . import prs
             if getattr(args, 'merge_pr', None):
-                res = prs.merge_pull_request(args.merge_pr,
-                                             method=getattr(args, 'method', 'squash'),
-                                             admin_bypass=getattr(args, 'bypass', True),
+                res = prs.merge_pull_request(args.merge_pr, ticket=getattr(args, 'ticket', None),
+                                             method=getattr(args, 'method', None),
+                                             admin_bypass=getattr(args, 'bypass', False),
                                              use_browser=getattr(args, 'browser', False))
                 if output_format == 'json':
                     print(json.dumps(res, ensure_ascii=True))
@@ -755,6 +759,8 @@ def main(argv=None):
                 return 0 if res.get('ok') else 1
 
             if getattr(args, 'merge', False):
+                if getattr(args, 'ticket', None):
+                    parser.error('--ticket applies to --merge-pr, not bulk publication')
                 if output_format != 'json' and sys.stderr.isatty():
                     print('MONAG: auditing and merging open pull requests...', file=sys.stderr, flush=True)
                 data = prs.scan(root, args.depth,
@@ -764,14 +770,14 @@ def main(argv=None):
                                 unpushed_only=False,
                                 all_repos=getattr(args, 'all_repos', False))
                 results = prs.merge_open_prs(data.get('open_prs', []),
-                                             method=getattr(args, 'method', 'squash'),
-                                             admin_bypass=getattr(args, 'bypass', True),
+                                             method=getattr(args, 'method', None),
+                                             admin_bypass=getattr(args, 'bypass', False),
                                              use_browser=getattr(args, 'browser', False))
                 if output_format == 'json':
                     print(json.dumps({'merged': results}, ensure_ascii=True))
                 else:
                     display_report(prs.merge_result_markdown(results))
-                return 0
+                return 0 if all(item.get('ok') for item in results) else 1
 
             if output_format != 'json' and sys.stderr.isatty():
                 print('MONAG: auditing pull requests and local branches via gh; this can take a while.',
