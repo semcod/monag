@@ -165,7 +165,7 @@ def check_agent_collision(
                 continue
             try:
                 p = Path(d).resolve()
-                if p == repo_path or repo_path in p.parents or p in repo_path.parents:
+                if p == repo_path or repo_path in p.parents:
                     matching_dirs.append(str(p))
             except Exception:
                 continue

@@ -108,10 +108,14 @@ def audit_worktrees(repo: Path) -> list[dict]:
         exists = wt_path.is_dir()
         branch = wt.get('branch', '')
         is_merged = False
+        dirty = False
         if branch and not is_primary:
             is_merged = is_branch_merged(repo, branch)
+        if exists and not is_primary:
+            from . import worktrees
+            dirty, _ = worktrees.is_worktree_dirty(wt_path)
 
-        is_stale = (not exists) or wt.get('prunable', False) or (is_merged and not is_primary)
+        is_stale = ((not exists) or wt.get('prunable', False) or (is_merged and not is_primary)) and not dirty
 
         audited.append({
             'repo': repo.name,
@@ -122,6 +126,8 @@ def audit_worktrees(repo: Path) -> list[dict]:
             'is_primary': is_primary,
             'exists': exists,
             'is_merged': is_merged,
+            'dirty': dirty,
+            'locked': wt.get('locked', False),
             'prunable': wt.get('prunable', False),
             'stale': is_stale,
         })
@@ -157,9 +163,22 @@ def prune_and_remediate(repo: Path, stale_worktrees: list[dict], merged_branches
     """Remediate a repo by safely pruning worktrees and deleting merged ticket branches conforming to Wellmanifest v5."""
     from . import worktrees
     res = worktrees.prune_worktrees_safe(repo, dry_run=False)
+    deleted = list(res['deleted_branches'])
+    active_branches = {w.get('branch') for w in parse_worktrees_porcelain(repo) if w.get('branch')}
+    leases = worktrees.get_repo_leases(repo)
+    for b in merged_branches:
+        if b in deleted or b in active_branches:
+            continue
+        lease = leases.get(b)
+        if lease and str(lease.get('status', '')).lower() == 'active':
+            continue
+        if is_branch_merged(repo, b):
+            _, err = command(['git', '-C', str(repo), 'branch', '-d', b])
+            if not err:
+                deleted.append(b)
     return {
         'worktrees_pruned': res['pruned'],
-        'branches_deleted': [{'repo': repo.name, 'branch': b} for b in res['deleted_branches']],
+        'branches_deleted': [{'repo': repo.name, 'branch': b} for b in deleted],
         'protected': res['protected'],
     }
 

@@ -356,6 +356,19 @@ def test_agent_process_collision_and_dirty_worktrees(tmp_path, monkeypatch):
     details = triage.synthesize_triage_action(cand, triage.CATEGORY_STRATEGIC_ARCHITECTURE, "target_repo", info)
     assert any("koru (PID 99999)" in g for g in details["guardrails"])
 
+    # Parent workspace process (above repo_dir) must not cause false-positive collision on child repo
+    parent_processes = [
+        {
+            "pid": 88888,
+            "kind": "agy",
+            "cwd": str(tmp_path),
+            "working_directories": [str(tmp_path)],
+        }
+    ]
+    parent_info = triage.check_agent_collision(repo_dir, fleet_processes=parent_processes)
+    assert not parent_info["has_collision"]
+    assert 88888 not in parent_info["active_agent_pids"]
+
 
 def test_classify_candidate_extended_classes():
     """Verify categorization of operator/IDE alerts and fleet health diagnostics."""

@@ -165,11 +165,14 @@ def collect_reflex_patterns(root: Path, state_dir: Path | None = None,
     for c in candidate_dirs:
         if not c.is_dir():
             continue
+        for child in c.glob('*/.planfile/events'):
+            if child.is_dir():
+                sources.append(child)
         for child in c.glob('*/.subactor/receipts'):
             if child.is_dir():
                 sources.append(child)
-        for child in c.glob('*/.subactor/sessions'):
-            if child.is_dir():
+        for child in c.glob('*/.subactor/sessions/*.jsonl'):
+            if child.is_file():
                 sources.append(child)
 
     if not sources:
