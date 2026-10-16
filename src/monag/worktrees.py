@@ -272,6 +272,14 @@ def prune_worktrees_safe(
 
         # If it's a dead worktree reference
         if not audit["exists"]:
+            if not dry_run:
+                if wt.get("locked"):
+                    command(["git", "-C", str(repo), "worktree", "unlock", str(wt_path)])
+                command(["git", "-C", str(repo), "worktree", "prune"])
+                branch = wt.get("branch", "")
+                if branch and branch.startswith(("ticket/", "ticket-")) and is_branch_merged(repo, branch):
+                    command(["git", "-C", str(repo), "branch", "-d", branch])
+                    result["deleted_branches"].append(branch)
             result["pruned"].append({
                 "path": str(wt_path),
                 "branch": wt.get("branch", ""),
@@ -299,7 +307,9 @@ def prune_worktrees_safe(
             })
             continue
 
-        # Execute safe removal
+        # Execute safe removal (unlock git worktree metadata if locked after passing lease/process/dirty/merge guards)
+        if wt.get("locked"):
+            command(["git", "-C", str(repo), "worktree", "unlock", str(wt_path)])
         out, err = command(["git", "-C", str(repo), "worktree", "remove", str(wt_path)])
         if wt_path.exists():
             # If standard worktree remove didn't clear directory, check again and remove

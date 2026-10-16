@@ -77,6 +77,21 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(len([w for w in wts_after if not w.get('is_primary')]), 0)
         self.assertEqual(len(audit_merged_branches(repo)), 0)
 
+        # Verify dirty worktree at main is not marked stale, while standalone merged branch is remediated
+        dirty_wt = repo / '.worktrees' / 'ticket-102'
+        self.git(repo, 'worktree', 'add', '-b', 'ticket/102-dirty', str(dirty_wt), 'main')
+        (dirty_wt / 'draft.txt').write_text('wip\n')
+        self.git(repo, 'branch', 'ticket/103-merged-standalone', 'main')
+
+        diag2 = diagnose(repo, fix=False)
+        self.assertEqual(diag2['stale_worktrees_detected'], 0)
+        self.assertEqual(diag2['merged_branches_detected'], 1)
+
+        diag2_fixed = diagnose(repo, fix=True)
+        self.assertEqual(diag2_fixed['remediated_worktrees'], 0)
+        self.assertEqual(diag2_fixed['remediated_branches'], 1)
+        self.assertTrue(dirty_wt.exists())
+
     def test_discover_broken_gitdir_handling(self):
         from monag.monitor import discover
         # Create a broken linked worktree directory pointing to non-existent gitdir

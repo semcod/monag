@@ -158,6 +158,19 @@ class TestWorktreesSafePrune(unittest.TestCase):
         self.assertFalse(wt.exists())
         self.assertIn("ticket/105-clean", res["deleted_branches"])
 
+    def test_locked_clean_merged_inactive_worktree_is_unlocked_and_pruned(self):
+        repo = self.make_repo("service-locked-clean")
+        wt = self.make_worktree(repo, "ticket-105b", "ticket/105b-locked")
+        self.git(repo, "merge", "ticket/105b-locked")
+        self.git(repo, "worktree", "lock", "--reason", "stale lock after merge", str(wt))
+
+        res = prune_worktrees_safe(repo, dry_run=False, active_cwds=set())
+        self.assertEqual(len(res["pruned"]), 1)
+        self.assertFalse(wt.exists())
+        self.assertIn("ticket/105b-locked", res["deleted_branches"])
+        porcelain = self.git(repo, "worktree", "list", "--porcelain")
+        self.assertNotIn("ticket-105b", porcelain)
+
     @patch("monag.worktrees.audit_active_process_cwds", return_value=(set(), {}))
     def test_fleet_worktree_audit_and_markdown(self, _mock_proc):
         repo = self.make_repo("service-fleet")
