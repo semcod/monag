@@ -102,6 +102,15 @@ def is_worktree_dirty(wt_path: Path) -> tuple[bool, str]:
     return False, ""
 
 
+def _is_ancestor_commit(repo: Path, branch: str, target: str) -> bool:
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "merge-base", "--is-ancestor", branch, target],
+        capture_output=True,
+        text=True,
+    )
+    return proc.returncode == 0
+
+
 def is_branch_merged(repo: Path, branch: str) -> bool:
     """Check if branch is merged to main, master, or HEAD."""
     if not branch:
@@ -113,12 +122,7 @@ def is_branch_merged(repo: Path, branch: str) -> bool:
         if not chk.strip():
             continue
         # Check merge-base --is-ancestor branch target
-        proc = subprocess.run(
-            ["git", "-C", str(repo), "merge-base", "--is-ancestor", branch, t],
-            capture_output=True,
-            text=True,
-        )
-        if proc.returncode == 0:
+        if _is_ancestor_commit(repo, branch, t):
             return True
 
     return False
@@ -357,7 +361,7 @@ def prune_fleet_worktrees_safe(
 ) -> dict[str, Any]:
     """Safely audit and prune worktrees across all repositories in root."""
     from . import doctor
-    repos = doctor.find_git_repositories(root)
+    repos = doctor.find_git_repositories(root, max_depth=depth)
     if target_repo:
         repos = [r for r in repos if r.name == target_repo or f"{r.parent.name}/{r.name}" == target_repo]
 
@@ -398,7 +402,7 @@ def audit_fleet_worktrees(
 ) -> dict[str, Any]:
     """Audit worktree safety across all repositories under root."""
     from . import doctor
-    repos = doctor.find_git_repositories(root)
+    repos = doctor.find_git_repositories(root, max_depth=depth)
     if target_repo:
         repos = [r for r in repos if r.name == target_repo or f"{r.parent.name}/{r.name}" == target_repo]
 

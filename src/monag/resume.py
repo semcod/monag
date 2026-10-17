@@ -95,14 +95,22 @@ def planfile(path):
             locations = data['tickets']
         except (OSError, ValueError, yaml.YAMLError):
             errors.append(f'{locator}: invalid history ownership index')
+    from functools import lru_cache
+
+    @lru_cache(maxsize=128)
+    def _load_planfile_yaml_cached(path_str: str, mtime_ns: int):
+        del mtime_ns
+        return yaml.load(Path(path_str).read_text(), Loader=getattr(yaml, 'CSafeLoader', yaml.SafeLoader))
+
     for file in files:
         if not file.is_file():
             continue
         sources.append(str(file))
         try:
-            if file.stat().st_size > 5_000_000:
+            st = file.stat()
+            if st.st_size > 5_000_000:
                 raise ValueError('file exceeds 5 MB read limit')
-            data = yaml.load(file.read_text(), Loader=getattr(yaml, 'CSafeLoader', yaml.SafeLoader))
+            data = _load_planfile_yaml_cached(str(file), st.st_mtime_ns)
             if not isinstance(data, dict):
                 raise ValueError('expected a mapping')
             containers = [data]

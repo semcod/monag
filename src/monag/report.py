@@ -349,6 +349,7 @@ _SECTION_TITLES = {
 
 def footer_management_markdown(recipients=None, port=8090, root=None):
     """Generate management section explaining how to change schedule/email via CLI or local URLs."""
+    _ = root
     to_desc = f" do: `{', '.join(recipients)}`" if recipients else ""
     panel_url = f"http://127.0.0.1:{port}"
     lines = [
@@ -580,7 +581,10 @@ def run_daemon(root, emails=None, interval=3600, depth=2, hours=24,
             raise ValueError('No recipient email specified or detected')
 
     if smtp_cfg is None:
-        smtp_cfg = _smtp_config()
+        smtp_cfg = _smtp_config(
+            args_host=None, args_port=None, args_user=None,
+            args_pass=None, args_tls=None, args_from=None,
+        )
 
     iterations = 0
     results = []

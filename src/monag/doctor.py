@@ -202,18 +202,24 @@ def audit_agent_storage_health(home: Path | None = None) -> dict:
     if not agy_root.is_dir():
         return {'status': 'NOT_PRESENT', 'corrupted_sessions': [], 'detected_panics': []}
 
+    def _quick_check_db(db_path: Path) -> dict | None:
+        try:
+            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=1.0)
+            res = conn.execute("PRAGMA quick_check;").fetchone()
+            conn.close()
+            if not res or res[0] != 'ok':
+                return {'session_id': db_path.stem, 'path': str(db_path), 'error': res[0] if res else 'failed'}
+        except Exception as e:
+            return {'session_id': db_path.stem, 'path': str(db_path), 'error': str(e)}
+        return None
+
     corrupt = []
     conv_dir = agy_root / 'conversations'
     if conv_dir.is_dir():
         for db in sorted(conv_dir.glob('*.db')):
-            try:
-                conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=1.0)
-                res = conn.execute("PRAGMA quick_check;").fetchone()
-                conn.close()
-                if not res or res[0] != 'ok':
-                    corrupt.append({'session_id': db.stem, 'path': str(db), 'error': res[0] if res else 'failed'})
-            except Exception as e:
-                corrupt.append({'session_id': db.stem, 'path': str(db), 'error': str(e)})
+            item = _quick_check_db(db)
+            if item is not None:
+                corrupt.append(item)
 
     panics = []
     log_dir = agy_root / 'log'

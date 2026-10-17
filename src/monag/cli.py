@@ -1183,6 +1183,10 @@ def main(argv=None):
                     else:
                         display_report(advise.markdown(data))
 
+            def _execute_dsl_query(query, target_root, depth=2, registry=None):
+                from . import dsl_llm
+                return dsl_llm.execute(query, target_root, depth=depth, registry=registry)
+
             print(shell_help(), flush=True)
             show_report('refresh')
             while True:
@@ -1201,11 +1205,10 @@ def main(argv=None):
                     print(shell_help(), flush=True)
                     continue
                 if command_name == 'query':
-                    from . import dsl_llm
                     parts = command_line.split(maxsplit=1)
                     q = parts[1].strip() if len(parts) > 1 else ''
                     if q:
-                        res = dsl_llm.execute(q, root, depth=args.depth, registry=registry)
+                        res = _execute_dsl_query(q, root, depth=args.depth, registry=registry)
                         if res.get('status') == 'ok':
                             display_report(res['markdown'])
                         else:
@@ -1214,8 +1217,7 @@ def main(argv=None):
                         print("Wpisz zapytanie po 'query', np.: query pokaż otwarte PR", flush=True)
                     continue
                 if command_name not in SHELL_COMMANDS:
-                    from . import dsl_llm
-                    res = dsl_llm.execute(command_line, root, depth=args.depth, registry=registry)
+                    res = _execute_dsl_query(command_line, root, depth=args.depth, registry=registry)
                     if res.get('status') == 'ok' and res.get('markdown'):
                         display_report(res['markdown'])
                         continue

@@ -1,0 +1,116 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-121",
+  "summary": "Remediate PERF-AUDIT findings and adopt Wellmanifest standards",
+  "workstream": "application",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-121/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    ".governance/standard-adoption.json",
+    "src/monag/cli.py",
+    "src/monag/doctor.py",
+    "src/monag/history.py",
+    "src/monag/autodiagnosis.py",
+    "src/monag/resume.py",
+    "src/monag/summary.py",
+    "src/monag/triage.py",
+    "src/monag/worktrees.py",
+    "src/monag/ecosystem.py",
+    "src/monag/prs.py",
+    "src/monag/report.py",
+    "src/monag/panel.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "0c1d153661902b5c976d1ffbebde943e71912702",
+    "targetBranch": "main",
+    "complexity": "L",
+    "estimatedMinutes": 45,
+    "outcome": "Remediate all 31 PERF-AUDIT findings across 12 monag modules and adopt Wellmanifest baseline standard packs in .governance/standard-adoption.json.",
+    "nonGoals": [
+      "No new external runtime dependencies.",
+      "No breaking CLI changes."
+    ],
+    "runtimeDependencies": [],
+    "budgets": {
+      "maxAffectedComponents": 1,
+      "maxImplementationFiles": 15,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Hoist SQLite execute calls and extract helper functions for subprocesses and mtime-keyed cached YAML parsing outside loops, wire all optional parameters, and record Wellmanifest standard pack adoption.",
+      "components": [
+        {
+          "name": "monag",
+          "paths": [
+            "src/monag/**"
+          ]
+        }
+      ],
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "responsibilityChanges": false,
+      "rollback": "Revert the ticket-121 commit to restore previous module implementations and standard-adoption.json.",
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      }
+    },
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "pytest -q"
+        ],
+        "evidence": "PERF-AUDIT-SQLITE-001 findings resolved."
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "pytest -q"
+        ],
+        "evidence": "PERF-AUDIT-PARSE-001 findings resolved."
+      },
+      {
+        "criterion": "AC-03",
+        "commands": [
+          "pytest -q"
+        ],
+        "evidence": "PERF-AUDIT-SUBPROC-001 findings resolved."
+      },
+      {
+        "criterion": "AC-04",
+        "commands": [
+          "pytest -q"
+        ],
+        "evidence": "PERF-AUDIT-KWARG-001 findings resolved."
+      },
+      {
+        "criterion": "AC-05",
+        "commands": [
+          "python3 .governance/standard_pack_check.py --root .",
+          "pytest -q",
+          "./project/governance-check.sh"
+        ],
+        "evidence": "0 PERF-AUDIT findings, standard_pack_check findings=0, pytest passes, and GOV-PASS."
+      }
+    ]
+  }
+}

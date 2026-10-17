@@ -740,6 +740,7 @@ class BrowserCDPMerger:
         self._send_cmd(path, 'Page.navigate', {'url': url})
 
     def merge_pr_page(self, pr_url: str, method=None, admin_bypass=False) -> Dict[str, Any]:
+        _ = (pr_url, method, admin_bypass)
         return _personal_publication_refused()
 
 
@@ -749,6 +750,7 @@ def _personal_publication_refused():
 
 
 def merge_via_browser_cdp(pr_url: str, method=None, admin_bypass=False, cdp_port=9222):
+    _ = (pr_url, method, admin_bypass, cdp_port)
     return _personal_publication_refused()
 
 
@@ -823,7 +825,7 @@ def merge_pull_request(pr_url_or_number: Any, repo: Optional[str] = None, method
     Validator environment and the SHA256 of its published adapter. No failure
     authorizes personal GitHub mutation or a browser transport.
     """
-    if admin_bypass or use_browser or method is not None:
+    if admin_bypass or use_browser or method is not None or cdp_port != 9222:
         return _personal_publication_refused()
     target = str(pr_url_or_number).strip()
     match = re.fullmatch(r'https?://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/([1-9][0-9]*)/?', target)

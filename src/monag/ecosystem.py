@@ -230,6 +230,20 @@ def _probe_http_title(port: int, host: str = "127.0.0.1", default_label: str | N
     return default_label or f"HTTP Service (port {port})", url
 
 
+def _check_systemd_unit_state(unit: str) -> str:
+    try:
+        proc = subprocess.run(
+            ["systemctl", "--user", "is-active", unit],
+            capture_output=True,
+            text=True,
+            timeout=0.8,
+            check=False,
+        )
+        return proc.stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        return ""
+
+
 def audit_local_services() -> list[ServiceCapability]:
     """Audit active local daemons, HTTP APIs, and IPC sockets."""
     services: list[ServiceCapability] = []
@@ -242,9 +256,9 @@ def audit_local_services() -> list[ServiceCapability]:
         (8090, "Monag Web Panel"),
     ]
     for port, fallback_label in api_ports:
-        is_listening = _check_tcp_port(port)
+        is_listening = _check_tcp_port(port, host="127.0.0.1")
         if is_listening:
-            label, endpoint = _probe_http_title(port, default_label=fallback_label)
+            label, endpoint = _probe_http_title(port, host="127.0.0.1", default_label=fallback_label)
             services.append(
                 ServiceCapability(
                     name=label,
@@ -267,27 +281,17 @@ def audit_local_services() -> list[ServiceCapability]:
     ]
 
     for unit, label in candidate_services:
-        try:
-            proc = subprocess.run(
-                ["systemctl", "--user", "is-active", unit],
-                capture_output=True,
-                text=True,
-                timeout=0.8,
-                check=False,
-            )
-            state = proc.stdout.strip()
-            if state in ("active", "activating"):
-                services.append(
-                    ServiceCapability(
-                        name=label,
-                        kind="systemd",
-                        status=state,
-                        endpoint=unit,
-                        description=f"Systemd user unit '{unit}' is {state}",
-                    )
+        state = _check_systemd_unit_state(unit)
+        if state in ("active", "activating"):
+            services.append(
+                ServiceCapability(
+                    name=label,
+                    kind="systemd",
+                    status=state,
+                    endpoint=unit,
+                    description=f"Systemd user unit '{unit}' is {state}",
                 )
-        except (subprocess.SubprocessError, OSError):
-            pass
+            )
 
     # 3. Check Unix domain sockets in /run/user/<uid>
     uid = os.getuid()
