@@ -205,7 +205,8 @@ def coverage(state_dir, hours=24, now=None):
         completed_tasks = 0
         failed_tasks = 0
         running_tasks = 0
-        for (payload_str,) in db.execute("SELECT payload FROM events WHERE kind='task_observed' AND observed >= ?", (window_start,)).fetchall():
+        task_rows = db.execute("SELECT payload FROM events WHERE kind='task_observed' AND observed >= ?", (window_start,)).fetchall()
+        for (payload_str,) in task_rows:
             try:
                 p = json.loads(payload_str)
                 task_obj = p.get('task') if isinstance(p.get('task'), dict) else p
@@ -282,7 +283,8 @@ def read(state_dir, limit=50, kind=None, search=None, hours=24, now=None, exclud
             values.append(search)
         query += ' ORDER BY id DESC LIMIT ?'
         values.append(limit)
+        rows = db.execute(query, values).fetchall()
         return [dict(json.loads(payload), observed=when, kind=event_kind)
-                for when, event_kind, payload in db.execute(query, values)]
+                for when, event_kind, payload in rows]
     finally:
         db.close()

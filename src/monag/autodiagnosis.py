@@ -817,6 +817,13 @@ def dispatch_tickets_to_planfile(tickets: List[Dict[str, Any]], root: Path,
         target = t.get("target_repo", "")
         grouped.setdefault(target, []).append(t)
 
+    from functools import lru_cache
+
+    @lru_cache(maxsize=64)
+    def _load_sprint_yaml_cached(path_str: str, mtime_ns: int) -> Any:
+        del mtime_ns
+        return yaml.safe_load(Path(path_str).read_text(encoding="utf-8"))
+
     for target, repo_tickets in grouped.items():
         # Find directory for target
         target_path: Optional[Path] = None
@@ -838,9 +845,9 @@ def dispatch_tickets_to_planfile(tickets: List[Dict[str, Any]], root: Path,
         existing_data: Dict[str, Any] = {}
         if sprint_file.is_file():
             try:
-                loaded = yaml.safe_load(sprint_file.read_text())
+                loaded = _load_sprint_yaml_cached(str(sprint_file), sprint_file.stat().st_mtime_ns)
                 if isinstance(loaded, dict):
-                    existing_data = loaded
+                    existing_data = dict(loaded)
             except Exception:
                 pass
 

@@ -951,6 +951,7 @@ ROUTES = {'/api/snapshot.json': lambda s: s.snapshot,
 
 
 def render_report_config_page(cfg, updated=False, server_url=''):
+    base_url = (server_url or '').rstrip('/')
     notice = ''
     if updated:
         notice = f'<div style="background:#163820;border:1px solid #2d7a3a;padding:.6rem 1rem;border-radius:4px;margin-bottom:1rem;color:#7ee787">✓ Zaktualizowano konfigurację raportu! Interwał: <strong>{cfg.get("interval")}s</strong>, Odbiorcy: <strong>{", ".join(cfg.get("recipients", []))}</strong></div>'
@@ -976,7 +977,7 @@ a.back{{color:#8a9bb0;font-size:.85rem;text-decoration:none}}
 a.back:hover{{color:#d6e0ea}}
 </style></head>
 <body>
-<a class="back" href="/">&larr; Wróć do panelu monag</a>
+<a class="back" href="{base_url}/">&larr; Wróć do panelu monag</a>
 <h1>Konfiguracja Raportu Cyklicznego</h1>
 <div class="sub">Zarządzaj częstotliwością, odbiorcami i statusem wysyłki.</div>
 {notice}
@@ -984,16 +985,16 @@ a.back:hover{{color:#d6e0ea}}
 <div class="card">
   <h3>Częstotliwość wysyłki (1-click)</h3>
   <p style="font-size:.85rem;color:#8a9bb0">Wybierz jak często monag ma wysyłać raport na e-mail:</p>
-  <a class="btn {'active' if interval == 1800 else ''}" href="/report/config?interval=1800">⏱ Co 30 minut</a>
-  <a class="btn {'active' if interval == 3600 else ''}" href="/report/config?interval=3600">⏱ Co 1 godzinę</a>
-  <a class="btn {'active' if interval == 7200 else ''}" href="/report/config?interval=7200">⏱ Co 2 godziny</a>
-  <a class="btn {'active' if interval == 14400 else ''}" href="/report/config?interval=14400">⏱ Co 4 godziny</a>
-  <a class="btn {'active' if interval == 86400 else ''}" href="/report/config?interval=86400">⏱ Raz na dobę (24h)</a>
+  <a class="btn {'active' if interval == 1800 else ''}" href="{base_url}/report/config?interval=1800">⏱ Co 30 minut</a>
+  <a class="btn {'active' if interval == 3600 else ''}" href="{base_url}/report/config?interval=3600">⏱ Co 1 godzinę</a>
+  <a class="btn {'active' if interval == 7200 else ''}" href="{base_url}/report/config?interval=7200">⏱ Co 2 godziny</a>
+  <a class="btn {'active' if interval == 14400 else ''}" href="{base_url}/report/config?interval=14400">⏱ Co 4 godziny</a>
+  <a class="btn {'active' if interval == 86400 else ''}" href="{base_url}/report/config?interval=86400">⏱ Raz na dobę (24h)</a>
 </div>
 
 <div class="card">
   <h3>Odbiorca i status</h3>
-  <form method="GET" action="/report/config">
+  <form method="GET" action="{base_url}/report/config">
     <label>Adres e-mail odbiorcy:</label>
     <input type="text" name="email" value="{recipients}" placeholder="np. dev@domain.com" />
     <label>Status wysyłki:</label>

@@ -15,7 +15,17 @@ from typing import Any, Dict, List, Optional
 SCHEMA = "monag.summary/v1"
 
 
-def gather_planfile_daily(root: Path, target_date: Optional[date] = None) -> Dict[str, Any]:
+from functools import lru_cache
+
+
+@lru_cache(maxsize=64)
+def _load_yaml_cached(path_str: str, mtime_ns: int) -> Any:
+    del mtime_ns
+    import yaml
+    return yaml.safe_load(Path(path_str).read_text(encoding="utf-8"))
+
+
+def gather_planfile_daily(root: Path, target_date: Optional[date] = None, depth: int = 2) -> Dict[str, Any]:
     """Scan Planfile sprints for tasks completed on target_date and currently queued tasks."""
     target_date = target_date or date.today()
     today_str = target_date.strftime("%Y-%m-%d")
@@ -26,8 +36,10 @@ def gather_planfile_daily(root: Path, target_date: Optional[date] = None) -> Dic
     sprint_dirs: List[Path] = []
     if (root / ".planfile" / "sprints").is_dir():
         sprint_dirs.append(root / ".planfile" / "sprints")
-    sprint_dirs.extend(root.glob("*/.planfile/sprints"))
-    sprint_dirs.extend(root.glob("*/*/.planfile/sprints"))
+    if depth >= 1:
+        sprint_dirs.extend(root.glob("*/.planfile/sprints"))
+    if depth >= 2:
+        sprint_dirs.extend(root.glob("*/*/.planfile/sprints"))
     sprint_dirs = sorted(set(sprint_dirs))
 
     total_est_minutes = 0
@@ -58,8 +70,7 @@ def gather_planfile_daily(root: Path, target_date: Optional[date] = None) -> Dic
                 pass
         elif hist_yaml.is_file():
             try:
-                import yaml
-                data = yaml.safe_load(hist_yaml.read_text(encoding="utf-8"))
+                data = _load_yaml_cached(str(hist_yaml), hist_yaml.stat().st_mtime_ns)
                 if isinstance(data, dict):
                     tasks = data.get("tasks", [])
                     for t in tasks:
@@ -112,8 +123,7 @@ def gather_planfile_daily(root: Path, target_date: Optional[date] = None) -> Dic
                 pass
         elif curr_yaml.is_file():
             try:
-                import yaml
-                data = yaml.safe_load(curr_yaml.read_text(encoding="utf-8"))
+                data = _load_yaml_cached(str(curr_yaml), curr_yaml.stat().st_mtime_ns)
                 if isinstance(data, dict):
                     tasks = data.get("tasks", [])
                     for t in tasks:
@@ -221,7 +231,7 @@ def gather_summary(root: Path, hours: int = 24, github: bool = True,
                    target_date: Optional[date] = None, depth: int = 2) -> Dict[str, Any]:
     """Compile comprehensive daily summary spanning Planfile, Koru, and GitHub PRs."""
     started = datetime.now(timezone.utc)
-    planfile_data = gather_planfile_daily(root, target_date=target_date)
+    planfile_data = gather_planfile_daily(root, target_date=target_date, depth=depth)
 
     pr_summary: Dict[str, Any] = {
         "open_prs_count": 0,
@@ -236,6 +246,8 @@ def gather_summary(root: Path, hours: int = 24, github: bool = True,
     return {
         "schema": SCHEMA,
         "root": str(root),
+        "hours": hours,
+        "depth": depth,
         "timestamp": started.isoformat(),
         "date": planfile_data["date"],
         "planfile": {

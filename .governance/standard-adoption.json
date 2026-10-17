@@ -1,13 +1,279 @@
 {
   "schema": "wellmanifest.standard-adoption/v1",
-  "mode": "audit",
+  "mode": "enforce",
   "profile": "baseline",
-  "repositoryRole": "unclassified",
+  "repositoryRole": "standalone-application",
   "updates": {
     "enabled": true,
     "trigger": "pre-commit",
     "action": "prepare-and-abort",
     "executor": "goal"
   },
-  "adoptions": []
+  "adoptions": [
+    {
+      "id": "wellmanifest/git-lifecycle",
+      "version": "0.20.32",
+      "revision": "525a0d285c9054f079f0aa22f5c41931ce90afb8",
+      "model": "protected-conformance",
+      "level": "S4",
+      "artifacts": [
+        {
+          "target": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        }
+      ],
+      "evidence": [
+        {
+          "level": "S0",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S1",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S2",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S3",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S4",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        }
+      ]
+    },
+    {
+      "id": "wellmanifest/logs",
+      "version": "0.20.32",
+      "revision": "525a0d285c9054f079f0aa22f5c41931ce90afb8",
+      "model": "protected-conformance",
+      "level": "S3",
+      "artifacts": [
+        {
+          "target": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        }
+      ],
+      "evidence": [
+        {
+          "level": "S0",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S1",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S2",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S3",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        }
+      ]
+    },
+    {
+      "id": "wellmanifest/merge",
+      "version": "0.20.32",
+      "revision": "525a0d285c9054f079f0aa22f5c41931ce90afb8",
+      "model": "protected-conformance",
+      "level": "S4",
+      "artifacts": [
+        {
+          "target": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        }
+      ],
+      "evidence": [
+        {
+          "level": "S0",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S1",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S2",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S3",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S4",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        }
+      ]
+    },
+    {
+      "id": "wellmanifest/new-project",
+      "version": "0.20.32",
+      "revision": "525a0d285c9054f079f0aa22f5c41931ce90afb8",
+      "model": "protected-conformance",
+      "level": "S4",
+      "artifacts": [
+        {
+          "target": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        }
+      ],
+      "evidence": [
+        {
+          "level": "S0",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S1",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S2",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S3",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S4",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        }
+      ]
+    },
+    {
+      "id": "wellmanifest/ticket-lifecycle",
+      "version": "0.20.32",
+      "revision": "525a0d285c9054f079f0aa22f5c41931ce90afb8",
+      "model": "protected-conformance",
+      "level": "S3",
+      "artifacts": [
+        {
+          "target": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        }
+      ],
+      "evidence": [
+        {
+          "level": "S0",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S1",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S2",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S3",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        }
+      ]
+    },
+    {
+      "id": "wellmanifest/validation-attestation",
+      "version": "0.20.32",
+      "revision": "525a0d285c9054f079f0aa22f5c41931ce90afb8",
+      "model": "protected-conformance",
+      "level": "S4",
+      "artifacts": [
+        {
+          "target": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        }
+      ],
+      "evidence": [
+        {
+          "level": "S0",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S1",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S2",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S3",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S4",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        }
+      ]
+    },
+    {
+      "id": "wellmanifest/worktrees",
+      "version": "0.20.32",
+      "revision": "525a0d285c9054f079f0aa22f5c41931ce90afb8",
+      "model": "protected-conformance",
+      "level": "S3",
+      "artifacts": [
+        {
+          "target": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        }
+      ],
+      "evidence": [
+        {
+          "level": "S0",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S1",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S2",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        },
+        {
+          "level": "S3",
+          "uri": ".governance/manifest.json",
+          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+        }
+      ]
+    }
+  ]
 }

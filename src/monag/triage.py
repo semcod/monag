@@ -183,17 +183,20 @@ def check_agent_collision(
             active_agent_descriptions.append(f"{kind} (PID {pid}) in {Path(matching_dirs[0]).name}")
 
     # 2. Audit dirty worktrees in repository
+    def _is_worktree_dirty(wt_path: Path) -> bool:
+        status_proc = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(wt_path), capture_output=True, text=True, timeout=2,
+        )
+        return status_proc.returncode == 0 and bool(status_proc.stdout.strip())
+
     dirty_worktrees: List[str] = []
     worktree_dir = repo_path / ".worktrees"
     if worktree_dir.is_dir():
         try:
             for wt in worktree_dir.iterdir():
                 if wt.is_dir() and (wt / ".git").exists():
-                    status_proc = subprocess.run(
-                        ["git", "status", "--porcelain"],
-                        cwd=str(wt), capture_output=True, text=True, timeout=2,
-                    )
-                    if status_proc.returncode == 0 and status_proc.stdout.strip():
+                    if _is_worktree_dirty(wt):
                         dirty_worktrees.append(wt.name)
         except Exception:
             pass
@@ -424,42 +427,49 @@ def run_holistic_triage(
     # 2. Inspect each repo for active checkouts, unpushed commits, active processes and leases
     collisions_by_repo: Dict[str, Dict[str, Any]] = {}
 
+    def _repo_ahead_count(repo_path: Path) -> int:
+        proc = subprocess.run(
+            ["git", "rev-list", "--count", "@{u}..HEAD"],
+            cwd=str(repo_path),
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if proc.returncode == 0 and proc.stdout.strip().isdigit():
+            return int(proc.stdout.strip())
+        return 0
+
+    def _repo_worktree_list(repo_path: Path) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=str(repo_path),
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+
     for repo_name, repo_path in discovered_repos:
         collision_info = check_agent_collision(repo_path, fleet_processes=active_fleet)
         collisions_by_repo[repo_name] = collision_info
 
         # Check for unpushed commits / ahead of origin
         try:
-            proc = subprocess.run(
-                ["git", "rev-list", "--count", "@{u}..HEAD"],
-                cwd=str(repo_path),
-                capture_output=True,
-                text=True,
-                timeout=3,
-            )
-            if proc.returncode == 0 and proc.stdout.strip().isdigit():
-                ahead = int(proc.stdout.strip())
-                if ahead > 0:
-                    all_raw_candidates.append({
-                        "origin": "prs-ahead-commits",
-                        "repo": repo_name,
-                        "path": str(repo_path),
-                        "title": f"{ahead} commit(s) ahead of local upstream ref; remote state unverified",
-                        "priority": "high",
-                        "ahead_count": ahead,
-                    })
+            ahead = _repo_ahead_count(repo_path)
+            if ahead > 0:
+                all_raw_candidates.append({
+                    "origin": "prs-ahead-commits",
+                    "repo": repo_name,
+                    "path": str(repo_path),
+                    "title": f"{ahead} commit(s) ahead of local upstream ref; remote state unverified",
+                    "priority": "high",
+                    "ahead_count": ahead,
+                })
         except Exception as error:
             errors.append(f"{repo_path}: upstream comparison: {type(error).__name__}")
 
         # Check for worktrees
         try:
-            wt_proc = subprocess.run(
-                ["git", "worktree", "list", "--porcelain"],
-                cwd=str(repo_path),
-                capture_output=True,
-                text=True,
-                timeout=3,
-            )
+            wt_proc = _repo_worktree_list(repo_path)
             if wt_proc.returncode == 0:
                 lines = wt_proc.stdout.splitlines()
                 wt_paths = [line.split(" ", 1)[1] for line in lines if line.startswith("worktree ") and line.split(" ", 1)[1] != str(repo_path)]
@@ -540,6 +550,7 @@ def run_holistic_triage(
         "dirty_worktrees_count": dirty_wts,
         "collision_count": sum(1 for c in collisions_by_repo.values() if c.get("has_collision")),
         "lease_blocked_repo_count": sum(1 for c in collisions_by_repo.values() if c.get("blocking")),
+        "scan_issues_requested": bool(scan_issues),
         "issue_scan_performed": False,
         "github_api_requests": 0,
         "evidence_scope": "local Git, process, worktree and lease observations",
@@ -618,6 +629,32 @@ def feed_to_planfile(report: Dict[str, Any], root: Path, sprint: str = "current"
     if not binary:
         return dict(result, success=False, reason="planfile CLI not found on PATH")
     root = root.resolve()
+
+    def _persist_planfile_ticket(project_dir: Path, priority_str: str, label_str: str, description_str: str, title_str: str) -> str:
+        create = subprocess.run(
+            [binary, "ticket", "create", "--priority", priority_str, "--sprint", sprint,
+             "--source", "monag-triage", "--label", label_str,
+             "--description", description_str, "--", title_str],
+            cwd=str(project_dir), capture_output=True, text=True, timeout=30,
+        )
+        if create.returncode:
+            raise ValueError(f"Planfile creation failed (exit {create.returncode})")
+        readback = subprocess.run(
+            [binary, "ticket", "list", "--sprint", "all", "--label", label_str, "--format", "json"],
+            cwd=str(project_dir), capture_output=True, text=True, timeout=30,
+        )
+        if readback.returncode:
+            raise ValueError(f"Planfile readback failed (exit {readback.returncode})")
+        records = json.loads(readback.stdout)
+        if not isinstance(records, list):
+            raise ValueError("Planfile readback must be a ticket list")
+        matches = [row for row in records if isinstance(row, dict)
+                   and label_str in row.get("labels", []) and row.get("id")
+                   and row.get("status") not in {"done", "canceled"}]
+        if len(matches) != 1:
+            raise ValueError("Planfile did not return one persisted dedupe owner")
+        return str(matches[0]["id"])
+
     for task in tasks:
         repository = task["repository"]
         try:
@@ -638,29 +675,8 @@ def feed_to_planfile(report: Dict[str, Any], root: Path, sprint: str = "current"
             description = "\n".join([task["description"], task["command"], *task["guardrails"]])
             description = description.replace("<primary>", "registered primary checkout")
             priority = {"P0": "critical", "P1": "high"}.get(task["priority"], "normal")
-            create = subprocess.run(
-                [binary, "ticket", "create", "--priority", priority, "--sprint", sprint,
-                 "--source", "monag-triage", "--label", label,
-                 "--description", description, "--", task["title"]],
-                cwd=str(project), capture_output=True, text=True, timeout=30,
-            )
-            if create.returncode:
-                raise ValueError(f"Planfile creation failed (exit {create.returncode})")
-            readback = subprocess.run(
-                [binary, "ticket", "list", "--sprint", "all", "--label", label, "--format", "json"],
-                cwd=str(project), capture_output=True, text=True, timeout=30,
-            )
-            if readback.returncode:
-                raise ValueError(f"Planfile readback failed (exit {readback.returncode})")
-            records = json.loads(readback.stdout)
-            if not isinstance(records, list):
-                raise ValueError("Planfile readback must be a ticket list")
-            matches = [row for row in records if isinstance(row, dict)
-                       and label in row.get("labels", []) and row.get("id")
-                       and row.get("status") not in {"done", "canceled"}]
-            if len(matches) != 1:
-                raise ValueError("Planfile did not return one persisted dedupe owner")
-            result["tickets"].append({"repository": repository, "id": matches[0]["id"],
+            persisted_id = _persist_planfile_ticket(project, priority, label, description, task["title"])
+            result["tickets"].append({"repository": repository, "id": persisted_id,
                                       "project": str(project)})
             result["tasks_count"] += 1
         except (OSError, ValueError, subprocess.TimeoutExpired) as error:
