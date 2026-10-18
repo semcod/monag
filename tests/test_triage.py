@@ -392,3 +392,45 @@ def test_classify_candidate_extended_classes():
     assert cat == triage.CATEGORY_FLEET_HEALTH_DIAGNOSTIC
     assert 500 <= score < 650
 
+
+def test_triage_skips_git_subprocesses_for_repos_without_remotes_or_worktrees(tmp_path, monkeypatch):
+    """Repos without .git/refs/remotes, .git/packed-refs, or .git/worktrees skip git subprocesses."""
+    monkeypatch.setattr(triage, "_find_algocode_runner", lambda: None)
+    monkeypatch.setattr(triage, "audit_active_fleet_processes", lambda root=None: [])
+    repo = tmp_path / "org" / "cold_repo"
+    (repo / ".git").mkdir(parents=True)
+
+    with mock.patch.object(triage.subprocess, "run") as mock_run:
+        report = triage.run_holistic_triage(tmp_path, depth=2)
+
+    assert report["discovered_repos_count"] == 1
+    assert report["errors"] == []
+    mock_run.assert_not_called()
+
+
+def test_advise_reuses_worktree_counts_from_export_sources(tmp_path):
+    """advise.advise() skips collect_workspace_metrics when export_data provides PR and worktree counts."""
+    fake_export = {
+        "candidates": [],
+        "sources": {
+            "audit": {
+                "repository_count": 3,
+                "open_prs_count": 4,
+                "total_worktrees": 5,
+                "repos_with_worktrees": 2,
+                "errors": 0,
+            }
+        },
+    }
+    fake_reflex = {"available": False, "patterns": [], "proposals": []}
+    with (
+        mock.patch("monag.advise.collect_reflex_patterns", return_value=fake_reflex),
+        mock.patch("monag.advise.collect_workspace_metrics", side_effect=AssertionError("must not be called")),
+    ):
+        res = advise.advise(tmp_path, export_data=fake_export, include_metrics=True)
+
+    assert res["metrics"] == {
+        "total_open_prs": 4,
+        "total_worktrees": 5,
+        "repos_with_worktrees": 2,
+    }

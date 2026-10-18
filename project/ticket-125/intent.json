@@ -1,0 +1,85 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-125",
+  "summary": "Optimize triage git subprocesses and bound advise audit scan",
+  "workstream": "application",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-125/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/advise.py",
+    "src/monag/export.py",
+    "src/monag/triage.py",
+    "tests/test_triage.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "d08e6cd7b1d5b64287d28c5549299cfafa593de8",
+    "targetBranch": "main",
+    "complexity": "S",
+    "estimatedMinutes": 20,
+    "outcome": "Eliminate redundant git subprocesses in monag triage and reuse audit worktree metrics in monag advise.",
+    "nonGoals": [
+      "No new external runtime dependencies.",
+      "No breaking CLI changes."
+    ],
+    "runtimeDependencies": [],
+    "budgets": {
+      "maxAffectedComponents": 1,
+      "maxImplementationFiles": 4,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Fast-path _repo_ahead_count and _repo_worktree_list when .git lacks remotes/worktrees, parallelize multi-repo triage inspection, and propagate total_worktrees/repos_with_worktrees through export.scan()['sources']['audit'] to advise.advise().",
+      "components": [
+        {
+          "name": "monag",
+          "paths": [
+            "src/monag/**",
+            "tests/**"
+          ]
+        }
+      ],
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "responsibilityChanges": false,
+      "rollback": "Revert ticket-125 commit.",
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      }
+    },
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "pytest -q tests/test_triage.py"
+        ],
+        "evidence": "test_triage_skips_git_subprocesses_for_repos_without_remotes_or_worktrees passes."
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "pytest -q tests/test_triage.py tests/test_advise_perf.py"
+        ],
+        "evidence": "test_advise_reuses_worktree_counts_from_export_sources passes."
+      }
+    ]
+  }
+}

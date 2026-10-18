@@ -133,7 +133,11 @@ def check_agent_collision(
     unknown = [row for row in evidence if row.get("lease_status") not in active | terminal]
 
     conflict_report: Dict[str, Any] = {}
-    if _find_algocode_runner() == "import":
+    if _find_algocode_runner() == "import" and (
+        (repo_path / "project").is_dir()
+        or (repo_path / ".governance").is_dir()
+        or (repo_path / "governance").is_dir()
+    ):
         try:
             import algocode.engine as algo
             conflict_report = algo.check_conflict(repo_root=repo_path)
@@ -154,21 +158,26 @@ def check_agent_collision(
     for proc in (fleet_processes or []):
         if not isinstance(proc, dict):
             continue
-        pwds = list(proc.get("working_directories") or [])
-        cwd = proc.get("cwd")
-        if cwd and cwd not in pwds:
-            pwds.append(cwd)
+        resolved_dirs = proc.get("_resolved_dirs")
+        if resolved_dirs is None:
+            pwds = list(proc.get("working_directories") or [])
+            cwd = proc.get("cwd")
+            if cwd and cwd not in pwds:
+                pwds.append(cwd)
+            resolved_dirs = []
+            for d in pwds:
+                if not d:
+                    continue
+                try:
+                    resolved_dirs.append(Path(d).resolve())
+                except Exception:
+                    continue
+            proc["_resolved_dirs"] = resolved_dirs
 
-        matching_dirs = []
-        for d in pwds:
-            if not d:
-                continue
-            try:
-                p = Path(d).resolve()
-                if p == repo_path or repo_path in p.parents:
-                    matching_dirs.append(str(p))
-            except Exception:
-                continue
+        matching_dirs = [
+            str(p) for p in resolved_dirs
+            if p == repo_path or repo_path in p.parents
+        ]
 
         if matching_dirs:
             pid = proc.get("pid")
@@ -428,6 +437,13 @@ def run_holistic_triage(
     collisions_by_repo: Dict[str, Dict[str, Any]] = {}
 
     def _repo_ahead_count(repo_path: Path) -> int:
+        git_entry = repo_path / ".git"
+        if (
+            git_entry.is_dir()
+            and not (git_entry / "refs" / "remotes").is_dir()
+            and not (git_entry / "packed-refs").is_file()
+        ):
+            return 0
         proc = subprocess.run(
             ["git", "rev-list", "--count", "@{u}..HEAD"],
             cwd=str(repo_path),
@@ -440,6 +456,14 @@ def run_holistic_triage(
         return 0
 
     def _repo_worktree_list(repo_path: Path) -> subprocess.CompletedProcess:
+        git_entry = repo_path / ".git"
+        if git_entry.is_dir() and not (git_entry / "worktrees").is_dir():
+            return subprocess.CompletedProcess(
+                ["git", "worktree", "list", "--porcelain"],
+                0,
+                f"worktree {repo_path}\n",
+                "",
+            )
         return subprocess.run(
             ["git", "worktree", "list", "--porcelain"],
             cwd=str(repo_path),
@@ -448,15 +472,17 @@ def run_holistic_triage(
             timeout=3,
         )
 
-    for repo_name, repo_path in discovered_repos:
+    def _inspect_repo(item: Tuple[str, Path]) -> Tuple[str, Dict[str, Any], List[Dict[str, Any]], List[str]]:
+        repo_name, repo_path = item
+        repo_candidates: List[Dict[str, Any]] = []
+        repo_errors: List[str] = []
         collision_info = check_agent_collision(repo_path, fleet_processes=active_fleet)
-        collisions_by_repo[repo_name] = collision_info
 
         # Check for unpushed commits / ahead of origin
         try:
             ahead = _repo_ahead_count(repo_path)
             if ahead > 0:
-                all_raw_candidates.append({
+                repo_candidates.append({
                     "origin": "prs-ahead-commits",
                     "repo": repo_name,
                     "path": str(repo_path),
@@ -465,17 +491,21 @@ def run_holistic_triage(
                     "ahead_count": ahead,
                 })
         except Exception as error:
-            errors.append(f"{repo_path}: upstream comparison: {type(error).__name__}")
+            repo_errors.append(f"{repo_path}: upstream comparison: {type(error).__name__}")
 
         # Check for worktrees
         try:
             wt_proc = _repo_worktree_list(repo_path)
             if wt_proc.returncode == 0:
                 lines = wt_proc.stdout.splitlines()
-                wt_paths = [line.split(" ", 1)[1] for line in lines if line.startswith("worktree ") and line.split(" ", 1)[1] != str(repo_path)]
+                wt_paths = [
+                    line.split(" ", 1)[1]
+                    for line in lines
+                    if line.startswith("worktree ") and line.split(" ", 1)[1] != str(repo_path)
+                ]
                 for wt in wt_paths:
                     wt_name = Path(wt).name
-                    all_raw_candidates.append({
+                    repo_candidates.append({
                         "origin": "worktree-observed",
                         "repo": repo_name,
                         "path": wt,
@@ -483,9 +513,23 @@ def run_holistic_triage(
                         "priority": "medium",
                     })
             else:
-                errors.append(f"{repo_path}: worktree inventory failed (exit {wt_proc.returncode})")
+                repo_errors.append(f"{repo_path}: worktree inventory failed (exit {wt_proc.returncode})")
         except (OSError, subprocess.TimeoutExpired) as error:
-            errors.append(f"{repo_path}: worktree inventory: {type(error).__name__}")
+            repo_errors.append(f"{repo_path}: worktree inventory: {type(error).__name__}")
+
+        return repo_name, collision_info, repo_candidates, repo_errors
+
+    if len(discovered_repos) > 4:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            inspected = list(pool.map(_inspect_repo, discovered_repos))
+    else:
+        inspected = [_inspect_repo(item) for item in discovered_repos]
+
+    for repo_name, collision_info, repo_candidates, repo_errors in inspected:
+        collisions_by_repo[repo_name] = collision_info
+        all_raw_candidates.extend(repo_candidates)
+        errors.extend(repo_errors)
 
     # 3. Algorithmic categorization, ranking, and step synthesis
     categorized_items: List[Dict[str, Any]] = []

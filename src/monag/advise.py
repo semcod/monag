@@ -605,10 +605,14 @@ def advise(root: Path, depth: int = 2, issue_limit: int = 200,
 
     capped = filtered[:limit]
 
-    if open_prs_count is None and isinstance(export_data, dict):
+    if isinstance(export_data, dict):
         audit_src = (export_data.get('sources') or {}).get('audit') or {}
-        if isinstance(audit_src.get('open_prs_count'), int):
+        if open_prs_count is None and isinstance(audit_src.get('open_prs_count'), int):
             open_prs_count = audit_src['open_prs_count']
+        if worktrees_count is None and isinstance(audit_src.get('total_worktrees'), int):
+            worktrees_count = audit_src['total_worktrees']
+        if repos_with_worktrees is None and isinstance(audit_src.get('repos_with_worktrees'), int):
+            repos_with_worktrees = audit_src['repos_with_worktrees']
     metrics = {
         'total_open_prs': open_prs_count if open_prs_count is not None else 0,
         'total_worktrees': worktrees_count if worktrees_count is not None else 0,
