@@ -26,7 +26,7 @@
   "conflictsWith": [],
   "integrationTicket": null,
   "delivery": {
-    "acceptedBaseSha": "d801c3cf79cf354442f79586399250770687576f",
+    "acceptedBaseSha": "d801c3c7b7c55b9babe735e96b3684847bd95766",
     "targetBranch": "main",
     "complexity": "S",
     "estimatedMinutes": 20,
@@ -49,7 +49,8 @@
         {
           "name": "monag",
           "paths": [
-            "src/monag/**"
+            "src/monag/**",
+            "tests/**"
           ]
         }
       ],

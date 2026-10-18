@@ -509,7 +509,7 @@ def feed_to_planfile(advisory_data: dict[str, Any], root: Path, sprint: str = 'c
         return {'ok': False, 'error': str(exc)}
 
 
-def collect_workspace_metrics(root: Path, depth: int = 2) -> dict[str, Any]:
+def collect_workspace_metrics(root: Path, depth: int = 2, include_prs: bool = True) -> dict[str, Any]:
     """Fast local discovery of overall open PRs and active worktrees count."""
     total_wts = 0
     repos_with_wt = 0
@@ -524,12 +524,13 @@ def collect_workspace_metrics(root: Path, depth: int = 2) -> dict[str, Any]:
     except Exception:
         pass
 
-    try:
-        from . import prs
-        prs_data = prs.scan(root, depth=depth, pr_limit=200, unpushed_only=False, all_repos=False)
-        total_prs = len(prs_data.get('open_prs', []))
-    except Exception:
-        pass
+    if include_prs:
+        try:
+            from . import prs
+            prs_data = prs.scan(root, depth=depth, pr_limit=200, unpushed_only=False, all_repos=False)
+            total_prs = len(prs_data.get('open_prs', []))
+        except Exception:
+            pass
 
     return {
         'total_open_prs': total_prs,
@@ -604,13 +605,17 @@ def advise(root: Path, depth: int = 2, issue_limit: int = 200,
 
     capped = filtered[:limit]
 
+    if open_prs_count is None and isinstance(export_data, dict):
+        audit_src = (export_data.get('sources') or {}).get('audit') or {}
+        if isinstance(audit_src.get('open_prs_count'), int):
+            open_prs_count = audit_src['open_prs_count']
     metrics = {
         'total_open_prs': open_prs_count if open_prs_count is not None else 0,
         'total_worktrees': worktrees_count if worktrees_count is not None else 0,
         'repos_with_worktrees': repos_with_worktrees if repos_with_worktrees is not None else 0,
     }
     if include_metrics and (open_prs_count is None or worktrees_count is None):
-        discovered = collect_workspace_metrics(root, depth=depth)
+        discovered = collect_workspace_metrics(root, depth=depth, include_prs=(open_prs_count is None))
         if open_prs_count is None:
             metrics['total_open_prs'] = discovered['total_open_prs']
         if worktrees_count is None:
