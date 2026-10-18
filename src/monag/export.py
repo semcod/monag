@@ -219,6 +219,8 @@ def scan(root, depth=2, issue_limit=200, radar=False, hygiene=False):
         'hygiene_requested': hygiene, 'hygiene_errors': hygiene_errors,
         'sources': {'audit': {'repository_count': audit_data['repository_count'],
                               'open_prs_count': sum(len(r.get('open_prs', [])) for r in audit_data.get('repositories', [])),
+                              'total_worktrees': audit_data.get('total_worktrees'),
+                              'repos_with_worktrees': audit_data.get('repos_with_worktrees'),
                               'errors': len(audit_data['errors'])},
                    'catalog': {'repository_count': catalog_data['repository_count']},
                    'resume': {'project_count': resume_data['project_count']}},
