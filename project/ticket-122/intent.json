@@ -1,0 +1,83 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-122",
+  "summary": "Reuse audit open_prs_count in monag advise to eliminate duplicate prs.scan",
+  "workstream": "application",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-122/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/advise.py",
+    "src/monag/export.py",
+    "tests/test_advise_perf.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "d801c3cf79cf354442f79586399250770687576f",
+    "targetBranch": "main",
+    "complexity": "S",
+    "estimatedMinutes": 20,
+    "outcome": "Reuse open_prs_count from export.scan()['sources']['audit'] in advise.advise() so prs.scan() is not executed a second time during monag advise.",
+    "nonGoals": [
+      "No new external runtime dependencies.",
+      "No breaking CLI changes."
+    ],
+    "runtimeDependencies": [],
+    "budgets": {
+      "maxAffectedComponents": 1,
+      "maxImplementationFiles": 3,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Propagate open_prs_count in export.scan()['sources']['audit'] and add include_prs=True parameter to collect_workspace_metrics() so advise() skips duplicate prs.scan().",
+      "components": [
+        {
+          "name": "monag",
+          "paths": [
+            "src/monag/**"
+          ]
+        }
+      ],
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "responsibilityChanges": false,
+      "rollback": "Revert the ticket-122 commit to restore previous export.py and advise.py behavior.",
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      }
+    },
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "pytest -q tests/test_advise_perf.py"
+        ],
+        "evidence": "export.scan() exposes sources.audit.open_prs_count."
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "pytest -q tests/test_advise_perf.py"
+        ],
+        "evidence": "advise.advise() reuses open_prs_count without calling prs.scan()."
+      }
+    ]
+  }
+}
