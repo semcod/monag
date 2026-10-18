@@ -1,3 +1,7 @@
+## [0.3.3] - 2026-10-18
+
+- Release v0.3.3 published via goal and Willman.
+
 # Changelog
 
 ## [Unreleased]
