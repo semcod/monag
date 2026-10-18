@@ -52,8 +52,8 @@ def audit_candidates(audit_data):
     """
     candidates = []
     for repository in audit_data['repositories']:
-        label = repository['repo'] or repository['path']
-        for issue in repository['untracked_issues']:
+        label = repository.get('repo') or repository.get('path') or repository.get('name')
+        for issue in repository.get('untracked_issues', []):
             if issue.get('state') != 'OPEN':
                 continue
             candidates.append({
@@ -218,6 +218,7 @@ def scan(root, depth=2, issue_limit=200, radar=False, hygiene=False):
         'radar_requested': radar, 'radar_errors': radar_errors,
         'hygiene_requested': hygiene, 'hygiene_errors': hygiene_errors,
         'sources': {'audit': {'repository_count': audit_data['repository_count'],
+                              'open_prs_count': sum(len(r.get('open_prs', [])) for r in audit_data.get('repositories', [])),
                               'errors': len(audit_data['errors'])},
                    'catalog': {'repository_count': catalog_data['repository_count']},
                    'resume': {'project_count': resume_data['project_count']}},
