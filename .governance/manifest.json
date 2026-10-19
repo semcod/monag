@@ -35,7 +35,8 @@
           "lib/**",
           "packages/**",
           "test/**",
-          "tests/**"
+          "tests/**",
+          "VERSION"
         ]
       },
       "governance": {
@@ -63,7 +64,9 @@
           "scripts/install-agent-hosts.sh",
           "wellmanifest_governance.py",
           "worktree-guard.yaml",
-          "pyproject.toml"
+          "pyproject.toml",
+          "VERSION",
+          "src/monag/__init__.py"
         ]
       },
       "infrastructure": {
