@@ -1,0 +1,83 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-127",
+  "summary": "Fail closed on unknown worktree state and preserve controller leases",
+  "workstream": "application",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-127/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/doctor.py",
+    "src/monag/worktrees.py",
+    "tests/test_doctor.py",
+    "tests/test_worktrees_safe_prune.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "8dc6f7e76f355446db227fcf6a0efd9b946b8922",
+    "targetBranch": "main",
+    "outcome": "Prevent unsafe worktree cleanup and publish through independent protected validation.",
+    "nonGoals": [
+      "No actual worktree removal or deployment in this source slice",
+      "No admission policy or protected controller changes"
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 60,
+    "budgets": {
+      "maxImplementationFiles": 4,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 1,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Preserve unknown and unreleased ownership; separate audit eligibility from exact cleanup authorization. Fail closed on observation and Git failures.",
+      "components": [
+        {
+          "name": "worktree-lifecycle",
+          "paths": [
+            "src/monag/worktrees.py",
+            "src/monag/doctor.py",
+            "tests/test_worktrees_safe_prune.py",
+            "tests/test_doctor.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "Cleanup reports blocked until independently authorized for the exact observed state."
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert source through protected publication; never compensate by deleting worktrees."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-05",
+        "commands": [
+          "python3 -m pytest tests/test_worktrees_safe_prune.py tests/test_doctor.py",
+          "bash project/governance-check.sh"
+        ],
+        "evidence": "Four safety defects reproduced before implementation; regressions pending editing admission."
+      }
+    ]
+  }
+}

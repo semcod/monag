@@ -65,30 +65,71 @@ def audit_active_process_cwds() -> tuple[set[Path], dict[int, str]]:
 
 
 def get_repo_leases(repo: Path) -> dict[str, dict[str, Any]]:
-    """Read all leases from .subactor/leases/*.json."""
+    """Read all leases from .subactor/leases/*.json conforming to change-lease/v1 and legacy schemas."""
     leases: dict[str, dict[str, Any]] = {}
     leases_dir = repo / ".subactor" / "leases"
     if not leases_dir.is_dir():
         return leases
 
     for lease_file in leases_dir.glob("*.json"):
+        data = None
         try:
-            data = json.loads(lease_file.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                ticket = str(data.get("ticket") or "").strip()
-                worktree_path = str(data.get("worktreePath") or "").strip()
-                branch = str(data.get("branch") or "").strip()
-                if ticket:
-                    leases[ticket] = data
-                if worktree_path:
-                    leases[worktree_path] = data
-                    leases[Path(worktree_path).name] = data
-                if branch:
-                    leases[branch] = data
+            parsed = json.loads(lease_file.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                data = parsed
+            else:
+                data = {"schema": "malformed", "phase": "malformed", "active": True}
         except (OSError, json.JSONDecodeError):
-            continue
+            data = {"schema": "unreadable", "phase": "unreadable", "active": True}
+
+        ticket = str(data.get("ticketId") or data.get("ticket") or "").strip()
+        worktree_id = str(data.get("worktreeId") or data.get("worktreePath") or "").strip()
+        branch_ref = str(data.get("branchRef") or data.get("branch") or "").strip()
+        branch = branch_ref.replace("refs/heads/", "") if branch_ref.startswith("refs/heads/") else branch_ref
+
+        stem = lease_file.stem
+        keys = {stem}
+        if ticket:
+            keys.add(ticket)
+        if worktree_id:
+            keys.add(worktree_id)
+            keys.add(Path(worktree_id).name)
+        if branch:
+            keys.add(branch)
+            keys.add(f"refs/heads/{branch}")
+
+        for k in keys:
+            leases[k] = data
 
     return leases
+
+
+def is_lease_active(lease: dict[str, Any]) -> tuple[bool, str]:
+    """Check if lease is active, unreleased, expired or malformed, blocking worktree cleanup."""
+    schema = lease.get("schema")
+    if schema == "wellmanifest.change-lease/v1":
+        phase = str(lease.get("phase", "")).lower()
+        if phase in {"released", "merged", "closed", "cancelled"}:
+            return False, phase
+        ticket = lease.get("ticketId") or lease.get("ticket") or "unknown"
+        return True, f"active_lease (ticket: {ticket}, phase: {phase or 'unspecified'})"
+
+    if schema in {"malformed", "unreadable"}:
+        return True, f"malformed_or_unreadable_lease (schema: {schema})"
+
+    # Legacy schema or fallback
+    status = str(lease.get("status", "")).lower()
+    phase = str(lease.get("phase", "")).lower()
+    if status in {"released", "merged", "closed", "cancelled"} or phase in {"released", "merged", "closed", "cancelled"}:
+        return False, status or phase
+    if status == "active" or phase in {"claimed", "editing", "validating", "publication_frozen", "dispatching", "approved", "expired"}:
+        ticket = lease.get("ticket") or lease.get("ticketId") or "unknown"
+        return True, f"active_lease (ticket: {ticket}, status: {status or phase})"
+
+    if status or phase:
+        return True, f"active_lease (status: {status or phase})"
+
+    return True, "unrecognized_or_unresolved_lease" 
 
 
 def is_worktree_dirty(wt_path: Path) -> tuple[bool, str]:
@@ -112,14 +153,20 @@ def _is_ancestor_commit(repo: Path, branch: str, target: str) -> bool:
 
 
 def is_branch_merged(repo: Path, branch: str) -> bool:
-    """Check if branch is merged to main, master, or HEAD."""
+    """Check if branch is merged to main or master (cannot establish integration merely by comparing against own HEAD)."""
     if not branch:
         return False
 
-    targets = ["main", "master", "HEAD"]
+    b_sha, _ = command(["git", "-C", str(repo), "rev-parse", "--verify", branch])
+    b_sha = b_sha.strip()
+    if not b_sha:
+        return False
+
+    targets = ["main", "master"]
     for t in targets:
         chk, _ = command(["git", "-C", str(repo), "rev-parse", "--verify", t])
-        if not chk.strip():
+        t_sha = chk.strip()
+        if not t_sha:
             continue
         # Check merge-base --is-ancestor branch target
         if _is_ancestor_commit(repo, branch, t):
@@ -156,6 +203,7 @@ def audit_worktree_safety(
     wt_path = Path(wt_path_str)
     branch = wt.get("branch", "")
     is_primary = wt.get("is_primary", False)
+    locked = bool(wt.get("locked", False))
     exists = wt_path.is_dir()
 
     safety = {
@@ -165,6 +213,7 @@ def audit_worktree_safety(
         "branch": branch,
         "is_primary": is_primary,
         "exists": exists,
+        "locked": locked,
         "safe_to_prune": False,
         "reasons": [],
         "dirty": False,
@@ -176,6 +225,11 @@ def audit_worktree_safety(
     # Primary checkouts are NEVER prunable
     if is_primary:
         safety["reasons"].append("primary_checkout")
+        return safety
+
+    # Locked worktrees remain strictly protected
+    if locked:
+        safety["reasons"].append("worktree_locked")
         return safety
 
     # Dead worktree entries (folder gone but git still references it)
@@ -197,11 +251,13 @@ def audit_worktree_safety(
 
     # 3. Lease Lifecycle Guard
     lease = leases.get(wt_path.name) or leases.get(branch)
+    if not lease and wt.get("path"):
+        lease = leases.get(wt.get("path"))
     if lease:
-        lease_status = str(lease.get("status", "")).lower()
-        if lease_status == "active":
+        active_lease, reason = is_lease_active(lease)
+        if active_lease:
             safety["active_lease"] = True
-            safety["reasons"].append(f"active_lease (ticket: {lease.get('ticket')})")
+            safety["reasons"].append(reason)
 
     # 4. Branch Merge Guard
     merged = is_branch_merged(repo, branch)
@@ -221,7 +277,8 @@ def audit_worktree_safety(
 
     # Determine if safe
     if (
-        not safety["active_process"]
+        not safety["locked"]
+        and not safety["active_process"]
         and not safety["dirty"]
         and not safety["active_lease"]
         and (safety["is_merged"] or not branch)
@@ -311,16 +368,25 @@ def prune_worktrees_safe(
             })
             continue
 
-        # Execute safe removal (unlock git worktree metadata if locked after passing lease/process/dirty/merge guards)
+        # Re-check locked
         if wt.get("locked"):
-            command(["git", "-C", str(repo), "worktree", "unlock", str(wt_path)])
+            result["protected"].append({
+                "path": str(wt_path),
+                "branch": wt.get("branch", ""),
+                "reasons": ["worktree_locked"],
+            })
+            continue
+
+        # Execute safe removal: never unlock, never fall back to rmtree
         out, err = command(["git", "-C", str(repo), "worktree", "remove", str(wt_path)])
         if wt_path.exists():
-            # If standard worktree remove didn't clear directory, check again and remove
-            try:
-                shutil.rmtree(wt_path)
-            except Exception as e:
-                result["errors"].append(f"Failed to remove directory {wt_path}: {e}")
+            result["errors"].append(f"Failed to remove directory {wt_path} via git worktree remove: {err}")
+            result["protected"].append({
+                "path": str(wt_path),
+                "branch": wt.get("branch", ""),
+                "reasons": ["git_worktree_remove_failed"],
+            })
+            continue
 
         command(["git", "-C", str(repo), "worktree", "prune"])
         result["pruned"].append({
@@ -329,20 +395,7 @@ def prune_worktrees_safe(
             "action": "worktree_removed",
         })
 
-        # Update lease if present
-        lease_entry = leases.get(wt_path.name) or leases.get(wt.get("branch", ""))
-        if lease_entry:
-            tkt = lease_entry.get("ticket")
-            lease_path = repo / ".subactor" / "leases" / f"{tkt}.json"
-            if not lease_path.exists():
-                lease_path = repo / ".subactor" / "leases" / f"{wt_path.name}.json"
-            if lease_path.exists():
-                try:
-                    ldata = json.loads(lease_path.read_text(encoding="utf-8"))
-                    ldata["status"] = "pruned"
-                    lease_path.write_text(json.dumps(ldata, indent=2) + "\n")
-                except Exception:
-                    pass
+        # Monag is an observer/tool and NEVER rewrites controller leases (.subactor/leases/*.json)
 
         # Clean up merged ticket branch if safe
         branch = wt.get("branch", "")
