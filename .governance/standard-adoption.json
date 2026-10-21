@@ -19,34 +19,34 @@
       "artifacts": [
         {
           "target": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         }
       ],
       "evidence": [
         {
           "level": "S0",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S1",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S2",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S3",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S4",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         }
       ]
     },
@@ -59,29 +59,29 @@
       "artifacts": [
         {
           "target": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         }
       ],
       "evidence": [
         {
           "level": "S0",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S1",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S2",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S3",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         }
       ]
     },
@@ -94,34 +94,34 @@
       "artifacts": [
         {
           "target": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         }
       ],
       "evidence": [
         {
           "level": "S0",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S1",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S2",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S3",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S4",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         }
       ]
     },
@@ -134,34 +134,34 @@
       "artifacts": [
         {
           "target": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         }
       ],
       "evidence": [
         {
           "level": "S0",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S1",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S2",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S3",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S4",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         }
       ]
     },
@@ -174,29 +174,29 @@
       "artifacts": [
         {
           "target": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         }
       ],
       "evidence": [
         {
           "level": "S0",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S1",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S2",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S3",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         }
       ]
     },
@@ -209,34 +209,34 @@
       "artifacts": [
         {
           "target": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         }
       ],
       "evidence": [
         {
           "level": "S0",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S1",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S2",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S3",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S4",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         }
       ]
     },
@@ -249,29 +249,29 @@
       "artifacts": [
         {
           "target": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         }
       ],
       "evidence": [
         {
           "level": "S0",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S1",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S2",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         },
         {
           "level": "S3",
           "uri": ".governance/manifest.json",
-          "sha256": "d07aeaaa7fd5836803c6c196bb533d243d822c7b03eb94a799dae9f18f2f543b"
+          "sha256": "58b0d7e3b074605d450cb7020023285492741e9cdf04749fec57e6917cb9e28d"
         }
       ]
     }

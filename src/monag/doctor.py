@@ -109,13 +109,24 @@ def audit_worktrees(repo: Path) -> list[dict]:
         branch = wt.get('branch', '')
         is_merged = False
         dirty = False
+        locked = bool(wt.get('locked', False))
+        has_active_lease = False
+
+        from . import worktrees
         if branch and not is_primary:
-            is_merged = is_branch_merged(repo, branch)
+            is_merged = worktrees.is_branch_merged(repo, branch)
         if exists and not is_primary:
-            from . import worktrees
             dirty, _ = worktrees.is_worktree_dirty(wt_path)
 
-        is_stale = ((not exists) or wt.get('prunable', False) or (is_merged and not is_primary)) and not dirty
+        if not is_primary:
+            leases = worktrees.get_repo_leases(repo)
+            lease = leases.get(wt_path.name) or leases.get(branch)
+            if not lease and wt_path_str:
+                lease = leases.get(wt_path_str)
+            if lease:
+                has_active_lease, _ = worktrees.is_lease_active(lease)
+
+        is_stale = ((not exists) or wt.get('prunable', False) or (is_merged and not is_primary)) and not dirty and not locked and not has_active_lease
 
         audited.append({
             'repo': repo.name,

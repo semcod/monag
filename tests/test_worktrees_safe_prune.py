@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from monag.cli import main
 from monag.worktrees import (
+    get_repo_leases,
     audit_fleet_worktrees,
     audit_worktree_safety,
     is_branch_merged,
@@ -158,18 +159,128 @@ class TestWorktreesSafePrune(unittest.TestCase):
         self.assertFalse(wt.exists())
         self.assertIn("ticket/105-clean", res["deleted_branches"])
 
-    def test_locked_clean_merged_inactive_worktree_is_unlocked_and_pruned(self):
+    def test_locked_worktree_remains_protected(self):
         repo = self.make_repo("service-locked-clean")
         wt = self.make_worktree(repo, "ticket-105b", "ticket/105b-locked")
         self.git(repo, "merge", "ticket/105b-locked")
-        self.git(repo, "worktree", "lock", "--reason", "stale lock after merge", str(wt))
+        self.git(repo, "worktree", "lock", "--reason", "locked for active inspection", str(wt))
 
+        audit = audit_worktree_safety(
+            repo,
+            {"path": str(wt), "branch": "ticket/105b-locked", "is_primary": False, "locked": True},
+            active_cwds=set(),
+            leases={},
+        )
+        self.assertFalse(audit["safe_to_prune"])
+        self.assertTrue(audit.get("locked"))
+        self.assertIn("worktree_locked", audit["reasons"])
+
+        res = prune_worktrees_safe(repo, dry_run=False, active_cwds=set())
+        self.assertEqual(len(res["pruned"]), 0)
+        self.assertEqual(len(res["protected"]), 1)
+        self.assertTrue(wt.exists())
+        self.assertIn("worktree_locked", res["protected"][0]["reasons"])
+
+    def test_change_lease_v1_phases_protect_worktree(self):
+        repo = self.make_repo("service-change-lease-v1")
+        wt = self.make_worktree(repo, "ticket-201", "ticket/201-lease-phase")
+        self.git(repo, "merge", "ticket/201-lease-phase")
+
+        leases_dir = repo / ".subactor" / "leases"
+        leases_dir.mkdir(parents=True, exist_ok=True)
+        lease_file = leases_dir / "ticket-201.json"
+
+        # 1. Claimed phase must protect
+        lease_file.write_text(json.dumps({
+            "schema": "wellmanifest.change-lease/v1",
+            "ticketId": "ticket-201",
+            "worktreeId": wt.name,
+            "branchRef": "refs/heads/ticket/201-lease-phase",
+            "phase": "claimed",
+            "ownerActor": "agent:test",
+        }))
+        leases = get_repo_leases(repo)
+        audit = audit_worktree_safety(repo, {"path": str(wt), "branch": "ticket/201-lease-phase", "is_primary": False}, active_cwds=set(), leases=leases)
+        self.assertFalse(audit["safe_to_prune"])
+        self.assertTrue(audit["active_lease"])
+
+        # 2. Expired phase must still protect (fails closed per AC-01)
+        lease_file.write_text(json.dumps({
+            "schema": "wellmanifest.change-lease/v1",
+            "ticketId": "ticket-201",
+            "worktreeId": wt.name,
+            "branchRef": "refs/heads/ticket/201-lease-phase",
+            "phase": "expired",
+            "ownerActor": "agent:test",
+        }))
+        leases = get_repo_leases(repo)
+        audit = audit_worktree_safety(repo, {"path": str(wt), "branch": "ticket/201-lease-phase", "is_primary": False}, active_cwds=set(), leases=leases)
+        self.assertFalse(audit["safe_to_prune"])
+        self.assertTrue(audit["active_lease"])
+
+        # 3. Released phase allows pruning
+        lease_file.write_text(json.dumps({
+            "schema": "wellmanifest.change-lease/v1",
+            "ticketId": "ticket-201",
+            "worktreeId": wt.name,
+            "branchRef": "refs/heads/ticket/201-lease-phase",
+            "phase": "released",
+            "ownerActor": "agent:test",
+        }))
+        leases = get_repo_leases(repo)
+        audit = audit_worktree_safety(repo, {"path": str(wt), "branch": "ticket/201-lease-phase", "is_primary": False}, active_cwds=set(), leases=leases)
+        self.assertTrue(audit["safe_to_prune"])
+        self.assertFalse(audit["active_lease"])
+
+    def test_malformed_unreadable_lease_protects_worktree(self):
+        repo = self.make_repo("service-malformed-lease")
+        wt = self.make_worktree(repo, "ticket-202", "ticket/202-bad-lease")
+        self.git(repo, "merge", "ticket/202-bad-lease")
+
+        leases_dir = repo / ".subactor" / "leases"
+        leases_dir.mkdir(parents=True, exist_ok=True)
+        (leases_dir / f"{wt.name}.json").write_text("NOT_VALID_JSON{")
+
+        leases = get_repo_leases(repo)
+        audit = audit_worktree_safety(repo, {"path": str(wt), "branch": "ticket/202-bad-lease", "is_primary": False}, active_cwds=set(), leases=leases)
+        self.assertFalse(audit["safe_to_prune"])
+        self.assertTrue(audit["active_lease"])
+        self.assertTrue(any("malformed" in r for r in audit["reasons"]))
+
+    def test_controller_lease_is_never_rewritten_by_monag(self):
+        repo = self.make_repo("service-lease-immutable")
+        wt = self.make_worktree(repo, "ticket-203", "ticket/203-immutable")
+        self.git(repo, "merge", "ticket/203-immutable")
+
+        leases_dir = repo / ".subactor" / "leases"
+        leases_dir.mkdir(parents=True, exist_ok=True)
+        lease_path = leases_dir / "ticket-203.json"
+        original_lease_content = json.dumps({
+            "schema": "wellmanifest.change-lease/v1",
+            "ticketId": "ticket-203",
+            "worktreeId": wt.name,
+            "branchRef": "refs/heads/ticket/203-immutable",
+            "phase": "released",
+            "ownerActor": "agent:test",
+            "fencingToken": 42,
+        }, indent=2) + "\n"
+        lease_path.write_text(original_lease_content)
+
+        # Execute prune
         res = prune_worktrees_safe(repo, dry_run=False, active_cwds=set())
         self.assertEqual(len(res["pruned"]), 1)
         self.assertFalse(wt.exists())
-        self.assertIn("ticket/105b-locked", res["deleted_branches"])
-        porcelain = self.git(repo, "worktree", "list", "--porcelain")
-        self.assertNotIn("ticket-105b", porcelain)
+
+        # Verify lease content was NOT altered by Monag
+        self.assertEqual(lease_path.read_text(), original_lease_content)
+
+    def test_branch_cannot_establish_merge_merely_against_own_head(self):
+        repo = self.make_repo("service-own-head")
+        wt = self.make_worktree(repo, "ticket-204", "ticket/204-own-head")
+        # Do not merge into main
+        # In git worktree wt, HEAD is ticket/204-own-head.
+        # Calling is_branch_merged should compare against main, NOT HEAD.
+        self.assertFalse(is_branch_merged(wt, "ticket/204-own-head"))
 
     @patch("monag.worktrees.audit_active_process_cwds", return_value=(set(), {}))
     def test_fleet_worktree_audit_and_markdown(self, _mock_proc):
