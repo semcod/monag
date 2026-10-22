@@ -1,0 +1,101 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-129",
+  "summary": "Preserve ticket radar in Planfile ticket exports",
+  "workstream": "application",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P2",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-129/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/advise.py",
+    "tests/test_advise.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "08d22a3f433a281f86f0e4d9d70587da2f04e0b1",
+    "targetBranch": "main",
+    "outcome": "Publish and deploy Monag ticket radar description projection through protected OneDev and independent Validator; verify real Planfile import and tracker description preservation.",
+    "nonGoals": [
+      "Automatic mutation of existing remote issues",
+      "Changing radar estimates, execution authority or other repositories"
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 45,
+    "budgets": {
+      "maxImplementationFiles": 2,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Keep bounded advisory radar values in the existing description transport. Normalize Monag ticket name/source and send the existing Planfile CLI its supported list input. No new dependency or Planfile source change.",
+      "components": [
+        {
+          "name": "ticket-export",
+          "paths": [
+            "src/monag/advise.py"
+          ]
+        },
+        {
+          "name": "regression-tests",
+          "paths": [
+            "tests/test_advise.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Keep previous immutable local CLI entrypoint and release; restore its exact wrapper if canary fails. Revert published source through a separately governed change if needed."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q tests/test_advise.py tests/test_export.py"
+        ],
+        "evidence": "artifact:ticket129-focused-tests"
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q"
+        ],
+        "evidence": "artifact:ticket129-regression-tests"
+      },
+      {
+        "criterion": "AC-03",
+        "commands": [
+          "Real Planfile CLI import into a temporary .planfile store, persisted readback and GitHubBackend managed-description update canary"
+        ],
+        "evidence": "artifact:ticket129-planfile-integration"
+      },
+      {
+        "criterion": "AC-04",
+        "commands": [
+          "./project/governance-check.sh",
+          "python3 -m build --wheel --no-isolation"
+        ],
+        "evidence": "artifact:ticket129-local-validation"
+      }
+    ]
+  }
+}

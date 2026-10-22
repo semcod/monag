@@ -374,7 +374,8 @@ def test_to_planfile_ticket():
     assert 'risk:governance-friction' in ticket['labels']
     assert '**Satisfied When**: Tests pass' in ticket['description']
     assert '**Action**: Fix pipeline' in ticket['description']
-    assert ticket['source'] == 'monag'
+    assert ticket['source'] == {'tool': 'monag'}
+    assert ticket['name'] == ticket['title']
 
 
 def test_export_planfile_tickets():
@@ -394,6 +395,53 @@ def test_export_planfile_tickets():
     assert floor_only['tickets'][0]['tier'] == 'floor'
 
 
+def test_planfile_export_preserves_advisory_radar_in_description():
+    radar = {'complexity': 'L', 'score': 56, 'estimated_minutes': 61,
+             'split_recommended': True, 'raw': 'PRIVATE_UNTRUSTED_PAYLOAD'}
+    rec = {'target': 'repo/a', 'title': 'Task', 'tier': advise.TIER_MISSION,
+           'action': 'Keep the existing action', 'radar': radar}
+    data = advise.export_planfile_tickets({'recommendations': [rec]})
+    ticket = data['tickets'][0]
+    description = ticket['description']
+    assert '**Action**: Keep the existing action' in description
+    assert 'Complexity: `L`' in description
+    assert 'Score: `56/100`' in description
+    assert 'Estimated effort: `61 min`' in description
+    assert 'Split recommended: `yes`' in description
+    assert 'does not grant execution, review or merge authority' in description
+    assert 'PRIVATE_UNTRUSTED_PAYLOAD' not in description
+    assert ticket['priority'] == 'high'
+    assert rec['radar'] == radar
+
+
+@pytest.mark.parametrize('radar', [
+    None, {}, [], 'untrusted',
+    {'complexity': ['L']},
+    {'complexity': '<script>bad</script>', 'score': 56,
+     'estimated_minutes': 61, 'split_recommended': True},
+    *[{'complexity': 'M', 'score': value, 'estimated_minutes': 5,
+       'split_recommended': False} for value in [True, -1, 101, 10 ** 1000, float('nan'), float('inf'), 'secret']],
+    *[{'complexity': 'M', 'score': 10, 'estimated_minutes': value,
+       'split_recommended': False} for value in [True, -1, 525601, 'secret']],
+    {'complexity': 'M', 'score': 10, 'estimated_minutes': 5,
+     'split_recommended': 'false'},
+])
+def test_invalid_radar_keeps_legacy_ticket_unchanged(radar):
+    rec = {'target': 'repo/a', 'title': 'Task', 'action': 'Existing content'}
+    expected = advise.to_planfile_ticket(rec)
+    assert advise.to_planfile_ticket({**rec, 'radar': radar}) == expected
+
+
+def test_small_radar_preserves_zero_and_false():
+    ticket = advise.to_planfile_ticket({'title': 'Task', 'radar': {
+        'complexity': 'XS', 'score': 0, 'estimated_minutes': 0,
+        'split_recommended': False,
+    }})
+    assert 'Score: `0/100`' in ticket['description']
+    assert 'Estimated effort: `0 min`' in ticket['description']
+    assert 'Split recommended: `no`' in ticket['description']
+
+
 def test_feed_to_planfile(tmp_path):
     advisory_data = {
         'recommendations': [
@@ -409,6 +457,11 @@ def test_feed_to_planfile(tmp_path):
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
         assert cmd == ['/usr/local/bin/planfile', 'ticket', 'import', '--source', 'monag', '--sprint', 'sprint-42']
+        import json
+        payload = json.loads(mock_run.call_args.kwargs['input'])
+        assert isinstance(payload, list)
+        assert payload[0]['name'] == payload[0]['title']
+        assert payload[0]['source'] == {'tool': 'monag'}
 
 
 def test_collect_workspace_metrics(tmp_path):
