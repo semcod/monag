@@ -412,6 +412,30 @@ def generate_priority_readings(reflex_data: dict[str, Any], recommendations: lis
     }
 
 
+def _ticket_radar_description(radar: Any) -> str | None:
+    """Project only bounded advisory metrics into the persistent description."""
+    if not isinstance(radar, dict):
+        return None
+    complexity = radar.get('complexity')
+    score = radar.get('score')
+    minutes = radar.get('estimated_minutes')
+    split = radar.get('split_recommended')
+    if (not isinstance(complexity, str)
+            or complexity not in {'XS', 'S', 'M', 'L', 'low', 'medium', 'high'}
+            or type(score) not in (int, float) or not 0 <= score <= 100
+            or type(minutes) is not int or not 0 <= minutes <= 525600
+            or type(split) is not bool):
+        return None
+    return (
+        '**Ticket impact radar (advisory)**\n\n'
+        f'- Complexity: `{complexity}`\n'
+        f'- Score: `{score:g}/100`\n'
+        f'- Estimated effort: `{minutes} min`\n'
+        f'- Split recommended: `{"yes" if split else "no"}`\n\n'
+        'This estimate does not grant execution, review or merge authority.'
+    )
+
+
 def to_planfile_ticket(rec: dict[str, Any]) -> dict[str, Any]:
     """Convert an advisory recommendation item into a Planfile ticket dictionary."""
     tier = rec.get('tier', TIER_BACKLOG)
@@ -436,6 +460,9 @@ def to_planfile_ticket(rec: dict[str, Any]) -> dict[str, Any]:
             desc_lines.append(f"- {g}")
     if rec.get('matched_risks'):
         desc_lines.append(f"**Reflex Risks**: {', '.join(rec['matched_risks'])}")
+    radar_description = _ticket_radar_description(rec.get('radar'))
+    if radar_description:
+        desc_lines.append(radar_description)
 
     target = rec.get('target', 'workspace')
     title = rec.get('title', 'Untitled task')
@@ -449,6 +476,7 @@ def to_planfile_ticket(rec: dict[str, Any]) -> dict[str, Any]:
 
     return {
         'title': ticket_title,
+        'name': ticket_title,
         'description': '\n\n'.join(desc_lines),
         'priority': priority,
         'labels': labels,
@@ -456,7 +484,7 @@ def to_planfile_ticket(rec: dict[str, Any]) -> dict[str, Any]:
         'target_repo': target,
         'score': rec.get('score', 0),
         'satisfied_when': rec.get('satisfied_when'),
-        'source': 'monag',
+        'source': {'tool': 'monag'},
     }
 
 
@@ -489,7 +517,9 @@ def feed_to_planfile(advisory_data: dict[str, Any], root: Path, sprint: str = 'c
         return {'ok': False, 'error': 'planfile CLI not found on PATH'}
 
     cmd = [planfile_bin, 'ticket', 'import', '--source', 'monag', '--sprint', sprint]
-    input_data = json.dumps(export_obj)
+    # Planfile's stdin importer accepts a list of Ticket records, not the
+    # versioned envelope used by --emit-planfile consumers.
+    input_data = json.dumps(tickets)
     try:
         proc = subprocess.run(cmd, input=input_data, text=True, capture_output=True,
                               cwd=str(root), timeout=30)
