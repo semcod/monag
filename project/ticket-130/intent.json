@@ -1,0 +1,84 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-130",
+  "summary": "Extract Willmux TaskUpdated error details and filter foreign project tasks in autodiagnosis",
+  "workstream": "application",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-130/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/autodiagnosis.py",
+    "tests/test_advanced_autodiagnosis_and_sync.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "d8868a0c673ac8cf9edfd56e57a7fc24f8896e6a",
+    "targetBranch": "main",
+    "outcome": "Accurate Willmux event store autodiagnosis without foreign-project misattribution or unknown step reasons.",
+    "nonGoals": [
+      "No new external runtime dependencies."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 20,
+    "budgets": {
+      "maxImplementationFiles": 2,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Filter foreign data.project entries when scanning Willmux events.jsonl and extract structured error details from TaskUpdated records.",
+      "components": [
+        {
+          "name": "autodiagnosis",
+          "paths": [
+            "src/monag/autodiagnosis.py",
+            "tests/test_advanced_autodiagnosis_and_sync.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert ticket-130 commit."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "pytest -q tests/test_advanced_autodiagnosis_and_sync.py",
+          "./project/governance-check.sh"
+        ],
+        "evidence": "test_willmux_events_skips_foreign_project_and_extracts_task_error passes."
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "pytest -q tests/test_advanced_autodiagnosis_and_sync.py",
+          "./project/governance-check.sh"
+        ],
+        "evidence": "test_willmux_events_skips_foreign_project_and_extracts_task_error passes."
+      }
+    ]
+  }
+}

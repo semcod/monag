@@ -445,9 +445,26 @@ def inspect_repository_anomalies(repo_path: Path,
                             try:
                                 entry = json.loads(line)
                                 data = entry.get("data") or {}
+                                project_ref = str(data.get("project") or "").strip()
+                                if project_ref and Path(project_ref).name != repo_name and project_ref != str(repo_path):
+                                    continue
                                 if data.get("status") == "failed" or any(s.get("status") == "failed" for s in data.get("steps", [])):
                                     failed_steps = [s for s in data.get("steps", []) if s.get("status") == "failed"]
-                                    reason = failed_steps[0].get("reason", "unknown") if failed_steps else "unknown"
+                                    result_obj = data.get("result") if isinstance(data.get("result"), dict) else {}
+                                    output_obj = result_obj.get("output") if isinstance(result_obj.get("output"), dict) else {}
+                                    reason = (
+                                        (failed_steps[0].get("reason") or failed_steps[0].get("error"))
+                                        if failed_steps
+                                        else (
+                                            data.get("reason")
+                                            or data.get("error")
+                                            or result_obj.get("error")
+                                            or output_obj.get("error")
+                                            or data.get("title")
+                                            or "unknown"
+                                        )
+                                    )
+                                    reason = str(reason)
                                     anomalies.append({
                                         "code": "SYSTEM_LOG_ERROR",
                                         "tier": TIER_FLOOR,
