@@ -163,6 +163,24 @@ class TestAdvancedAutodiagnosis(unittest.TestCase):
         self.assertIn("SYSTEM_LOG_ERROR", codes)
         self.assertIn("Docker socket", codes["SYSTEM_LOG_ERROR"]["summary"])
 
+    def test_willmux_events_skips_foreign_project_and_extracts_task_error(self):
+        repo = self.root / "willmux"
+        repo.mkdir(parents=True)
+        (repo / ".git").mkdir()
+        cfg_dir = repo / ".config" / "willmux"
+        cfg_dir.mkdir(parents=True)
+
+        (cfg_dir / "events.jsonl").write_text(
+            '{"seq": 1, "ts": 100, "type": "TaskUpdated", "data": {"id": "t-own", "status": "failed", "result": {"error": "RuntimeError: bridge timeout"}}}\n'
+            '{"seq": 2, "ts": 110, "type": "TaskUpdated", "data": {"id": "t-foreign", "project": "dockuri/dockuri", "status": "failed", "error": "Lease ticket-070 is released"}}\n'
+        )
+
+        anomalies = autodiagnosis.inspect_repository_anomalies(repo, willmux_config_dir=cfg_dir)
+        codes = {a["code"]: a for a in anomalies}
+        self.assertIn("SYSTEM_LOG_ERROR", codes)
+        self.assertIn("RuntimeError: bridge timeout", codes["SYSTEM_LOG_ERROR"]["summary"])
+        self.assertEqual(codes["SYSTEM_LOG_ERROR"]["details"]["seq"], 1)
+
     def test_system_log_error_synthesis_and_opencode_dispatch(self):
         anomaly = {
             "code": "SYSTEM_LOG_ERROR",
