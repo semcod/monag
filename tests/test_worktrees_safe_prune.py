@@ -332,3 +332,64 @@ class TestWorktreesSafePrune(unittest.TestCase):
         self.assertIn("repositories_audited", res)
         self.assertIn("total_pruned", res)
         self.assertIn("total_protected", res)
+
+    def test_failed_git_status_fails_closed_and_protects_worktree(self):
+        repo = self.make_repo("service-failed-status")
+        wt = self.make_worktree(repo, "ticket-301", "ticket/301-failed-status")
+        self.git(repo, "merge", "ticket/301-failed-status")
+
+        # Corrupt the worktree .git file so git status fails with non-zero exit
+        (wt / ".git").write_text("gitdir: /nonexistent/broken/gitdir\n")
+
+        dirty, reason = is_worktree_dirty(wt)
+        self.assertTrue(dirty)
+        self.assertIn("git_status_failed", reason)
+
+        audit = audit_worktree_safety(
+            repo,
+            {"path": str(wt), "branch": "ticket/301-failed-status", "is_primary": False, "locked": False},
+            active_cwds=set(),
+            leases={},
+        )
+        self.assertFalse(audit["safe_to_prune"])
+        self.assertTrue(audit["dirty"])
+        self.assertTrue(any("git_status_failed" in r for r in audit["reasons"]))
+
+    def test_missing_worktree_with_active_lease_remains_protected(self):
+        repo = self.make_repo("service-missing-leased")
+        wt = self.make_worktree(repo, "ticket-302--missing", "ticket/302-missing")
+        self.git(repo, "merge", "ticket/302-missing")
+
+        leases_dir = repo / ".subactor" / "leases"
+        leases_dir.mkdir(parents=True, exist_ok=True)
+        (leases_dir / "ticket-302--missing.json").write_text(json.dumps({
+            "schema": "wellmanifest.change-lease/v1",
+            "ticketId": "ticket-302",
+            "worktreeId": "ticket-302--missing",
+            "branchRef": "refs/heads/ticket/302-missing",
+            "phase": "claimed",
+            "ownerActor": "agent:test",
+        }))
+
+        # Simulate missing directory on disk while git registration and lease remain active
+        import shutil
+        shutil.rmtree(wt)
+
+        leases = get_repo_leases(repo)
+        audit = audit_worktree_safety(
+            repo,
+            {"path": str(wt), "branch": "ticket/302-missing", "is_primary": False, "locked": False},
+            active_cwds=set(),
+            leases=leases,
+        )
+        self.assertFalse(audit["exists"])
+        self.assertFalse(audit["safe_to_prune"])
+        self.assertTrue(audit["active_lease"])
+        self.assertIn("missing_worktree_with_active_lease", audit["reasons"])
+
+        # prune_worktrees_safe must NOT prematurely run git worktree prune when lease is active
+        res = prune_worktrees_safe(repo, dry_run=False, active_cwds=set())
+        self.assertEqual(len(res["pruned"]), 0)
+        self.assertEqual(len(res["protected"]), 1)
+        porcelain = self.git(repo, "worktree", "list", "--porcelain")
+        self.assertIn("ticket-302--missing", porcelain)

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -27,7 +28,11 @@ def command(cmd: list[str], cwd: Optional[Path] = None) -> tuple[str, str]:
             text=True,
             timeout=15,
         )
-        return proc.stdout.strip(), proc.stderr.strip()
+        out = proc.stdout.strip()
+        err = proc.stderr.strip()
+        if proc.returncode != 0:
+            return "", err or f"command failed (exit {proc.returncode})"
+        return out, err
     except (subprocess.SubprocessError, OSError) as err:
         return "", str(err)
 
@@ -132,11 +137,37 @@ def is_lease_active(lease: dict[str, Any]) -> tuple[bool, str]:
     return True, "unrecognized_or_unresolved_lease" 
 
 
+def _resolve_worktree_lease(
+    leases: dict[str, dict[str, Any]],
+    wt_path: Path,
+    wt_path_str: str,
+    branch: str,
+) -> Optional[dict[str, Any]]:
+    lease = (
+        leases.get(wt_path.name)
+        or leases.get(branch)
+        or (leases.get(wt_path_str) if wt_path_str else None)
+    )
+    if lease:
+        return lease
+    for candidate in (wt_path.name, branch):
+        if not candidate:
+            continue
+        match = re.search(r"ticket[-_/]([0-9]+)", candidate, re.IGNORECASE)
+        if match:
+            lease = leases.get(f"ticket-{match.group(1)}")
+            if lease:
+                return lease
+    return None
+
+
 def is_worktree_dirty(wt_path: Path) -> tuple[bool, str]:
-    """Check if the worktree has any uncommitted or untracked changes."""
+    """Check if the worktree has any uncommitted or untracked changes, failing closed on errors."""
     if not wt_path.is_dir():
         return False, ""
     out, err = command(["git", "-C", str(wt_path), "status", "--porcelain"])
+    if err:
+        return True, f"git_status_failed ({err})"
     lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
     if lines:
         return True, f"{len(lines)} uncommitted file(s)"
@@ -232,8 +263,20 @@ def audit_worktree_safety(
         safety["reasons"].append("worktree_locked")
         return safety
 
+    # 3. Lease Lifecycle Guard (checked before missing-path / dead-reference shortcut)
+    lease = _resolve_worktree_lease(leases, wt_path, wt_path_str, branch)
+    if lease:
+        active_lease, reason = is_lease_active(lease)
+        if active_lease:
+            safety["active_lease"] = True
+            safety["reasons"].append(reason)
+
     # Dead worktree entries (folder gone but git still references it)
     if not exists:
+        if safety["active_lease"]:
+            safety["safe_to_prune"] = False
+            safety["reasons"].append("missing_worktree_with_active_lease")
+            return safety
         safety["safe_to_prune"] = True
         safety["reasons"].append("dead_worktree_reference")
         return safety
@@ -247,17 +290,10 @@ def audit_worktree_safety(
     dirty, dirty_reason = is_worktree_dirty(wt_path)
     if dirty:
         safety["dirty"] = True
-        safety["reasons"].append(f"uncommitted_changes ({dirty_reason})")
-
-    # 3. Lease Lifecycle Guard
-    lease = leases.get(wt_path.name) or leases.get(branch)
-    if not lease and wt.get("path"):
-        lease = leases.get(wt.get("path"))
-    if lease:
-        active_lease, reason = is_lease_active(lease)
-        if active_lease:
-            safety["active_lease"] = True
-            safety["reasons"].append(reason)
+        if dirty_reason.startswith("git_status_failed"):
+            safety["reasons"].append(dirty_reason)
+        else:
+            safety["reasons"].append(f"uncommitted_changes ({dirty_reason})")
 
     # 4. Branch Merge Guard
     merged = is_branch_merged(repo, branch)
@@ -313,10 +349,6 @@ def prune_worktrees_safe(
         "errors": [],
     }
 
-    # 1. Prune dead worktrees from git metadata first
-    if not dry_run:
-        command(["git", "-C", str(repo), "worktree", "prune"])
-
     for wt in wts:
         if wt.get("is_primary"):
             continue
@@ -334,8 +366,6 @@ def prune_worktrees_safe(
         # If it's a dead worktree reference
         if not audit["exists"]:
             if not dry_run:
-                if wt.get("locked"):
-                    command(["git", "-C", str(repo), "worktree", "unlock", str(wt_path)])
                 command(["git", "-C", str(repo), "worktree", "prune"])
                 branch = wt.get("branch", "")
                 if branch and branch.startswith(("ticket/", "ticket-")) and is_branch_merged(repo, branch):

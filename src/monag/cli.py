@@ -259,6 +259,8 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='mode')
     status = sub.add_parser('status', parents=[common_sub_parser], help='one snapshot and exit')
     status.add_argument('--record', action='store_true', help='save changes to local history')
+    status.add_argument('--deadline-seconds', dest='deadline_seconds', type=float, default=None,
+                        help='bound repository scan time in seconds and return explicit completeness metadata')
     drift_parser = sub.add_parser('drift', parents=[common_sub_parser],
                                   help='read-only SSOT check: every fact has one owner, every copy must match')
     drift_parser.add_argument('--spec', type=Path, required=True, help='monag.ssot-drift/v1 JSON specification')
@@ -592,6 +594,8 @@ def main(argv=None):
                 else:
                     lines = [
                         f"Store: {cov['store_status']}",
+                        f"Coverage: {cov['coverage_status']}",
+                        f"Fleet health established: {cov['fleet_health_established']}",
                         f"Activity: {cov['activity_status']}",
                         f"Task telemetry: {cov['task_telemetry_status']}",
                         f"Total events: {cov['total_events']}",
@@ -610,12 +614,14 @@ def main(argv=None):
                     print(json.dumps(data, ensure_ascii=True))
                 else:
                     header = []
-                    if cov['observation_gap']:
+                    if not cov.get('coverage_available', False):
+                        header.append(f"[UNAVAILABLE] Historical coverage unavailable for {cov['window_hours']}h window (store={cov['store_status']}, window_events={cov['window_events']}).")
+                    elif cov['observation_gap']:
                         header.append(f"[WARNING] Observation gap detected: latest sample is {cov['last_sample_age_seconds']}s old (exceeds window of {cov['window_hours']}h).")
                     elif cov['task_telemetry_status'] in ('missing', 'zero_tasks') and cov['total_events'] > 0:
                         header.append(f"[NOTE] Task telemetry {cov['task_telemetry_status']}: {cov['total_events']} events, 0 tasks recorded.")
                     lines = header + [event_line(e) for e in data]
-                    print('\n'.join(lines) if lines else 'No recorded observations.')
+                    print('\n'.join(lines) if lines else 'No recorded observations (coverage unavailable).')
             return 0
         if args.mode in ('tools', 'apis'):
             from . import ecosystem
@@ -1263,7 +1269,8 @@ def main(argv=None):
             since = (datetime.now(timezone.utc) - timedelta(hours=args.hours)).isoformat()
             # Stable cache key for repeated scans in the same UTC day.
             data = snapshot(root, args.state_dir, args.depth, since, args.github, cache,
-                            registry, args.machine, args.all_users, args.open_files, args.agents_only)
+                            registry, args.machine, args.all_users, args.open_files, args.agents_only,
+                            deadline_seconds=getattr(args, 'deadline_seconds', None))
             data['detector_scope'] = sorted(args.agent)
             if getattr(args, 'record', False) or (args.mode == 'watch' and not args.no_record):
                 data['events'] = history.record(args.state_dir, data, getattr(args, 'retention_days', 7))
