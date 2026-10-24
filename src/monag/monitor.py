@@ -415,28 +415,64 @@ def checkout_of(cwd, root, machine):
     return None
 
 
-def repositories(root, depth, since, directories, machine, state):
+def repositories(root, depth, since, directories, machine, state, deadline=None):
     """Inspect checkouts; a watch refresh reuses a recent full scan and adds new agent checkouts."""
+    reused_cached = False
     if time.monotonic() >= state.get('next', 0):
         started = time.monotonic()
         paths, errors = discover(root, depth)
+        previous_rows = dict(state.get('rows', {}))
         state.clear()
-        state.update(paths=paths, errors=errors, checkouts={}, rows={}, started=started)
+        state.update(paths=paths, errors=errors, checkouts={}, rows={}, previous_rows=previous_rows, started=started)
+    else:
+        reused_cached = bool(state.get('rows'))
+    active_checkouts = set()
     for cwd in sorted(directories):
         # An agent's shell may work in another checkout than the agent host itself.
         if cwd not in state['checkouts']:
             state['checkouts'][cwd] = checkout_of(cwd, root, machine)
         checkout = state['checkouts'][cwd]
-        if checkout and checkout not in state['paths']:
-            state['paths'].append(checkout)
+        if checkout:
+            active_checkouts.add(checkout)
+            if checkout not in state['paths']:
+                state['paths'].append(checkout)
     missing = [p for p in state['paths'] if p not in state['rows']]
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        state['rows'].update(zip(missing, pool.map(lambda p: inspect_repo(p, since), missing)))
+    ordered_missing = [p for p in missing if p in active_checkouts] + [p for p in missing if p not in active_checkouts]
+    deferred = 0
+    used_cached_fallback = False
+    if deadline is not None:
+        for path in ordered_missing:
+            if time.monotonic() >= deadline and path not in active_checkouts:
+                deferred += 1
+                prev = state.get('previous_rows', {}).get(path)
+                if prev is not None:
+                    state['rows'][path] = dict(prev, cached=True)
+                    used_cached_fallback = True
+                continue
+            state['rows'][path] = inspect_repo(path, since)
+    else:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            state['rows'].update(zip(ordered_missing, pool.map(lambda p: inspect_repo(p, since), ordered_missing)))
+    total_discovered = len(state['paths'])
+    inspected_count = len(state['rows'])
+    scan_complete = deferred == 0 and inspected_count == total_discovered
+    if not scan_complete:
+        completeness = 'cached_partial' if (used_cached_fallback or reused_cached) else 'partial'
+    elif reused_cached:
+        completeness = 'cached_complete'
+    else:
+        completeness = 'complete'
+    state['scan_complete'] = scan_complete
+    state['completeness'] = completeness
+    state['repositories_discovered'] = total_discovered
+    state['repositories_inspected'] = inspected_count - (deferred if used_cached_fallback else 0)
+    state['repositories_deferred'] = deferred
     if 'next' not in state:
         # Large workspaces keep repository scanning to a bounded share of watch time.
         state['observed'] = time.monotonic()
-        state['next'] = state['observed'] + REFRESH_FACTOR * (state['observed'] - state['started'])
-    return [dict(state['rows'][p]) for p in state['paths']], list(state['errors'])
+        if scan_complete:
+            state['next'] = state['observed'] + REFRESH_FACTOR * (state['observed'] - state['started'])
+    return [dict(state['rows'][p]) for p in state['paths'] if p in state['rows']], list(state['errors'])
 
 
 def tree_cpu(agent, proc=Path('/proc')):
@@ -487,9 +523,11 @@ def checkout_agents(paths, agents):
 
 
 def snapshot(root, state_dir, depth=2, since='24 hours ago', github=False, cache=None,
-             registry=None, machine=False, all_users=False, open_files=False, agents_only=False):
+             registry=None, machine=False, all_users=False, open_files=False, agents_only=False,
+             deadline_seconds=None):
     """One observation; a cache shared by watch refreshes enables CPU activity and scan reuse."""
     start = time.monotonic()
+    deadline = (start + float(deadline_seconds)) if deadline_seconds is not None else None
     persistent = cache is not None
     cache = cache if persistent else {}
     tasks = task_records(state_dir, root, machine=machine)
@@ -497,10 +535,10 @@ def snapshot(root, state_dir, depth=2, since='24 hours ago', github=False, cache
                                open_files=open_files, reported=tasks)
     sampled = time.monotonic()
     repos, errors, age = [], [], None
+    state = cache.setdefault('repositories', {})
     if not agents_only:
         directories = {cwd for a in agents for cwd in a.get('working_directories', [a['cwd']]) if cwd}
-        state = cache.setdefault('repositories', {})
-        repos, errors = repositories(root, depth, since, directories, machine, state)
+        repos, errors = repositories(root, depth, since, directories, machine, state, deadline=deadline)
         age = round(time.monotonic() - state['observed'], 1)
     if persistent:
         activity(agents, cache.setdefault('cpu', {}), sampled)
@@ -535,6 +573,11 @@ def snapshot(root, state_dir, depth=2, since='24 hours ago', github=False, cache
             'all_users': all_users, 'agents_only': agents_only, 'open_files': open_files, 'observed_at': datetime.now(timezone.utc).isoformat(),
             'agents': agents, 'agent_count': len(agents), 'repositories': repos,
             'repositories_age_seconds': age,
+            'scan_complete': True if agents_only else bool(state.get('scan_complete', True)),
+            'completeness': 'agents_only' if agents_only else state.get('completeness', 'complete'),
+            'repositories_discovered': 0 if agents_only else int(state.get('repositories_discovered', len(repos))),
+            'repositories_inspected': 0 if agents_only else int(state.get('repositories_inspected', len(repos))),
+            'repositories_deferred': 0 if agents_only else int(state.get('repositories_deferred', 0)),
             'tasks': tasks, 'github': sorted(events, key=lambda e: e['updatedAt'], reverse=True),
             'errors': errors, 'inaccessible_processes': denied,
             'duration_seconds': round(time.monotonic() - start, 2)}

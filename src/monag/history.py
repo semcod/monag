@@ -137,6 +137,9 @@ def coverage(state_dir, hours=24, now=None):
     if not path.is_file():
         return {
             'store_status': 'unavailable',
+            'coverage_status': 'unavailable',
+            'coverage_available': False,
+            'fleet_health_established': False,
             'total_events': 0,
             'latest_observed': None,
             'latest_observed_iso': None,
@@ -164,6 +167,9 @@ def coverage(state_dir, hours=24, now=None):
         if total_events == 0 or latest_observed is None:
             return {
                 'store_status': 'empty',
+                'coverage_status': 'unavailable',
+                'coverage_available': False,
+                'fleet_health_established': False,
                 'total_events': 0,
                 'latest_observed': None,
                 'latest_observed_iso': None,
@@ -230,13 +236,22 @@ def coverage(state_dir, hours=24, now=None):
 
         if observation_gap:
             activity_status = 'gap_detected'
+            coverage_status = 'unavailable'
+            coverage_available = False
         elif window_events == 0:
             activity_status = 'no_activity'
+            coverage_status = 'unavailable'
+            coverage_available = False
         else:
             activity_status = 'active'
+            coverage_status = 'covered'
+            coverage_available = True
 
         return {
             'store_status': 'available',
+            'coverage_status': coverage_status,
+            'coverage_available': coverage_available,
+            'fleet_health_established': coverage_available,
             'total_events': total_events,
             'latest_observed': latest_observed,
             'latest_observed_iso': latest_iso,
@@ -288,3 +303,26 @@ def read(state_dir, limit=50, kind=None, search=None, hours=24, now=None, exclud
                 for when, event_kind, payload in rows]
     finally:
         db.close()
+
+
+def report(state_dir, limit=50, kind=None, search=None, hours=24, now=None, exclude_metadata_churn=False):
+    """Return historical events paired with explicit coverage and gap metadata."""
+    cov = coverage(state_dir, hours=hours, now=now)
+    events = read(
+        state_dir,
+        limit=limit,
+        kind=kind,
+        search=search,
+        hours=hours,
+        now=now,
+        exclude_metadata_churn=exclude_metadata_churn,
+    )
+    return {
+        'coverage_status': cov['coverage_status'],
+        'coverage_available': cov['coverage_available'],
+        'fleet_health_established': cov['fleet_health_established'],
+        'window_hours': float(hours),
+        'event_count': len(events),
+        'coverage': cov,
+        'events': events,
+    }

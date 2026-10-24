@@ -120,9 +120,7 @@ def audit_worktrees(repo: Path) -> list[dict]:
 
         if not is_primary:
             leases = worktrees.get_repo_leases(repo)
-            lease = leases.get(wt_path.name) or leases.get(branch)
-            if not lease and wt_path_str:
-                lease = leases.get(wt_path_str)
+            lease = worktrees._resolve_worktree_lease(leases, wt_path, wt_path_str, branch)
             if lease:
                 has_active_lease, _ = worktrees.is_lease_active(lease)
 
@@ -180,8 +178,8 @@ def prune_and_remediate(repo: Path, stale_worktrees: list[dict], merged_branches
     for b in merged_branches:
         if b in deleted or b in active_branches:
             continue
-        lease = leases.get(b)
-        if lease and str(lease.get('status', '')).lower() == 'active':
+        lease = worktrees._resolve_worktree_lease(leases, Path(b), "", b)
+        if lease and worktrees.is_lease_active(lease)[0]:
             continue
         if is_branch_merged(repo, b):
             _, err = command(['git', '-C', str(repo), 'branch', '-d', b])

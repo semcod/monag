@@ -134,6 +134,33 @@ class DoctorTests(unittest.TestCase):
         self.assertIn('uncrash', KNOWN_TOOLS)
         self.assertIn('disaster recovery', KNOWN_TOOLS['uncrash']['role'])
 
+    def test_doctor_preserves_missing_worktree_and_branch_with_active_change_lease_v1(self):
+        import json
+        import shutil
+        repo = self.make_repo('service-lease-v1')
+        wt_dir = repo / '.worktrees' / 'ticket-401--leased'
+        self.git(repo, 'worktree', 'add', '-b', 'ticket/401-leased', str(wt_dir), 'main')
+        (wt_dir / 'f.txt').write_text('x\n')
+        self.git(wt_dir, 'add', 'f.txt')
+        self.git(wt_dir, 'commit', '-m', 'feat')
+        self.git(repo, 'merge', 'ticket/401-leased')
+
+        leases_dir = repo / '.subactor' / 'leases'
+        leases_dir.mkdir(parents=True, exist_ok=True)
+        (leases_dir / 'ticket-401--leased.json').write_text(json.dumps({
+            'schema': 'wellmanifest.change-lease/v1',
+            'ticketId': 'ticket-401',
+            'worktreeId': 'ticket-401--leased',
+            'branchRef': 'refs/heads/ticket/401-leased',
+            'phase': 'editing',
+            'ownerActor': 'agent:test',
+        }))
+        shutil.rmtree(wt_dir)
+
+        diag = diagnose(repo, fix=True)
+        self.assertEqual(diag['stale_worktrees_detected'], 0)
+        self.assertEqual(diag['remediated_worktrees'], 0)
+
 
 if __name__ == '__main__':
     unittest.main()

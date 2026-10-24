@@ -271,6 +271,54 @@ class MonitorTests(unittest.TestCase):
         p = subprocess.run([sys.executable, '-m', 'monag', 'watch', '--interval', 'nan'], capture_output=True)
         self.assertEqual(p.returncode, 2)
 
+    def test_empty_history_explicitly_reports_unavailable_coverage(self):
+        from monag import history
+        missing_state = self.root / 'missing-state'
+        cov_missing = history.coverage(missing_state, hours=8)
+        self.assertEqual(cov_missing['store_status'], 'unavailable')
+        self.assertEqual(cov_missing['coverage_status'], 'unavailable')
+        self.assertFalse(cov_missing['coverage_available'])
+        self.assertFalse(cov_missing['fleet_health_established'])
+        self.assertTrue(cov_missing['observation_gap'])
+
+        empty_state = self.root / 'empty-state'
+        db = history.connect(empty_state)
+        db.close()
+        cov_empty = history.coverage(empty_state, hours=8)
+        self.assertEqual(cov_empty['store_status'], 'empty')
+        self.assertEqual(cov_empty['coverage_status'], 'unavailable')
+        self.assertFalse(cov_empty['coverage_available'])
+        self.assertFalse(cov_empty['fleet_health_established'])
+        self.assertFalse(cov_empty['observation_gap'])
+
+        rep = history.report(empty_state, hours=8)
+        self.assertEqual(rep['coverage_status'], 'unavailable')
+        self.assertFalse(rep['coverage_available'])
+        self.assertEqual(rep['events'], [])
+
+    def test_deadline_bounded_snapshot_reports_completeness_and_prioritizes_active_checkout(self):
+        repo_active = self.repo()
+        repo_idle = self.root / 'org/idle'
+        repo_idle.mkdir(parents=True)
+        self.git(repo_idle, 'init', '-b', 'main')
+        self.git(repo_idle, 'config', 'user.name', 'Test')
+        self.git(repo_idle, 'config', 'user.email', 'test@example.invalid')
+        (repo_idle / 'idle.txt').write_text('idle')
+        self.git(repo_idle, 'add', '.')
+        self.git(repo_idle, 'commit', '-m', 'idle')
+
+        agent = dict(pid=42, start='1', kind='codex', cwd=str(repo_active), state='S', children=0, task='active')
+        cache = {}
+        with patch('monag.monitor.processes', return_value=([agent], 0)):
+            # Negative deadline forces non-active repositories to be deferred while active checkout is inspected
+            partial = snapshot(self.root, self.root / 'state', cache=cache, deadline_seconds=-1.0)
+        self.assertFalse(partial['scan_complete'])
+        self.assertEqual(partial['completeness'], 'partial')
+        self.assertEqual(partial['repositories_discovered'], 2)
+        self.assertEqual(partial['repositories_inspected'], 1)
+        self.assertEqual(partial['repositories_deferred'], 1)
+        self.assertEqual([r['path'] for r in partial['repositories']], [str(repo_active)])
+
 
 if __name__ == '__main__':
     unittest.main()
