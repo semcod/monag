@@ -4,6 +4,9 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import tempfile
+import unittest
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -202,3 +205,70 @@ def test_cli_main_entrypoint_execution():
     assert res.returncode == 0
     assert "monag" in res.stdout
 
+
+
+class CacheContextTests(unittest.TestCase):
+    """Also collected by the protected Monag unittest discovery profile."""
+
+    def setUp(self):
+        reset_cache_runner()
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        environment = mock.patch.dict(os.environ, {
+            "XDG_CACHE_HOME": str(self.root), "MONAG_GITHUB_READ_TTL": "60",
+            "MONAG_DISABLE_PROCACHE": "0",
+        })
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.addCleanup(reset_cache_runner)
+
+    def test_explicit_api_endpoint_reuses_cache_with_cwd(self):
+        args = ["gh", "api", "repos/semcod/example/issues/42"]
+        with mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args, 0, '{"id":42}', "")) as transport:
+            first = command(args, cwd=self.root)
+            second = command(args, cwd=self.root / "other")
+        self.assertEqual(first, ('{"id":42}', None))
+        self.assertEqual(second, first)
+        self.assertEqual(transport.call_count, 1)
+
+    def test_context_dependent_commands_bypass_cache(self):
+        from monag.cache import run_cached_gh
+        for args in (
+            ["gh", "pr", "list"],
+            ["gh", "api", "repos/{owner}/{repo}/issues"],
+            ["gh", "api", "repos/semcod/example/branches/{branch}"],
+            ["gh", "api", "graphql", "-f", 'query=query { repository(owner: "{owner}", name: "{repo}") { id } }'],
+        ):
+            with self.subTest(args=args), mock.patch("subprocess.run") as transport:
+                self.assertIsNone(run_cached_gh(args, cwd=self.root))
+                transport.assert_not_called()
+
+    def test_explicit_repository_options_cache_with_cwd(self):
+        for repo_option in (["--repo", "semcod/example"], ["--repo=semcod/example"],
+                            ["-R", "semcod/example"], ["-Rsemcod/example"]):
+            args = ["gh", "pr", "list", *repo_option]
+            with self.subTest(option=repo_option), mock.patch(
+                "subprocess.run", return_value=subprocess.CompletedProcess(args, 0, "[]", ""),
+            ) as transport:
+                self.assertEqual(command(args, cwd=self.root), ("[]", None))
+                self.assertEqual(command(args, cwd=self.root), ("[]", None))
+                self.assertEqual(transport.call_count, 1)
+
+    def test_zero_ttl_disables_an_initialized_runner_and_executes_once(self):
+        self.assertIsNotNone(get_cache_runner())
+        with mock.patch.dict(os.environ, {"MONAG_GITHUB_READ_TTL": "0"}):
+            args = ["gh", "api", "repos/semcod/example"]
+            self.assertIsNone(get_cache_runner())
+            with mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args, 0, "fresh", "")) as transport:
+                self.assertEqual(command(args, cwd=self.root), ("fresh", None))
+            self.assertEqual(transport.call_count, 1)
+            self.assertEqual(transport.call_args.kwargs["cwd"], self.root)
+
+    def test_cached_api_transport_failure_is_not_repeated_by_monitor(self):
+        args = ["gh", "api", "repos/semcod/example"]
+        with mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired(args, 8)) as transport:
+            stdout, error = command(args, cwd=self.root)
+        self.assertEqual(stdout, "")
+        self.assertIn("TimeoutExpired", error)
+        self.assertEqual(transport.call_count, 1)

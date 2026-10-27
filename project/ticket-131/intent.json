@@ -1,0 +1,76 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-131",
+  "summary": "Cache explicit GitHub API reads from repository monitors",
+  "workstream": "application",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-131/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/cache.py",
+    "tests/test_procache_integration.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "a373f608ca484389ac820eed576043e153f7f87d",
+    "targetBranch": "main",
+    "outcome": "Reuse canonical Procache for explicit GitHub API reads from repository monitors while preserving cwd-dependent command execution and zero-TTL bypass",
+    "nonGoals": [
+      "Dependency pin changes",
+      "Caching writes or authorization observations",
+      "Changing other writers integration files"
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 30,
+    "budgets": {
+      "maxImplementationFiles": 2,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Keep the existing canonical CachedReadCommand transport and admit only commands whose repository context is explicit",
+      "components": [
+        {
+          "name": "monitor-read-cache",
+          "paths": [
+            "src/monag/cache.py",
+            "tests/test_procache_integration.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the exact implementation through protected delivery"
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "python3 -B -m pytest -q tests/test_procache_integration.py tests/test_monitor.py",
+          "./project/governance-check.sh"
+        ],
+        "evidence": "Explicit API cache hits, cwd and placeholder bypass, zero-TTL and no duplicate failures"
+      }
+    ]
+  }
+}

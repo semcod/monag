@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from pathlib import Path
 from typing import Sequence, Tuple, Optional
 
@@ -27,9 +28,6 @@ def get_cache_runner(
     if not PROCACHE_AVAILABLE or os.environ.get("MONAG_DISABLE_PROCACHE") == "1":
         return None
 
-    if _runner is not None and ttl is None and cache_path is None:
-        return _runner
-
     path = Path(cache_path) if cache_path else _cache_path
     if path is None:
         cache_root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
@@ -44,6 +42,13 @@ def get_cache_runner(
             effective_ttl = 30.0
     except (TypeError, ValueError, OverflowError):
         effective_ttl = 30.0
+
+    # Zero disables caching, including a runner already initialized by an
+    # earlier monitor refresh. Let the caller execute directly once.
+    if effective_ttl == 0:
+        return None
+    if _runner is not None and ttl is None and cache_path is None:
+        return _runner
 
     try:
         cache = SQLiteResponseCache(path, namespace="github-user")
@@ -80,8 +85,10 @@ def run_cached_gh(
     if runner is None or not runner.is_read(args):
         return None
 
-    # If cwd is set and --repo is not explicitly specified, direct execution is safer
-    if cwd is not None and "--repo" not in args:
+    # CachedReadCommand does not accept cwd. gh api endpoints are explicit,
+    # except placeholders that gh resolves from the working repository.
+    # Repository subcommands need an explicit --repo/-R value instead.
+    if cwd is not None and not _has_explicit_context(args):
         return None
 
     try:
@@ -95,3 +102,16 @@ def run_cached_gh(
         # The provider may already have executed. Returning None would cause
         # monitor.command to repeat the request and bypass cooldown/failure.
         return "", f"gh cache: {type(error).__name__}"
+
+
+def _has_explicit_context(args: Sequence[str]) -> bool:
+    if len(args) > 1 and args[1] == "api":
+        return not any(re.search(r"\{(?:owner|repo|branch)\}", item) for item in args[2:])
+    for index, item in enumerate(args):
+        if item in {"--repo", "-R"}:
+            return index + 1 < len(args) and bool(args[index + 1]) and not args[index + 1].startswith("-")
+        if item.startswith("--repo=") and item.removeprefix("--repo="):
+            return True
+        if item.startswith("-R") and len(item) > 2:
+            return True
+    return False
