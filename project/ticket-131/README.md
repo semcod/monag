@@ -17,4 +17,6 @@ Reuse canonical Procache for explicit GitHub API reads from repository monitors 
 - [x] AC-02: Cache/monitor regressions and managed governance pass; failures never trigger duplicate transport calls.
 - [ ] AC-03: Observe protected publication separately from local checks and runtime deployment.
 
-Local verification: 48 scoped cache and monitor tests pass, with eight additional subtests, against the accepted canonical Procache source. Governance and scoped lint pass. No provider request is repeated after a cache/transport failure.
+Local verification: 42 scoped cache and monitor tests pass, with sixteen additional subtests, against the accepted canonical Procache source. Governance and scoped lint pass. No provider request is repeated after a cache/transport failure.
+
+The five context regression methods also pass under unittest discovery, matching the deployed protected Monag test collector. Existing accepted Procache emits SQLite ResourceWarnings; this ticket does not hide or change that dependency behavior.
