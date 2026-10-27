@@ -202,3 +202,54 @@ def test_cli_main_entrypoint_execution():
     assert res.returncode == 0
     assert "monag" in res.stdout
 
+
+
+def test_explicit_api_endpoint_reuses_cache_with_cwd(tmp_path):
+    args = ["gh", "api", "repos/semcod/example/issues/42"]
+    with mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args, 0, '{"id":42}', "")) as transport:
+        first = command(args, cwd=tmp_path)
+        second = command(args, cwd=tmp_path / "other")
+    assert first == second == ('{"id":42}', None)
+    assert transport.call_count == 1
+
+
+@pytest.mark.parametrize("args", [
+    ["gh", "pr", "list"],
+    ["gh", "api", "repos/{owner}/{repo}/issues"],
+    ["gh", "api", "repos/semcod/example/branches/{branch}"],
+    ["gh", "api", "graphql", "-f", "query=query { repository(owner: \"{owner}\", name: \"{repo}\") { id } }"],
+])
+def test_context_dependent_commands_bypass_cache(args, tmp_path):
+    from monag.cache import run_cached_gh
+    with mock.patch("subprocess.run") as transport:
+        assert run_cached_gh(args, cwd=tmp_path) is None
+    transport.assert_not_called()
+
+
+@pytest.mark.parametrize("repo_option", [["--repo", "semcod/example"], ["--repo=semcod/example"],
+                                         ["-R", "semcod/example"], ["-Rsemcod/example"]])
+def test_explicit_repository_options_cache_with_cwd(repo_option, tmp_path):
+    args = ["gh", "pr", "list", *repo_option]
+    with mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args, 0, "[]", "")) as transport:
+        assert command(args, cwd=tmp_path) == ("[]", None)
+        assert command(args, cwd=tmp_path) == ("[]", None)
+    assert transport.call_count == 1
+
+
+def test_zero_ttl_disables_an_initialized_runner_and_executes_once(monkeypatch, tmp_path):
+    assert get_cache_runner() is not None
+    monkeypatch.setenv("MONAG_GITHUB_READ_TTL", "0")
+    args = ["gh", "api", "repos/semcod/example"]
+    assert get_cache_runner() is None
+    with mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(args, 0, "fresh", "")) as transport:
+        assert command(args, cwd=tmp_path) == ("fresh", None)
+    assert transport.call_count == 1
+    assert transport.call_args.kwargs["cwd"] == tmp_path
+
+
+def test_cached_api_transport_failure_is_not_repeated_by_monitor(tmp_path):
+    args = ["gh", "api", "repos/semcod/example"]
+    with mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired(args, 8)) as transport:
+        stdout, error = command(args, cwd=tmp_path)
+    assert stdout == "" and "TimeoutExpired" in error
+    assert transport.call_count == 1
