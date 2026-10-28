@@ -162,7 +162,9 @@ def planfile(path):
                         finding=finding, kind='import_evidence',
                         historical=file.stem.startswith(('history-', 'archive-')),
                     ) for finding in evidence)
-                    status = str(item.get('status', 'unknown')).lower()
+                    # Planfile creates tasks as open; a legacy task without a status field
+                    # is unstarted work, not an ambiguous state that blocks the whole queue.
+                    status = str(item.get('status') or 'open').lower()
                     priority = normalize_priority(item.get('priority'))
                     result.append({'id': str(identity), 'status': status,
                                    'title': str(item.get('name', item.get('title', identity))),
