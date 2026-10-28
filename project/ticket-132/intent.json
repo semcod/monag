@@ -1,0 +1,76 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-132",
+  "summary": "Classify historical Planfile validation errors separately from canonical admission failures",
+  "workstream": "application",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-132/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/resume.py",
+    "tests/test_resume.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "c135615dbd07c3cc77a575dc12000d63d292ab40",
+    "targetBranch": "main",
+    "outcome": "Classify historical Planfile validation errors separately from canonical admission failures, ensuring unchanged inherited snapshots yield explicit historical warnings and canonical readiness while keeping malformed canonical data and changed peer stores blocking",
+    "nonGoals": [
+      "Blanket suppression of validation warnings",
+      "Worktree deletion or cleanup",
+      "Mutating historical snapshots or files",
+      "Bypassing repository ownership or governance boundaries"
+    ],
+    "complexity": "M",
+    "estimatedMinutes": 31,
+    "budgets": {
+      "maxImplementationFiles": 2,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Differentiate Planfile validation errors by source authority, changed-state, and admission reconciliation: unchanged noncanonical or historical copies yield explicit historical diagnostics, while malformed canonical data, changed peer stores, unresolved identities, and conflicts remain blocking admission errors",
+      "components": [
+        {
+          "name": "resume-diagnostics",
+          "paths": [
+            "src/monag/resume.py",
+            "tests/test_resume.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the exact implementation through protected delivery"
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python3 -B -m unittest tests/test_resume.py"
+        ],
+        "evidence": "Valid canonical tickets with unchanged malformed inherited copies yield historical diagnostics and complete canonical readiness; malformed canonical data, changed peer stores, unresolved identities and conflicts remain blocking"
+      }
+    ]
+  }
+}
