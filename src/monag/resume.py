@@ -69,6 +69,20 @@ def imported_record_evidence(key, item):
     return evidence
 
 
+class PlanfileDiagnostic(str):
+    """Diagnostic message preserving file, ticket, checkout, and historical context."""
+
+    def __new__(cls, message, *, file=None, ticket_id=None, checkout=None, finding=None, kind=None, historical=False):
+        obj = super().__new__(cls, str(message))
+        obj.file = str(file) if file is not None else None
+        obj.ticket_id = str(ticket_id) if ticket_id is not None else None
+        obj.checkout = str(checkout) if checkout is not None else None
+        obj.finding = finding
+        obj.kind = kind
+        obj.historical = bool(historical)
+        return obj
+
+
 def planfile(path):
     """Read supported active YAML sources, never projections or historical copies.
 
@@ -94,7 +108,11 @@ def planfile(path):
                 raise ValueError('invalid history index')
             locations = data['tickets']
         except (OSError, ValueError, yaml.YAMLError):
-            errors.append(f'{locator}: invalid history ownership index')
+            errors.append(PlanfileDiagnostic(
+                f'{locator}: invalid history ownership index',
+                file=locator, checkout=path, finding='invalid history ownership index',
+                kind='locator_error',
+            ))
     from functools import lru_cache
 
     @lru_cache(maxsize=128)
@@ -130,10 +148,20 @@ def planfile(path):
                         continue
                     identity = item.get('id') or key
                     if not identity:
-                        errors.append(f'{file}: ticket without stable ID omitted')
+                        errors.append(PlanfileDiagnostic(
+                            f'{file}: ticket without stable ID omitted',
+                            file=file, checkout=path, finding='missing stable id',
+                            kind='omitted_ticket',
+                            historical=file.stem.startswith(('history-', 'archive-')),
+                        ))
                         continue
                     evidence = imported_record_evidence(key, item)
-                    errors.extend(f'{file}: {key}: {finding}' for finding in evidence)
+                    errors.extend(PlanfileDiagnostic(
+                        f'{file}: {key}: {finding}',
+                        file=file, ticket_id=identity, checkout=path,
+                        finding=finding, kind='import_evidence',
+                        historical=file.stem.startswith(('history-', 'archive-')),
+                    ) for finding in evidence)
                     status = str(item.get('status', 'unknown')).lower()
                     priority = normalize_priority(item.get('priority'))
                     result.append({'id': str(identity), 'status': status,
@@ -150,11 +178,21 @@ def planfile(path):
                                    'github_binding': (item.get('sync') or {}).get('github', {})
                                    if isinstance(item.get('sync'), dict) else {}})
         except (OSError, ValueError, TypeError, yaml.YAMLError, RecursionError) as error:
-            errors.append(f'{file}: {type(error).__name__}')
+            errors.append(PlanfileDiagnostic(
+                f'{file}: {type(error).__name__}',
+                file=file, checkout=path, finding=type(error).__name__,
+                kind='file_error',
+                historical=file.stem.startswith(('history-', 'archive-')),
+            ))
     for identity, owner in locations.items():
         if any(row['id'] == identity for row in result) and not any(
                 row['id'] == identity and Path(row['source']).stem == owner for row in result):
-            errors.append(f'{locator}: {identity}: canonical history owner unavailable')
+            errors.append(PlanfileDiagnostic(
+                f'{locator}: {identity}: canonical history owner unavailable',
+                file=locator, ticket_id=identity, checkout=path,
+                finding='canonical history owner unavailable',
+                kind='missing_history_owner',
+            ))
     return result, sources, errors
 
 
@@ -216,6 +254,147 @@ def reconcile_ticket_sources(items, primary):
         stale.extend(dict(r, exclusion='noncanonical snapshot') for r in rows
                      if not any(r is candidate for candidate in candidates))
     return selected, stale
+
+
+def _find_checkout(file_path, rows=None, primary=None):
+    if not file_path:
+        return str(primary) if primary else None
+    try:
+        fp = Path(file_path).resolve()
+        if rows:
+            for r in rows:
+                rp = Path(r['path']).resolve()
+                try:
+                    fp.relative_to(rp)
+                    return str(r['path'])
+                except ValueError:
+                    pass
+    except Exception:
+        pass
+    return str(primary) if primary else None
+
+
+def _parse_diagnostic(diag, rows=None, primary=None):
+    if isinstance(diag, PlanfileDiagnostic):
+        return diag
+    s = str(diag)
+    m = re.match(r'^(.*?): ([^:]+): (missing inline id|missing priority|missing sync\.github mapping)$', s)
+    if m:
+        f, k, finding = m.group(1), m.group(2), m.group(3)
+        chk = _find_checkout(f, rows, primary)
+        return PlanfileDiagnostic(s, file=f, ticket_id=k, checkout=chk, finding=finding,
+                                  kind='import_evidence',
+                                  historical=Path(f).stem.startswith(('history-', 'archive-')))
+    m = re.match(r'^(.*?): ticket without stable ID omitted$', s)
+    if m:
+        f = m.group(1)
+        chk = _find_checkout(f, rows, primary)
+        return PlanfileDiagnostic(s, file=f, ticket_id=None, checkout=chk, finding='missing stable id',
+                                  kind='omitted_ticket',
+                                  historical=Path(f).stem.startswith(('history-', 'archive-')))
+    m = re.match(r'^(.*?): ([^:]+): canonical history owner unavailable$', s)
+    if m:
+        f, k = m.group(1), m.group(2)
+        chk = _find_checkout(f, rows, primary)
+        return PlanfileDiagnostic(s, file=f, ticket_id=k, checkout=chk,
+                                  finding='canonical history owner unavailable',
+                                  kind='missing_history_owner')
+    parts = s.split(':', 1)
+    f = parts[0].strip() if len(parts) > 1 else None
+    chk = _find_checkout(f, rows, primary) if f else (str(primary) if primary else None)
+    return PlanfileDiagnostic(s, file=f, ticket_id=None, checkout=chk, kind='general')
+
+
+def classify_diagnostics(failures, canonical, stale, primary, rows=None):
+    """Classify Planfile diagnostics into canonical admission failures and historical warnings.
+
+    Admission failures (blocking):
+      - Malformed canonical tickets (import evidence, invalid priority/status).
+      - Diagnostics from changed peer stores (source_changed == True).
+      - Unresolved external identities or conflicting bindings.
+      - Structural index/file failures in authoritative or changed stores.
+
+    Historical diagnostics (warnings):
+      - Validation findings on unchanged inherited copies or historical snapshots
+        that were excluded as noncanonical snapshots in favor of a valid canonical ticket.
+    """
+    canonical_errors, historical_diagnostics = [], []
+    rows = rows or []
+    changed_by_checkout = {str(r['path']): set(r.get('changed_paths', [])) for r in rows}
+
+    def _is_changed(file_str, checkout_str):
+        if not file_str or not checkout_str:
+            return False
+        try:
+            rel = str(Path(file_str).resolve().relative_to(Path(checkout_str).resolve()))
+        except (ValueError, Exception):
+            return False
+        changed = changed_by_checkout.get(str(checkout_str), set())
+        return any(rel == name or (name.endswith('/') and rel.startswith(name)) for name in changed)
+
+    canonical_by_id = {}
+    for r in canonical:
+        canonical_by_id.setdefault(str(r.get('id')), []).append(r)
+
+    stale_by_id = {}
+    for r in stale:
+        stale_by_id.setdefault(str(r.get('id')), []).append(r)
+
+    for item in failures:
+        d = _parse_diagnostic(item, rows, primary)
+        ticket_id = d.ticket_id
+
+        # Missing history owner and index failures always remain blocking
+        if d.kind in ('missing_history_owner', 'locator_error') or 'canonical history owner unavailable' in str(d):
+            canonical_errors.append(d)
+            continue
+
+        if not ticket_id:
+            # File-level errors or tickets without stable ID
+            if d.checkout == str(primary) or _is_changed(d.file, d.checkout):
+                canonical_errors.append(d)
+            else:
+                historical_diagnostics.append(d)
+            continue
+
+        can_rows = canonical_by_id.get(ticket_id, [])
+        stale_rows = stale_by_id.get(ticket_id, [])
+
+        is_stale_source = any(
+            (d.file and Path(r.get('source', '')).resolve() == Path(d.file).resolve()) or
+            (d.checkout and str(r.get('checkout', '')) == str(d.checkout))
+            for r in stale_rows
+        )
+
+        file_changed = _is_changed(d.file, d.checkout)
+
+        can_is_valid = bool(can_rows) and all(
+            not c.get('import_evidence') and
+            c.get('priority') in PLANFILE_PRIORITIES and
+            c.get('status') in (OPEN | CLOSED) and
+            not c.get('priority_conflict') and
+            not c.get('identity_collision')
+            for c in can_rows
+        )
+
+        all_ticket_records = can_rows + stale_rows
+        has_identity_collision = len(identity_bindings(all_ticket_records)) > 1
+
+        is_in_canonical = any(
+            (d.file and Path(c.get('source', '')).resolve() == Path(d.file).resolve()) or
+            (d.checkout and str(c.get('checkout', '')) == str(d.checkout))
+            for c in can_rows
+        )
+
+        if (not file_changed and
+                can_is_valid and
+                not has_identity_collision and
+                (is_stale_source or (d.historical and not is_in_canonical))):
+            historical_diagnostics.append(d)
+        else:
+            canonical_errors.append(d)
+
+    return canonical_errors, historical_diagnostics
 
 
 def summarize_tickets(items, priorities=None):
@@ -464,15 +643,20 @@ def scan(root, depth=2, sort='backlog', priorities=None):
                             name.endswith('/') and relative.startswith(name)) for name in row['changed_paths'])
                     items.extend(tickets); sources.extend(files); ticket_errors.extend(failures)
             canonical, stale = reconcile_ticket_sources(items, primary)
+            canonical_errors, historical_diagnostics = classify_diagnostics(
+                ticket_errors, canonical, stale, primary, rows
+            )
             summary = summarize_tickets(canonical, priority_filter)
             summary['stale_copies'] = stale
             summary['available'] = bool(sources)
-            summary['complete'] = (bool(sources) and not ticket_errors and
+            summary['complete'] = (bool(sources) and not canonical_errors and
                                    not summary['unknown_statuses'] and
                                    not summary['conflicting_statuses'] and
                                    not summary['priority_conflicts'] and not summary['identity_collisions'])
+            summary['historical_diagnostics'] = historical_diagnostics
             project = {'path': str(primary), 'checkouts': rows, 'planfile': summary,
-                       'planfile_sources': sources, 'errors': ticket_errors,
+                       'planfile_sources': sources, 'errors': canonical_errors,
+                       'historical_diagnostics': historical_diagnostics,
                        'priority_filter': priority_filter,
                        'unfinished_checkouts': sum(r['unfinished'] for r in rows),
                        'changed_files': sum(r['changed_files'] for r in rows),
@@ -540,7 +724,11 @@ def markdown(data, limit=12, all_projects=False):
         lines.extend(['', 'Przykład wejścia do pierwszego checkoutu:', '', '```bash', r['command'], '```',
                       '', 'Prompt do agenta (pełne prompty dla każdego checkoutu: `--json`):', '', r['prompt']])
     failures = data['errors'] + [e for p in data['projects'] for e in p['errors']] + [e for p in data['projects'] for r in p['checkouts'] for e in r['errors']]
-    lines.extend(['', f'Błędy odczytu: {len(failures)}. Projekty pokazane: {min(limit, len(selected))}/{len(selected)}.',
+    hist_count = sum(len(p.get('historical_diagnostics', [])) for p in data['projects'])
+    failures_text = f'Błędy odczytu: {len(failures)}'
+    if hist_count:
+        failures_text += f' (ostrzeżenia historyczne: {hist_count})'
+    lines.extend(['', f'{failures_text}. Projekty pokazane: {min(limit, len(selected))}/{len(selected)}.',
                   '', 'Złożoność XS/S/M/L pochodzi z intent; unknown oznacza brak deklaracji. '
                   'Etap opisuje Git, nie procent ukończenia. Planfile: bieżący sprint/backlog; '
                   'brak danych nie oznacza zera ticketów. Priorytet Planfile: critical > high > medium > normal > low; '

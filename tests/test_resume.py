@@ -363,3 +363,183 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(stream.getvalue())['schema'], 'monag.resume/v1')
         record.assert_not_called()
+
+    def test_unchanged_inherited_malformed_copy_yields_historical_diagnostics_and_canonical_readiness(self):
+        # Case 1 (acceptance): Valid canonical ticket in primary + unchanged malformed inherited copy in worktree
+        # Heyasa campaign scenario (PLF-034 / semcod/planfile#303 / ticket240)
+        # Worktree branched earlier with legacy backlog before canonical update
+        linked = self.repo / '.worktrees/ticket-132--feature'
+        self.git('worktree', 'add', '-b', 'ticket/132-feature', str(linked))
+        (linked / '.planfile/sprints').mkdir(parents=True)
+        (linked / '.planfile/sprints/backlog.yaml').write_text(
+            'sprint:\n  tickets:\n    ticket240:\n      name: Legacy backlog item\n      status: open\n'
+            '      backend: github\n'
+        )
+        self.git('add', '.planfile', cwd=linked)
+        self.git('commit', '-m', 'inherited legacy backlog', cwd=linked)
+        # Worktree has some unfinished work in a source file
+        (linked / 'some_code.py').write_text('pass')
+        self.git('add', 'some_code.py', cwd=linked)
+
+        # Primary store has updated valid canonical ticket
+        sprint = self.repo / '.planfile/sprints'
+        sprint.mkdir(parents=True)
+        (sprint / 'current.yaml').write_text(
+            'sprint:\n  tickets:\n    ticket240:\n      id: ticket240\n      status: open\n      priority: high\n'
+            '      backend: github\n      external_id: "240"\n      sync:\n        github:\n          id: "240"\n'
+        )
+        self.git('add', '.planfile')
+        self.git('commit', '-m', 'add canonical ticket240')
+        self.git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+
+        data = self.scan()
+        p = data['projects'][0]
+        # Canonical readiness is satisfied (complete == True)
+        self.assertTrue(p['planfile']['complete'])
+        # Blocking errors for project observation are empty
+        self.assertEqual(p['errors'], [])
+        # Historical diagnostics explicitly preserve missing field warnings
+        self.assertTrue(p['historical_diagnostics'])
+        self.assertTrue(any('missing priority' in str(d) for d in p['historical_diagnostics']))
+        self.assertTrue(any('missing sync.github mapping' in str(d) for d in p['historical_diagnostics']))
+        self.assertEqual(p['planfile']['historical_diagnostics'], p['historical_diagnostics'])
+        # The malformed copy is excluded as stale
+        self.assertEqual(len(p['planfile']['stale_copies']), 1)
+        self.assertEqual(p['planfile']['stale_copies'][0]['id'], 'ticket240')
+        self.assertEqual(p['planfile']['remaining_ids'], ['ticket240'])
+
+    def test_malformed_canonical_ticket_remains_blocking(self):
+        # Case 2: Malformed canonical data remains blocking
+        sprint = self.repo / '.planfile/sprints'
+        sprint.mkdir(parents=True)
+        (sprint / 'current.yaml').write_text(
+            'sprint:\n  tickets:\n    ticket240:\n      name: Incomplete canonical\n      status: open\n'
+            '      backend: github\n'
+        )
+        data = self.scan()
+        p = data['projects'][0]
+        self.assertFalse(p['planfile']['complete'])
+        self.assertTrue(p['errors'])
+        self.assertTrue(any('missing priority' in str(e) for e in p['errors']))
+        self.assertEqual(p['historical_diagnostics'], [])
+
+    def test_changed_peer_store_remains_blocking(self):
+        # Case 3: Locally edited peer store with malformed ticket remains blocking
+        sprint = self.repo / '.planfile/sprints'
+        sprint.mkdir(parents=True)
+        (sprint / 'current.yaml').write_text(
+            'sprint:\n  tickets:\n    ticket240:\n      id: ticket240\n      status: open\n      priority: high\n'
+            '      backend: github\n      external_id: "240"\n      sync:\n        github:\n          id: "240"\n'
+        )
+        self.git('add', '.planfile')
+        self.git('commit', '-m', 'canonical')
+
+        linked = self.repo / '.worktrees/ticket-133--peer'
+        self.git('worktree', 'add', '-b', 'ticket/133-peer', str(linked))
+        # Locally edit .planfile in peer store (source_changed == True)
+        (linked / '.planfile/sprints/backlog.yaml').write_text(
+            'sprint:\n  tickets:\n    ticket240:\n      name: Modified peer item\n      status: open\n'
+            '      backend: github\n'
+        )
+        data = self.scan()
+        p = data['projects'][0]
+        self.assertFalse(p['planfile']['complete'])
+        self.assertTrue(any('missing priority' in str(e) for e in p['errors']))
+
+    def test_unresolved_external_identities_remain_blocking(self):
+        # Case 4: Unresolved external identities / collision remain blocking
+        sprint = self.repo / '.planfile/sprints'
+        sprint.mkdir(parents=True)
+        (sprint / 'current.yaml').write_text(
+            'sprint:\n  tickets:\n    ticket240:\n      id: ticket240\n      status: open\n      priority: high\n'
+            '      backend: github\n      external_id: "240"\n      sync:\n        github:\n          id: "240"\n'
+        )
+        self.git('add', '.planfile')
+        self.git('commit', '-m', 'canonical')
+
+        linked = self.repo / '.worktrees/ticket-134--collision'
+        self.git('worktree', 'add', '-b', 'ticket/134-collision', str(linked))
+        (linked / 'dirty.txt').write_text('dirty')
+        # Worktree has conflicting GitHub issue binding AND missing priority
+        (linked / '.planfile/sprints/backlog.yaml').write_text(
+            'sprint:\n  tickets:\n    ticket240:\n      id: ticket240\n      status: open\n'
+            '      backend: github\n      external_id: "999"\n      sync:\n        github:\n          id: "999"\n'
+        )
+        self.git('add', '.planfile', cwd=linked)
+        self.git('commit', '-m', 'conflicting binding', cwd=linked)
+
+        data = self.scan()
+        p = data['projects'][0]
+        self.assertFalse(p['planfile']['complete'])
+        self.assertTrue(len(p['planfile']['identity_collisions']) >= 1)
+        self.assertTrue(any('missing priority' in str(e) for e in p['errors']))
+
+    def test_historical_primary_snapshot_superseded_by_canonical_is_warning(self):
+        # Case 5: Primary repo has valid active sprint, and an unchanged historical file with malformed legacy entry
+        sprint = self.repo / '.planfile/sprints'
+        sprint.mkdir(parents=True)
+        (sprint / 'current.yaml').write_text(
+            'sprint:\n  tickets:\n    ticket240:\n      id: ticket240\n      status: open\n      priority: high\n'
+            '      backend: github\n      external_id: "240"\n      sync:\n        github:\n          id: "240"\n'
+        )
+        (sprint / 'history-2026-09-19.yaml').write_text(
+            'sprint:\n  tickets:\n    ticket240:\n      status: open\n      backend: github\n'
+        )
+        self.git('add', '.planfile')
+        self.git('commit', '-m', 'add planfiles')
+        self.git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+        data = self.scan()
+        p = data['projects'][0]
+        self.assertTrue(p['planfile']['complete'])
+        self.assertEqual(p['errors'], [])
+        self.assertTrue(any('history-2026-09-19.yaml' in str(d) for d in p['historical_diagnostics']))
+
+    def test_classify_diagnostics_direct_unit(self):
+        # Direct unit test for classify_diagnostics helper
+        canonical = [{'id': 'T1', 'priority': 'high', 'status': 'open', 'import_evidence': [], 'source': '/repo/current.yaml', 'checkout': '/repo'}]
+        stale = [{'id': 'T1', 'priority': 'unknown', 'status': 'open', 'import_evidence': ['missing priority'], 'source': '/wt/backlog.yaml', 'checkout': '/wt', 'exclusion': 'noncanonical snapshot'}]
+        rows = [{'path': '/repo', 'changed_paths': []}, {'path': '/wt', 'changed_paths': []}]
+        failures = ['/wt/backlog.yaml: T1: missing priority']
+
+        # Stale unchanged peer diagnostic -> historical
+        can_err, hist_diag = resume.classify_diagnostics(failures, canonical, stale, '/repo', rows)
+        self.assertEqual(can_err, [])
+        self.assertEqual(len(hist_diag), 1)
+        self.assertEqual(hist_diag[0].ticket_id, 'T1')
+
+        # Changed peer diagnostic -> blocking
+        rows_changed = [{'path': '/repo', 'changed_paths': []}, {'path': '/wt', 'changed_paths': ['backlog.yaml']}]
+        can_err, hist_diag = resume.classify_diagnostics(failures, canonical, stale, '/repo', rows_changed)
+        self.assertEqual(len(can_err), 1)
+        self.assertEqual(hist_diag, [])
+
+    def test_consumer_compatibility_and_markdown(self):
+        # Verify JSON serialization, markdown, and export compatibility
+        sprint = self.repo / '.planfile/sprints'
+        sprint.mkdir(parents=True)
+        (sprint / 'current.yaml').write_text(
+            'sprint:\n  tickets:\n    ticket240:\n      id: ticket240\n      status: open\n      priority: high\n'
+            '      backend: github\n      external_id: "240"\n      sync:\n        github:\n          id: "240"\n'
+        )
+        (sprint / 'history-2026-09-19.yaml').write_text(
+            'sprint:\n  tickets:\n    ticket240:\n      status: open\n      backend: github\n'
+        )
+        self.git('add', '.planfile')
+        self.git('commit', '-m', 'add planfiles')
+        self.git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+        data = self.scan()
+        # JSON dump must succeed without TypeError
+        payload = json.loads(json.dumps(data))
+        self.assertTrue(payload['projects'][0]['planfile']['complete'])
+        self.assertEqual(payload['projects'][0]['errors'], [])
+        self.assertTrue(len(payload['projects'][0]['historical_diagnostics']) >= 1)
+
+        # Markdown must mention historical warnings without failing
+        md = resume.markdown(data, all_projects=True)
+        self.assertIn('ostrzeżenia historyczne', md)
+
+        # monag.export compatibility
+        from monag import export
+        context = export.resume_context(data)
+        self.assertEqual(len(context), 1)
+        self.assertEqual(context[0]['id'], 'ticket240')
