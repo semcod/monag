@@ -146,6 +146,12 @@ class ResumeTests(unittest.TestCase):
         self.assertFalse(result['planfile']['complete'])
         self.assertTrue(any('canonical history owner unavailable' in e for e in result['errors']))
 
+    def test_task_without_status_is_open_not_unknown(self):
+        (self.repo / 'planfile.yaml').write_text("tasks:\n- id: Q01\n  title: legacy task\n")
+        queue = self.scan()['projects'][0]['planfile']
+        self.assertEqual(queue['unknown_statuses'], 0)
+        self.assertEqual(queue['remaining_ids'], ['Q01'])
+
     def test_prefixed_ticket_and_path_disagreement(self):
         self.assertEqual(resume.ticket_identity('ticket/PLF-084-feature'), 'ticket-PLF-084')
         self.assertEqual(resume.ticket_identity('ticket-115--feature'), 'ticket-115')

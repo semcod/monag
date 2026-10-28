@@ -1,0 +1,75 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-133",
+  "summary": "Read a Planfile task without status as open, matching Planfile's default",
+  "workstream": "application",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-133/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/resume.py",
+    "tests/test_resume.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "d50d1bf7d55b304e603cb5e4438cbcbd904f8507",
+    "targetBranch": "main",
+    "outcome": "monag resume reads a Planfile task without a status field as open (Planfile's own default) instead of unknown, so one legacy statusless task no longer marks the whole queue ambiguous and blocks autonomous intake",
+    "nonGoals": [
+      "Changing explicit statuses or conflict detection",
+      "Editing target repositories' planfiles"
+    ],
+    "complexity": "XS",
+    "estimatedMinutes": 10,
+    "budgets": {
+      "maxImplementationFiles": 2,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Align the missing-status default with planfile.core (status='open'); explicit unknown values still count as unknown",
+      "components": [
+        {
+          "name": "resume",
+          "paths": [
+            "src/monag/resume.py",
+            "tests/test_resume.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the commit"
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "python -m unittest tests.test_resume",
+          "./project/governance-check.sh"
+        ],
+        "evidence": "36 resume tests pass including the statusless-task regression; managed gate passes"
+      }
+    ]
+  }
+}
