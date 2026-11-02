@@ -47,6 +47,10 @@ class EcosystemTests(unittest.TestCase):
         self.assertIn("monag", tools)
         self.assertIn("subllm", tools)
         self.assertIn("koru", tools)
+        self.assertIn("subactor-search", tools)
+        self.assertIn("code2logic", tools)
+        self.assertIn("reflex", tools)
+        self.assertIn("heyasa", tools)
 
         git_tool = tools["git"]
         self.assertIsInstance(git_tool, ToolCapability)
@@ -133,6 +137,29 @@ class EcosystemTests(unittest.TestCase):
         # Test alias 'apis'
         code_apis = main(["apis", "--json"])
         self.assertEqual(code_apis, 0)
+
+    def test_search_integration_and_d1_reranking(self):
+        from monag import search_integration
+        from monag.advise import _find_search_runner
+
+        # Test runner discovery
+        runner = _find_search_runner()
+        self.assertIn(runner, {"import", "cli", None})
+
+        # Test fallback when empty recommendations
+        empty = search_integration.rerank_recommendations_with_d1("query", [])
+        self.assertEqual(empty, [])
+
+        # Test single candidate passthrough
+        single = [{"id": "cand-1", "title": "Test candidate"}]
+        res = search_integration.rerank_recommendations_with_d1("query", single)
+        self.assertEqual(res, single)
+
+        # Test discover_code_intents on a temporary directory with python files
+        py_file = self.root / "sample_mod.py"
+        py_file.write_text("def do_something():\n    '''Performs an action.'''\n    return 42\n")
+        intents = search_integration.discover_code_intents(self.root)
+        self.assertIsInstance(intents, list)
 
 
 if __name__ == "__main__":

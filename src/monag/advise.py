@@ -90,6 +90,28 @@ def _find_algocode_runner() -> str | None:
     return None
 
 
+def _find_search_runner() -> str | None:
+    """Check if subactor_search is importable or available on PATH / workspace."""
+    try:
+        import subactor_search  # noqa: F401
+        return 'import'
+    except ImportError:
+        pass
+    for parent in [Path.cwd(), Path.home() / 'github', Path.home() / 'github' / 'semcod']:
+        s_dir = parent / 'search' / 'src'
+        if (s_dir / 'subactor_search').is_dir() and str(s_dir) not in sys.path:
+            sys.path.insert(0, str(s_dir))
+            try:
+                import subactor_search  # noqa: F401
+                return 'import'
+            except ImportError:
+                pass
+    import shutil
+    if shutil.which('subactor-search'):
+        return 'cli'
+    return None
+
+
 def verify_candidate_conflict(candidate: dict[str, Any], root: Path) -> dict[str, Any] | None:
     """Run deterministic conflict check using semcod/algocode if available."""
     runner = _find_algocode_runner()
@@ -683,6 +705,10 @@ def advise(root: Path, depth: int = 2, issue_limit: int = 200,
         'algocode': {
             'available': _find_algocode_runner() is not None,
             'runner': _find_algocode_runner(),
+        },
+        'search': {
+            'available': _find_search_runner() is not None,
+            'runner': _find_search_runner(),
         },
     }
 
