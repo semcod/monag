@@ -1,0 +1,27 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-134",
+  "summary": "integrate subactor-search code2logic and reflex into known tools and advise",
+  "workstream": "application",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-134/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/ecosystem.py",
+    "src/monag/search_integration.py",
+    "src/monag/advise.py",
+    "tests/test_ecosystem_tools.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}

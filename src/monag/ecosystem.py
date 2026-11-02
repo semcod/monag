@@ -52,6 +52,13 @@ KNOWN_TOOLS: dict[str, dict[str, Any]] = {
     "paxlet": {"role": "lightweight task paxlet runner", "aliases": ("paxlet",), "module": "paxlet"},
     "uncrash": {"role": "workspace state snapshots, agent session diagnostics, and disaster recovery", "aliases": ("uncrash",), "module": "uncrash"},
     "monag": {"role": "agent monitor, triage, doctor, and MCP server", "aliases": ("monag",), "module": "monag"},
+    "subactor-search": {"role": "intent & AST code search across repositories with Liquid D1 decision reranker", "aliases": ("subactor-search", "search"), "module": "subactor_search"},
+    "code2logic": {"role": "AST symbol and function extractor to function.toon notation", "aliases": ("code2logic",), "module": "code2logic"},
+    "reflex": {"role": "autonomous reflection, failure analysis and self-healing proposals", "aliases": ("reflex",), "module": "reflex"},
+    "heyasa": {"role": "fleet priority topology, calendar, and strategy execution map", "aliases": ("heyasa",), "module": "heyasa"},
+    "willman": {"role": "host governance, ticket allocation, and standards verification", "aliases": ("wellman", "willman"), "module": "wellman"},
+    "dockuri": {"role": "deterministic container execution and URI process isolation", "aliases": ("dockuri",), "module": "dockuri"},
+    "twinerd": {"role": "desktop observation, multimodal UI automation and verification", "aliases": ("twinerd",), "module": "twinerd"},
 }
 
 
