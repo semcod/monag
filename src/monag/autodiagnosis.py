@@ -13,10 +13,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import queue
 import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import yaml
@@ -75,10 +78,39 @@ def sort_tickets_by_priority(tickets: List[Dict[str, Any]]) -> List[Dict[str, An
 
 
 
+def _subllm_timeout_seconds() -> float:
+    try:
+        return max(0.05, float(os.environ.get("MONAG_SUBLLM_TIMEOUT_SECONDS", "6.0")))
+    except ValueError:
+        return 6.0
+
+
+def _invoke_runner_bounded(runner: Callable[[str], str], prompt: str, timeout_seconds: float) -> Optional[str]:
+    """Run one SubLLM synthesis call behind a non-blocking daemon thread wall-clock deadline."""
+    outcome: "queue.Queue[Tuple[bool, Any]]" = queue.Queue(maxsize=1)
+
+    def _target() -> None:
+        try:
+            outcome.put((True, runner(prompt)))
+        except Exception as exc:
+            outcome.put((False, exc))
+
+    worker = threading.Thread(target=_target, name="monag-subllm-synth", daemon=True)
+    worker.start()
+    try:
+        ok, value = outcome.get(timeout=max(0.05, timeout_seconds))
+    except queue.Empty:
+        return None
+    if not ok or not isinstance(value, str) or not value.strip():
+        return None
+    return value
+
+
 def _find_subllm_runner() -> Optional[Callable[[str], str]]:
     """Locate SubLLM client runner or return None if unavailable."""
     if os.environ.get("MONAG_DISABLE_SUBLLM") == "1":
         return None
+    call_timeout = _subllm_timeout_seconds()
     # 1. Direct Python import
     try:
         from subllm import complete  # noqa: F401
@@ -87,13 +119,13 @@ def _find_subllm_runner() -> Optional[Callable[[str], str]]:
         def _subllm_import_runner(prompt: str) -> str:
             messages = [{"role": "user", "content": prompt}]
             try:
-                resp = complete("koru-agent", "nl-to-koru-dsl", messages, timeout_seconds=30.0)
+                resp = complete("koru-agent", "nl-to-koru-dsl", messages, timeout_seconds=call_timeout)
                 if isinstance(resp, CompletionResponse):
                     return resp.content
                 return str(resp)
             except Exception:
                 try:
-                    resp = complete("todo2code", "semantic", messages, timeout_seconds=30.0)
+                    resp = complete("todo2code", "semantic", messages, timeout_seconds=call_timeout)
                     if isinstance(resp, CompletionResponse):
                         return resp.content
                     return str(resp)
@@ -116,13 +148,13 @@ def _find_subllm_runner() -> Optional[Callable[[str], str]]:
                 def _subllm_workspace_runner(prompt: str) -> str:
                     messages = [{"role": "user", "content": prompt}]
                     try:
-                        resp = complete("koru-agent", "nl-to-koru-dsl", messages, timeout_seconds=30.0)
+                        resp = complete("koru-agent", "nl-to-koru-dsl", messages, timeout_seconds=call_timeout)
                         if isinstance(resp, CompletionResponse):
                             return resp.content
                         return str(resp)
                     except Exception:
                         try:
-                            resp = complete("todo2code", "semantic", messages, timeout_seconds=30.0)
+                            resp = complete("todo2code", "semantic", messages, timeout_seconds=call_timeout)
                             if isinstance(resp, CompletionResponse):
                                 return resp.content
                             return str(resp)
@@ -138,7 +170,7 @@ def _find_subllm_runner() -> Optional[Callable[[str], str]]:
     if subllm_complete_bin:
         def _subllm_cli_runner(prompt: str) -> str:
             proc = subprocess.run([subllm_complete_bin, "koru-agent", "nl-to-koru-dsl"],
-                                  input=prompt, capture_output=True, text=True, timeout=30)
+                                  input=prompt, capture_output=True, text=True, timeout=max(1, int(call_timeout)))
             if proc.returncode == 0 and proc.stdout.strip():
                 return proc.stdout.strip()
             raise RuntimeError(f"subllm-complete CLI failed: {proc.stderr.strip()}")
@@ -652,15 +684,33 @@ def synthesize_tickets_with_subllm(anomalies: Any,
     else:
         anom_list = list(anomalies or [])
 
+    call_timeout = _subllm_timeout_seconds()
+    try:
+        budget_seconds = max(0.0, float(os.environ.get("MONAG_AUTODIAG_LLM_BUDGET_SECONDS", "18.0")))
+    except ValueError:
+        budget_seconds = 18.0
+    try:
+        max_failures = max(1, int(os.environ.get("MONAG_SUBLLM_MAX_FAILURES", "2")))
+    except ValueError:
+        max_failures = 2
+
+    started_mono = time.monotonic()
+    consecutive_failures = 0
+    circuit_open = False
+
     tickets: List[Dict[str, Any]] = []
     for anom in anom_list:
         subllm_result: Optional[str] = None
-        if runner:
-            try:
-                prompt = _format_subllm_prompt(anom)
-                subllm_result = runner(prompt)
-            except Exception:
-                subllm_result = None
+        remaining_budget = budget_seconds - (time.monotonic() - started_mono)
+        if runner and not circuit_open and remaining_budget > 0.0:
+            prompt = _format_subllm_prompt(anom)
+            subllm_result = _invoke_runner_bounded(runner, prompt, min(call_timeout, remaining_budget))
+            if subllm_result:
+                consecutive_failures = 0
+            else:
+                consecutive_failures += 1
+                if consecutive_failures >= max_failures:
+                    circuit_open = True
 
         ticket_spec = _parse_subllm_response(subllm_result or "", anom)
 
@@ -954,7 +1004,7 @@ def dispatch_tickets_to_planfile(tickets: List[Dict[str, Any]], root: Path,
                 "status": "ready",
                 "execution": {
                     "state": "ready",
-                    "queue": "default",
+                    "queue": os.environ.get("MONAG_PLANFILE_QUEUE", "default") or "default",
                     "attempt": 0,
                     "max_attempts": 3,
                 },

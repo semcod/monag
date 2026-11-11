@@ -110,3 +110,27 @@ def test_json_file_source(tmp_path):
         {'id': 'polarity', 'owner': {'oql': 'tic.oql', 'key': 'device.tic.active_high'},
          'copies': [{'jsonfile': 'contract.json', 'json': 'pins.tx.active_high'}]}]}))
     assert drift.check(drift.load_spec(path))['summary']['match'] == 1
+
+
+def test_cli_discovers_default_spec_without_flag(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv('HOME', str(tmp_path / 'empty-home'))
+    monkeypatch.delenv('MONAG_DRIFT_SPEC', raising=False)
+    root = tmp_path / 'workspace'
+    (root / '.monag').mkdir(parents=True)
+    data = spec(tmp_path, store_tx='43')
+    for fact in data['facts']:
+        fact['copies'] = [c for c in fact['copies'] if 'http' not in c]
+    (root / '.monag' / 'drift.json').write_text(json.dumps(data))
+    assert main(['--root', str(root), 'drift', '--json']) == 0
+    assert json.loads(capsys.readouterr().out)['drift'] is False
+
+
+def test_cli_drift_without_any_spec_exits_2(tmp_path, monkeypatch):
+    monkeypatch.setenv('HOME', str(tmp_path / 'empty-home'))
+    monkeypatch.delenv('MONAG_DRIFT_SPEC', raising=False)
+    root = tmp_path / 'workspace'
+    root.mkdir()
+    with pytest.raises(SystemExit) as exc:
+        main(['--root', str(root), '--state-dir', str(tmp_path / 'state'), 'drift', '--json'])
+    assert exc.value.code == 2
+

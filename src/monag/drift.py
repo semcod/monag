@@ -24,6 +24,7 @@ derive a different representation (for example a status string).
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -34,6 +35,25 @@ SCHEMA = 'monag.ssot-drift/v1'
 FILE_KINDS = ('oql', 'env', 'quadlet', 'text', 'jsonfile')
 HTTP_TIMEOUT = 8
 SSH_TIMEOUT = 15
+
+
+def resolve_spec_path(explicit: Path | None = None, *, root: Path | None = None,
+                      state_dir: Path | None = None) -> Path | None:
+    """Resolve explicit --spec or discover default monag.ssot-drift/v1 specification."""
+    if explicit is not None:
+        return Path(explicit).expanduser()
+    env_spec = os.environ.get('MONAG_DRIFT_SPEC', '').strip()
+    if env_spec:
+        return Path(env_spec).expanduser()
+    candidates: list[Path] = [Path.home() / '.config' / 'monag' / 'drift.json']
+    if root is not None:
+        candidates.append(Path(root).expanduser() / '.monag' / 'drift.json')
+    if state_dir is not None:
+        candidates.append(Path(state_dir).expanduser() / 'drift.json')
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 class SourceError(Exception):

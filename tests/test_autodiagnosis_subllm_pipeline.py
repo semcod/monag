@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -152,6 +153,40 @@ class TestSubLLMTicketSynthesis(unittest.TestCase):
         self.assertIn("estimation", t)
         self.assertGreater(t["estimation"]["duration_p90_seconds"], 0)
         self.assertIn("planfile ticket done", t["description"])
+
+    def test_synthesize_tickets_bounds_hung_subllm_with_circuit_breaker(self):
+        anomalies = [
+            {
+                "code": "NO_README",
+                "tier": autodiagnosis.TIER_HYGIENE,
+                "severity": "WARNING",
+                "target": f"semcod/repo-{idx}",
+                "summary": "Missing README.md",
+                "evidence": "None",
+            }
+            for idx in range(8)
+        ]
+        calls = []
+
+        def hung_runner(prompt):
+            calls.append(prompt)
+            time.sleep(2.0)
+            return ""
+
+        started = time.monotonic()
+        with patch.dict(
+            os.environ,
+            {
+                "MONAG_SUBLLM_TIMEOUT_SECONDS": "0.08",
+                "MONAG_AUTODIAG_LLM_BUDGET_SECONDS": "1.0",
+                "MONAG_SUBLLM_MAX_FAILURES": "2",
+            },
+        ):
+            tickets = autodiagnosis.synthesize_tickets_with_subllm(anomalies, runner=hung_runner)
+        elapsed = time.monotonic() - started
+        self.assertEqual(len(tickets), 8)
+        self.assertEqual(len(calls), 2)
+        self.assertLess(elapsed, 0.8)
 
 
 class TestPlanfileDispatchAndKoruIntegration(unittest.TestCase):

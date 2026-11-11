@@ -263,7 +263,9 @@ def main(argv=None):
                         help='bound repository scan time in seconds and return explicit completeness metadata')
     drift_parser = sub.add_parser('drift', parents=[common_sub_parser],
                                   help='read-only SSOT check: every fact has one owner, every copy must match')
-    drift_parser.add_argument('--spec', type=Path, required=True, help='monag.ssot-drift/v1 JSON specification')
+    drift_parser.add_argument('--spec', type=Path, default=None,
+                              help='monag.ssot-drift/v1 JSON specification (defaults to $MONAG_DRIFT_SPEC, '
+                                   '~/.config/monag/drift.json, <root>/.monag/drift.json, or <state-dir>/drift.json)')
     doctor_parser = sub.add_parser('doctor', parents=[common_sub_parser], help='diagnose dependencies, worktrees, and process visibility')
     doctor_parser.add_argument('--fix', action='store_true', help='automatically prune orphaned worktrees, remove merged ticket branches, and run housekeeping')
     doctor_parser.add_argument('--safe-fix', dest='safe_fix', action='store_true', help='safely prune merged/clean worktrees and branches conforming to Wellmanifest Worktrees v5')
@@ -570,7 +572,12 @@ def main(argv=None):
             parser.error('retention-days must be between 1 and 365')
         if args.mode == 'drift':
             from . import drift
-            report = drift.check(drift.load_spec(args.spec.expanduser()))
+            spec_path = drift.resolve_spec_path(args.spec, root=args.root, state_dir=args.state_dir)
+            if spec_path is None:
+                parser.error('drift requires --spec PATH or an existing default spec '
+                             '($MONAG_DRIFT_SPEC, ~/.config/monag/drift.json, <root>/.monag/drift.json, '
+                             '<state-dir>/drift.json)')
+            report = drift.check(drift.load_spec(spec_path))
             if output_format == 'json':
                 print(json.dumps(report, indent=2, ensure_ascii=False))
             else:
