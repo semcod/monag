@@ -1,0 +1,28 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-135",
+  "summary": "bound autodiagnosis subllm synthesis budget and discover default drift spec",
+  "workstream": "application",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-135/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/autodiagnosis.py",
+    "src/monag/cli.py",
+    "src/monag/drift.py",
+    "tests/test_autodiagnosis_subllm_pipeline.py",
+    "tests/test_drift.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}
