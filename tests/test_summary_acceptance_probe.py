@@ -2,9 +2,8 @@
 import json
 import subprocess
 import sys
+import unittest
 from pathlib import Path
-
-import pytest
 
 PROBE = Path(__file__).resolve().parent / "acceptance" / "summary_probe.py"
 DAY = "2026-11-12"
@@ -24,54 +23,57 @@ def ticket(status, updated=None, **extra):
     return row
 
 
-def probe(view, files, day=DAY):
-    request = {"date": day, "view": view, "sprints": files}
+def probe(request):
     return subprocess.run([sys.executable, "-I", "-S", "-B", str(PROBE)], input=json.dumps(request),
                           capture_output=True, text=True, timeout=30)
 
 
-def answer(view, files):
-    done = probe(view, files)
-    assert done.returncode == 0, done.stderr
-    return json.loads(done.stdout)
+class SummaryAcceptanceProbeTests(unittest.TestCase):
+    def answer(self, view, files):
+        done = probe({"date": DAY, "view": view, "sprints": files})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_an_empty_tree_has_no_work(self):
+        self.assertEqual(self.answer("counts", {}),
+                         {"completed_count": 0, "completed_ids": [], "queued_count": 0})
+
+    def test_done_history_entries_are_completed(self):
+        files = {HISTORY: sprint({"PLF-1": ticket("done", STAMP), "PLF-2": ticket("done", STAMP)})}
+        self.assertEqual(self.answer("counts", files),
+                         {"completed_count": 2, "completed_ids": ["PLF-1", "PLF-2"], "queued_count": 0})
+
+    def test_the_current_queue_is_not_completed(self):
+        files = {"current.yaml.fast.json": sprint({"PLF-1": ticket("open"), "PLF-2": ticket("in_progress"),
+                                                   "PLF-3": ticket("blocked")})}
+        self.assertEqual(self.answer("counts", files),
+                         {"completed_count": 0, "completed_ids": [], "queued_count": 2})
+
+    def test_current_tickets_finished_today_are_completed_and_yesterday_is_not(self):
+        today = {"current.yaml.fast.json": sprint({"PLF-1": ticket("done", STAMP),
+                                                   "PLF-2": ticket("completed", STAMP)})}
+        self.assertEqual(self.answer("counts", today)["completed_ids"], ["PLF-1", "PLF-2"])
+        yesterday = {"current.yaml.fast.json": sprint({"PLF-1": ticket("done", "2026-11-11T20:00:00.000000+00:00")})}
+        self.assertEqual(self.answer("counts", yesterday)["completed_count"], 0)
+
+    def test_a_short_finish_time_is_reported_unchanged(self):
+        files = {HISTORY: sprint({"PLF-1": ticket("done", execution={"finished_at": "07:28:19"})})}
+        self.assertEqual(self.answer("times", files), {"finished_at": {"PLF-1": "07:28:19"}})
+
+    def test_the_probe_refuses_what_it_does_not_define(self):
+        changes = (
+            {"sprints": {"history-2026-11-11.yaml.fast.json": {}}},  # another day's history
+            {"sprints": {"../outside.json": {}}},
+            {"view": "everything"},
+        )
+        for change in changes:
+            with self.subTest(change=change):
+                request = {"date": DAY, "view": "counts", "sprints": {}}
+                request.update(change)
+                done = probe(request)
+                self.assertNotEqual(done.returncode, 0)
+                self.assertEqual(done.stdout, "")
 
 
-def test_an_empty_tree_has_no_work():
-    assert answer("counts", {}) == {"completed_count": 0, "completed_ids": [], "queued_count": 0}
-
-
-def test_done_history_entries_are_completed():
-    files = {HISTORY: sprint({"PLF-1": ticket("done", STAMP), "PLF-2": ticket("done", STAMP)})}
-    assert answer("counts", files) == {"completed_count": 2, "completed_ids": ["PLF-1", "PLF-2"], "queued_count": 0}
-
-
-def test_the_current_queue_is_not_completed():
-    files = {"current.yaml.fast.json": sprint({"PLF-1": ticket("open"), "PLF-2": ticket("in_progress"),
-                                               "PLF-3": ticket("blocked")})}
-    assert answer("counts", files) == {"completed_count": 0, "completed_ids": [], "queued_count": 2}
-
-
-def test_current_tickets_finished_today_are_completed_and_yesterday_is_not():
-    today = {"current.yaml.fast.json": sprint({"PLF-1": ticket("done", STAMP), "PLF-2": ticket("completed", STAMP)})}
-    assert answer("counts", today)["completed_ids"] == ["PLF-1", "PLF-2"]
-    yesterday = {"current.yaml.fast.json": sprint({"PLF-1": ticket("done", "2026-11-11T20:00:00.000000+00:00")})}
-    assert answer("counts", yesterday)["completed_count"] == 0
-
-
-def test_a_short_finish_time_is_reported_unchanged():
-    files = {HISTORY: sprint({"PLF-1": ticket("done", execution={"finished_at": "07:28:19"})})}
-    assert answer("times", files) == {"finished_at": {"PLF-1": "07:28:19"}}
-
-
-@pytest.mark.parametrize("request_change", [
-    {"sprints": {"history-2026-11-11.yaml.fast.json": {}}},  # another day's history
-    {"sprints": {"../outside.json": {}}},
-    {"view": "everything"},
-])
-def test_the_probe_refuses_what_it_does_not_define(request_change):
-    request = {"date": DAY, "view": "counts", "sprints": {}}
-    request.update(request_change)
-    done = subprocess.run([sys.executable, "-I", "-S", "-B", str(PROBE)], input=json.dumps(request),
-                          capture_output=True, text=True, timeout=30)
-    assert done.returncode != 0
-    assert done.stdout == ""
+if __name__ == "__main__":
+    unittest.main()
