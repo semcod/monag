@@ -1,0 +1,31 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-137",
+  "summary": "Wave 2 autonomy stall probes, doctor budget, day/summary separation, and triage deduplication",
+  "workstream": "application",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-137/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/autodiagnosis.py",
+    "src/monag/cli.py",
+    "src/monag/doctor.py",
+    "src/monag/summary.py",
+    "src/monag/triage.py",
+    "src/monag/worktrees.py",
+    "tests/test_summary_and_subllm_routes.py",
+    "tests/test_wave2_mon01_mon04.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}

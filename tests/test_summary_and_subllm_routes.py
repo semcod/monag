@@ -22,7 +22,7 @@ def test_subllm_route_invocation_koru_agent():
             "koru-agent",
             "nl-to-koru-dsl",
             [{"role": "user", "content": "diagnose repo"}],
-            timeout_seconds=30.0,
+            timeout_seconds=6.0,
         )
 
 
@@ -43,7 +43,7 @@ def test_subllm_route_fallback_todo2code():
             "todo2code",
             "semantic",
             [{"role": "user", "content": "diagnose fallback"}],
-            timeout_seconds=30.0,
+            timeout_seconds=6.0,
         )
 
 
@@ -113,10 +113,11 @@ def test_gather_summary_and_markdown(tmp_path: Path):
         assert data["github"]["merged_prs_count"] == 2
 
         md = summary.format_markdown(data)
-        assert "MONAG Daily Execution Summary (2026-09-25)" in md
+        assert "MONAG Portfolio & Queue Summary (2026-09-25)" in md
         assert "**Wykonane dzisiaj**: `3` zadań" in md
         assert "**Oczekujące w kolejce**: `2` zadań (szacunkowo `45 min`" in md
         assert "**Otwarte PR w kolejce**: `1`" in md
         assert "**Zmergowane dzisiaj (>= 2026-09-25)**: `2`" in md
+        assert "źródło:" in md
         assert "Done Task 1" in md
         assert "Queued Task 1" in md

@@ -269,6 +269,8 @@ def main(argv=None):
     doctor_parser = sub.add_parser('doctor', parents=[common_sub_parser], help='diagnose dependencies, worktrees, and process visibility')
     doctor_parser.add_argument('--fix', action='store_true', help='automatically prune orphaned worktrees, remove merged ticket branches, and run housekeeping')
     doctor_parser.add_argument('--safe-fix', dest='safe_fix', action='store_true', help='safely prune merged/clean worktrees and branches conforming to Wellmanifest Worktrees v5')
+    doctor_parser.add_argument('--timeout', '--budget-seconds', dest='doctor_timeout', type=float, default=60.0,
+                               help='monotonic time budget in seconds for doctor diagnostics; returns partial structured output on deadline (default: 60.0)')
     wt_parser = sub.add_parser('worktrees', aliases=['wt'], parents=[common_sub_parser],
                                help='audit and safely prune worktrees conforming to Wellmanifest Worktrees v5')
     wt_parser.add_argument('worktree_action', nargs='?', choices=['list', 'audit', 'prune'], default='list',
@@ -463,10 +465,14 @@ def main(argv=None):
                                      help='target sprint for --feed-planfile (default: current)')
     autodiagnose_parser.add_argument('--emit-planfile', action='store_true',
                                      help='print synthesized tickets as Planfile JSON envelope')
-    summary_parser = sub.add_parser('summary', aliases=['day'], parents=[common_sub_parser],
-                                    help='aggregate daily execution summary: Planfile completed/queued tickets, GitHub PRs, and time estimates')
+    summary_parser = sub.add_parser('summary', parents=[common_sub_parser],
+                                    help='current portfolio and sprint queue snapshot with explicit source/scope/filter labels')
     summary_parser.add_argument('--no-github', dest='github', action='store_false',
                                 help='skip querying GitHub PR metrics for faster execution')
+    day_parser = sub.add_parser('day', parents=[common_sub_parser],
+                                help='24h operational delta (merged/opened PRs, completed/failed agent runs, new blockers) with explicit source labels')
+    day_parser.add_argument('--no-github', dest='github', action='store_false',
+                            help='skip querying GitHub PR metrics for faster execution')
     quality = sub.add_parser('quality', parents=[common_sub_parser],
                              help='read-only semcod/regix quality gate for ONE repository '
                                   '(--root must be a Git checkout, not a workspace); '
@@ -549,6 +555,8 @@ def main(argv=None):
                     'panel-interval must be >= 1 second, port-attempts must be >= 0')
     if args.mode == 'quality' and args.quality_timeout < 1:
         parser.error('quality-timeout must be >= 1 second')
+    if args.mode == 'doctor' and getattr(args, 'doctor_timeout', 60.0) <= 0:
+        parser.error('doctor --timeout must be > 0 seconds')
     stack = ExitStack()
     try:
         output_format = args.output
@@ -585,7 +593,18 @@ def main(argv=None):
             return int(report['drift'])
         if args.mode == 'doctor':
             fix = getattr(args, 'fix', False) or getattr(args, 'safe_fix', False)
-            data = diagnose(args.root.expanduser().resolve(), fix=fix)
+            doctor_timeout = getattr(args, 'doctor_timeout', 60.0)
+            progress_cb = None
+            if output_format != 'json' and sys.stderr.isatty():
+                def progress_cb(phase_name, payload):
+                    state = payload.get('state')
+                    if state == 'started':
+                        print(f'MONAG doctor: phase {phase_name}...', file=sys.stderr, flush=True)
+                    elif state == 'timed_out':
+                        print(f'MONAG doctor: phase {phase_name} reached time budget ({doctor_timeout}s); returning partial diagnostics.',
+                              file=sys.stderr, flush=True)
+            data = diagnose(args.root.expanduser().resolve(), fix=fix, budget_seconds=doctor_timeout,
+                            progress_callback=progress_cb)
             if output_format in {'terminal', 'markdown'}:
                 display_report(presentation.doctor_markdown(data))
             else:
@@ -1075,6 +1094,8 @@ def main(argv=None):
                 hours=getattr(args, 'hours', 24),
                 github=getattr(args, 'github', True),
                 depth=args.depth,
+                state_dir=args.state_dir,
+                mode=args.mode,
             )
             if output_format == 'json':
                 print(json.dumps(data, ensure_ascii=False, indent=2))
