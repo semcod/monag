@@ -20,11 +20,35 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import yaml
 
 SCHEMA = "monag.autodiagnosis/v1"
+
+DEFAULT_AUTONOMY_UNITS: Tuple[str, ...] = (
+    "subactor-coding-agent.service",
+    "subactor-pr-controller.service",
+    "subactor-repair-agent.service",
+    "subactor-autonom-user.service",
+    "heyasa.service",
+)
+
+AUTONOMY_UNIT_TARGETS: Dict[str, str] = {
+    "subactor-coding-agent.service": "subactor/coding-agent",
+    "subactor-pr-controller.service": "subactor/pr-controller",
+    "subactor-repair-agent.service": "subactor/repair-agent",
+    "subactor-autonom-user.service": "subactor/autonom",
+    "heyasa.service": "heyasa/heyasa",
+}
+
+DEFAULT_HEYASA_STATUS_URLS: Tuple[str, ...] = (
+    "http://127.0.0.1:8765/v1/daemon/status",
+    "http://127.0.0.1:7080/v1/daemon/status",
+)
 
 TIER_FLOOR = "floor"
 TIER_MISSION = "mission"
@@ -55,21 +79,51 @@ PRIORITY_ORDER = {
     "lowest": 4,
 }
 
+SEVERITY_ORDER = {
+    "CRITICAL": 0,
+    "HIGH": 1,
+    "ERROR": 2,
+    "WARNING": 3,
+    "INFO": 4,
+}
+
 
 def priority_sort_key(ticket_or_task: Dict[str, Any]) -> tuple:
-    """Sort key matching Wellmanifest lexicographic tiers and priority order.
+    """Sort key matching Operational Weight + Wellmanifest lexicographic tiers and priority order.
 
+    0. Operational stall weight: higher weight first (autonomy stalls > 0, repo hygiene = 0)
     1. Tier: floor (0) < mission (1) < hygiene (2) < backlog (3)
     2. Priority: critical (0) < high (1) < medium/normal (2) < low (3) < lowest (4)
     3. Created at: older first (FIFO)
     """
+    try:
+        weight = int(ticket_or_task.get("weight", 0) or 0)
+    except (TypeError, ValueError):
+        weight = 0
     tier = str(ticket_or_task.get("tier") or TIER_BACKLOG).lower()
     priority = str(ticket_or_task.get("priority") or "normal").lower()
     created_at = str(ticket_or_task.get("created_at") or "")
 
     tier_weight = TIER_ORDER.get(tier, 3)
     priority_weight = PRIORITY_ORDER.get(priority, 2)
-    return (tier_weight, priority_weight, created_at)
+    return (-weight, tier_weight, priority_weight, created_at)
+
+
+def anomaly_sort_key(anomaly: Dict[str, Any]) -> tuple:
+    """Sort raw anomalies so operational autonomy stalls always precede repo hygiene findings."""
+    try:
+        weight = int(anomaly.get("weight", 0) or 0)
+    except (TypeError, ValueError):
+        weight = 0
+    tier = str(anomaly.get("tier") or TIER_BACKLOG).lower()
+    severity = str(anomaly.get("severity") or "INFO").upper()
+    return (
+        -weight,
+        TIER_ORDER.get(tier, 3),
+        SEVERITY_ORDER.get(severity, 5),
+        str(anomaly.get("target") or ""),
+        str(anomaly.get("code") or ""),
+    )
 
 
 def sort_tickets_by_priority(tickets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -522,9 +576,401 @@ def inspect_repository_anomalies(repo_path: Path,
     return anomalies
 
 
+def _is_loopback_status_url(url: str) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    return (parsed.hostname or "").lower() in {"127.0.0.1", "localhost", "::1"}
+
+
+def _probe_systemd_user_units(
+    root: Path,
+    units: Sequence[str] = DEFAULT_AUTONOMY_UNITS,
+    timeout: float = 2.5,
+    runner: Optional[Callable[..., Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Read-only probe of known systemd --user autonomy units with short timeout."""
+    if not units:
+        return []
+    exec_run = runner or subprocess.run
+    try:
+        proc = exec_run(
+            [
+                "systemctl",
+                "--user",
+                "show",
+                *units,
+                "--property=Id,LoadState,ActiveState,SubState,Result,ExecMainStatus",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=max(0.2, float(timeout)),
+        )
+    except (FileNotFoundError, subprocess.SubprocessError, OSError):
+        return []
+
+    raw_out = getattr(proc, "stdout", "") or ""
+    if not isinstance(raw_out, str) or not raw_out.strip():
+        return []
+
+    anomalies: List[Dict[str, Any]] = []
+    blocks = [blk.strip() for blk in raw_out.split("\n\n") if blk.strip()]
+    for block in blocks:
+        props: Dict[str, str] = {}
+        for line in block.splitlines():
+            if "=" in line:
+                key, val = line.split("=", 1)
+                props[key.strip()] = val.strip()
+        unit_id = props.get("Id", "")
+        if not unit_id:
+            continue
+        load_state = props.get("LoadState", "").lower()
+        if load_state in ("", "not-found", "masked"):
+            continue
+        active_state = props.get("ActiveState", "").lower()
+        sub_state = props.get("SubState", "").lower()
+        result_state = props.get("Result", "").lower()
+        exec_status = props.get("ExecMainStatus", "")
+
+        target = AUTONOMY_UNIT_TARGETS.get(unit_id, "subactor/autonom")
+        target_path = root / target if (root / target).is_dir() else root
+
+        is_failed = (
+            active_state == "failed"
+            or sub_state == "failed"
+            or (result_state not in ("", "success") and active_state != "active")
+        )
+        if is_failed:
+            anomalies.append({
+                "code": "AUTONOMY_UNIT_FAILED",
+                "tier": TIER_FLOOR,
+                "severity": "CRITICAL",
+                "weight": 1000,
+                "autonomy_probe": True,
+                "target": target,
+                "path": str(target_path),
+                "summary": (
+                    f"Autonomy systemd --user unit '{unit_id}' failed "
+                    f"(ActiveState={active_state or 'unknown'}, Result={result_state or 'unknown'}, "
+                    f"ExecMainStatus={exec_status or 'n/a'})."
+                ),
+                "evidence": (
+                    f"systemctl --user show {unit_id}: LoadState={load_state}, "
+                    f"ActiveState={active_state}, SubState={sub_state}, "
+                    f"Result={result_state}, ExecMainStatus={exec_status}."
+                ),
+                "details": {
+                    "unit": unit_id,
+                    "load_state": load_state,
+                    "active_state": active_state,
+                    "sub_state": sub_state,
+                    "result": result_state,
+                    "exec_main_status": exec_status,
+                },
+            })
+        elif unit_id == "heyasa.service" and active_state in ("inactive", "deactivating"):
+            anomalies.append({
+                "code": "AUTONOMY_DAEMON_INACTIVE",
+                "tier": TIER_FLOOR,
+                "severity": "HIGH",
+                "weight": 920,
+                "autonomy_probe": True,
+                "target": target,
+                "path": str(target_path),
+                "summary": f"Autonomy orchestrator unit '{unit_id}' is loaded but {active_state}.",
+                "evidence": (
+                    f"systemctl --user show {unit_id}: LoadState={load_state}, "
+                    f"ActiveState={active_state}, SubState={sub_state}."
+                ),
+                "details": {
+                    "unit": unit_id,
+                    "load_state": load_state,
+                    "active_state": active_state,
+                    "sub_state": sub_state,
+                },
+            })
+
+    return anomalies
+
+
+def _extract_heyasa_flowguard(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract flowguard metrics from nested or flat /v1/daemon/status payloads."""
+    candidates = [
+        ((payload.get("last_result") or {}).get("willman") or {}).get("flowguard"),
+        (payload.get("willman") or {}).get("flowguard"),
+        payload.get("flowguard"),
+        payload,
+    ]
+    merged: Dict[str, Any] = {}
+    for obj in candidates:
+        if isinstance(obj, dict):
+            for key in (
+                "eligible_projects",
+                "admitted_slots",
+                "blocked_candidates",
+                "admitted_candidates",
+                "project_exclusions",
+                "blocked_reasons",
+            ):
+                if key not in merged and key in obj and obj[key] is not None:
+                    merged[key] = obj[key]
+    return merged
+
+
+def _probe_heyasa_daemon_status(
+    root: Path,
+    status_url: Optional[str] = None,
+    status_payload: Optional[Dict[str, Any]] = None,
+    timeout: float = 1.5,
+    opener: Optional[Callable[..., Any]] = None,
+) -> List[Dict[str, Any]]:
+    """Read-only loopback probe of local Heyasa /v1/daemon/status for dispatch or velocity stalls."""
+    payload: Optional[Dict[str, Any]] = status_payload
+    observed_url = status_url or os.environ.get("MONAG_HEYASA_STATUS_URL", "").strip()
+
+    if payload is None:
+        urls: Sequence[str] = (observed_url,) if observed_url else DEFAULT_HEYASA_STATUS_URLS
+        open_fn = opener or urllib.request.urlopen
+        for candidate_url in urls:
+            if not candidate_url or not _is_loopback_status_url(candidate_url):
+                continue
+            try:
+                req = urllib.request.Request(candidate_url, headers={"Accept": "application/json"}, method="GET")
+                with open_fn(req, timeout=max(0.2, float(timeout))) as resp:
+                    raw = resp.read(256 * 1024)
+                decoded = json.loads(raw.decode("utf-8", errors="replace") if isinstance(raw, (bytes, bytearray)) else str(raw))
+                if isinstance(decoded, dict):
+                    payload = decoded
+                    observed_url = candidate_url
+                    break
+            except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+                continue
+
+    if not isinstance(payload, dict):
+        return []
+
+    target = "heyasa/heyasa"
+    target_path = root / target if (root / target).is_dir() else root
+    flow = _extract_heyasa_flowguard(payload)
+    anomalies: List[Dict[str, Any]] = []
+
+    eligible = flow.get("eligible_projects")
+    admitted = flow.get("admitted_slots")
+    blocked = flow.get("blocked_candidates", 0)
+    blocked_reasons = flow.get("blocked_reasons") if isinstance(flow.get("blocked_reasons"), dict) else {}
+    exclusions = flow.get("project_exclusions") if isinstance(flow.get("project_exclusions"), dict) else {}
+
+    try:
+        eligible_int = int(eligible) if eligible is not None else None
+    except (TypeError, ValueError):
+        eligible_int = None
+    try:
+        admitted_int = int(admitted) if admitted is not None else None
+    except (TypeError, ValueError):
+        admitted_int = None
+    try:
+        blocked_int = int(blocked or 0)
+    except (TypeError, ValueError):
+        blocked_int = 0
+
+    if eligible_int is not None and eligible_int == 0:
+        anomalies.append({
+            "code": "AUTONOMY_ELIGIBLE_PROJECTS_ZERO",
+            "tier": TIER_FLOOR,
+            "severity": "CRITICAL",
+            "weight": 980,
+            "autonomy_probe": True,
+            "target": target,
+            "path": str(target_path),
+            "summary": (
+                f"Autonomy stall: Heyasa daemon reports 0 eligible projects "
+                f"(admitted_slots={admitted_int if admitted_int is not None else 'n/a'}, "
+                f"blocked_candidates={blocked_int})."
+            ),
+            "evidence": (
+                f"{observed_url or 'heyasa.daemon-status'}: eligible_projects=0, "
+                f"exclusions={len(exclusions)}, blocked_reasons={json.dumps(blocked_reasons, sort_keys=True)[:240]}."
+            ),
+            "details": {
+                "url": observed_url or "inline",
+                "eligible_projects": eligible_int,
+                "admitted_slots": admitted_int,
+                "blocked_candidates": blocked_int,
+                "blocked_reasons": blocked_reasons,
+            },
+        })
+
+    if admitted_int is not None and admitted_int == 0 and blocked_int > 0:
+        anomalies.append({
+            "code": "AUTONOMY_ADMISSION_STALL",
+            "tier": TIER_FLOOR,
+            "severity": "CRITICAL",
+            "weight": 960,
+            "autonomy_probe": True,
+            "target": target,
+            "path": str(target_path),
+            "summary": (
+                f"Autonomy admission stall: 0 admitted slots while {blocked_int} candidate tasks are blocked."
+            ),
+            "evidence": (
+                f"{observed_url or 'heyasa.daemon-status'}: admitted_slots=0, "
+                f"blocked_candidates={blocked_int}, reasons={json.dumps(blocked_reasons, sort_keys=True)[:240]}."
+            ),
+            "details": {
+                "url": observed_url or "inline",
+                "admitted_slots": admitted_int,
+                "blocked_candidates": blocked_int,
+                "blocked_reasons": blocked_reasons,
+            },
+        })
+
+    velocity = payload.get("velocity_status")
+    vel_stalled = False
+    vel_summary = ""
+    if isinstance(velocity, str):
+        if velocity.strip().lower() in {"stall", "stalled", "degraded", "zero", "blocked", "critical"}:
+            vel_stalled = True
+            vel_summary = f"velocity_status={velocity.strip()}"
+    elif isinstance(velocity, dict):
+        completed_cnt = velocity.get("completed_count")
+        open_cands = velocity.get("open_candidates_count") or 0
+        target_cap = velocity.get("target_capacity") or 0
+        status_label = str(velocity.get("status") or "").strip().lower()
+        if (
+            bool(velocity.get("is_degraded"))
+            or status_label in {"stall", "stalled", "degraded", "critical"}
+            or (completed_cnt == 0 and int(open_cands) > 0 and int(target_cap) > 0)
+        ):
+            vel_stalled = True
+            vel_summary = str(
+                velocity.get("summary")
+                or f"completed={completed_cnt}/{target_cap}, open_candidates={open_cands}"
+            )
+
+    if vel_stalled:
+        anomalies.append({
+            "code": "AUTONOMY_VELOCITY_STALL",
+            "tier": TIER_FLOOR,
+            "severity": "HIGH",
+            "weight": 930,
+            "autonomy_probe": True,
+            "target": target,
+            "path": str(target_path),
+            "summary": f"Autonomy velocity stall detected: {vel_summary[:180]}",
+            "evidence": f"{observed_url or 'heyasa.daemon-status'} velocity_status: {vel_summary[:300]}",
+            "details": {
+                "url": observed_url or "inline",
+                "velocity_status": velocity,
+            },
+        })
+
+    return anomalies
+
+
+def _probe_host_load_saturation(
+    root: Path,
+    load_fn: Optional[Callable[[], Tuple[float, float, float]]] = None,
+    cpu_count_fn: Optional[Callable[[], Optional[int]]] = None,
+    warning_ratio: float = 1.5,
+    critical_ratio: float = 2.0,
+) -> List[Dict[str, Any]]:
+    """Check 1-minute host load average against logical CPU count."""
+    get_load = load_fn or getattr(os, "getloadavg", None)
+    get_cpus = cpu_count_fn or os.cpu_count
+    if get_load is None:
+        return []
+    try:
+        load_1m, load_5m, load_15m = get_load()
+        cpus = max(1, int(get_cpus() or 1))
+    except (OSError, TypeError, ValueError):
+        return []
+
+    ratio = float(load_1m) / float(cpus)
+    if ratio <= warning_ratio:
+        return []
+
+    is_critical = ratio > critical_ratio
+    return [
+        {
+            "code": "HOST_LOAD_SATURATION",
+            "tier": TIER_FLOOR if is_critical else TIER_MISSION,
+            "severity": "CRITICAL" if is_critical else "WARNING",
+            "weight": 900 if is_critical else 850,
+            "autonomy_probe": True,
+            "target": "host/system",
+            "path": str(root),
+            "summary": (
+                f"Host CPU load saturation ({'critical' if is_critical else 'warning'}): "
+                f"1m load {load_1m:.2f} across {cpus} CPUs ({ratio:.2f}x capacity)."
+            ),
+            "evidence": (
+                f"os.getloadavg()=({load_1m:.2f}, {load_5m:.2f}, {load_15m:.2f}), "
+                f"os.cpu_count()={cpus}, ratio={ratio:.2f}x "
+                f"(thresholds: warning>{warning_ratio:.1f}x, critical>{critical_ratio:.1f}x)."
+            ),
+            "details": {
+                "load_1m": round(float(load_1m), 2),
+                "load_5m": round(float(load_5m), 2),
+                "load_15m": round(float(load_15m), 2),
+                "cpu_count": cpus,
+                "load_per_cpu": round(ratio, 3),
+            },
+        }
+    ]
+
+
+def probe_autonomy_health(
+    root: Path,
+    *,
+    units: Sequence[str] = DEFAULT_AUTONOMY_UNITS,
+    systemctl_timeout: float = 2.5,
+    systemctl_runner: Optional[Callable[..., Any]] = None,
+    heyasa_status_url: Optional[str] = None,
+    heyasa_payload: Optional[Dict[str, Any]] = None,
+    heyasa_timeout: float = 1.5,
+    http_opener: Optional[Callable[..., Any]] = None,
+    load_fn: Optional[Callable[[], Tuple[float, float, float]]] = None,
+    cpu_count_fn: Optional[Callable[[], Optional[int]]] = None,
+) -> List[Dict[str, Any]]:
+    """Run deterministic, read-only host & daemon autonomy stall probes."""
+    if os.environ.get("MONAG_DISABLE_AUTONOMY_PROBES") == "1":
+        return []
+    findings: List[Dict[str, Any]] = []
+    findings.extend(
+        _probe_systemd_user_units(
+            root=root,
+            units=units,
+            timeout=systemctl_timeout,
+            runner=systemctl_runner,
+        )
+    )
+    findings.extend(
+        _probe_heyasa_daemon_status(
+            root=root,
+            status_url=heyasa_status_url,
+            status_payload=heyasa_payload,
+            timeout=heyasa_timeout,
+            opener=http_opener,
+        )
+    )
+    findings.extend(
+        _probe_host_load_saturation(
+            root=root,
+            load_fn=load_fn,
+            cpu_count_fn=cpu_count_fn,
+        )
+    )
+    findings.sort(key=anomaly_sort_key)
+    return findings
+
+
 def diagnose_fleet(root: Path, depth: int = 2, db: Optional[Any] = None,
-                   use_cache: bool = True, state_dir: Optional[Path] = None) -> Dict[str, Any]:
-    """Scan workspace fleet for technical defects, governance drift, and ticket readiness."""
+                   use_cache: bool = True, state_dir: Optional[Path] = None,
+                   include_autonomy: bool = True) -> Dict[str, Any]:
+    """Scan workspace fleet for operational autonomy stalls, technical defects, and ticket readiness."""
     started = datetime.now(timezone.utc)
     repos: List[Path] = []
 
@@ -556,7 +1002,8 @@ def diagnose_fleet(root: Path, depth: int = 2, db: Optional[Any] = None,
             except Exception:
                 database = None
 
-    all_anomalies: List[Dict[str, Any]] = []
+    autonomy_anomalies: List[Dict[str, Any]] = probe_autonomy_health(root) if include_autonomy else []
+    repo_anomalies: List[Dict[str, Any]] = []
     cached_repos_count = 0
     repo_fingerprints: Dict[str, Tuple[str, str]] = {}
 
@@ -570,13 +1017,18 @@ def diagnose_fleet(root: Path, depth: int = 2, db: Optional[Any] = None,
                 cached = autodiag_store.get_cached_diagnosis(database, repo_str, head_sha, dirty_digest)
                 if cached is not None:
                     cached_anom, _ = cached
-                    all_anomalies.extend(cached_anom)
+                    repo_anomalies.extend(cached_anom)
                     cached_repos_count += 1
                     continue
             except Exception:
                 pass
 
-        all_anomalies.extend(inspect_repository_anomalies(r))
+        repo_anomalies.extend(inspect_repository_anomalies(r))
+
+    all_anomalies: List[Dict[str, Any]] = sorted(
+        [*autonomy_anomalies, *repo_anomalies],
+        key=anomaly_sort_key,
+    )
 
     return {
         "schema": SCHEMA,
@@ -584,6 +1036,7 @@ def diagnose_fleet(root: Path, depth: int = 2, db: Optional[Any] = None,
         "timestamp": started.isoformat(),
         "repositories_checked": len(repos),
         "repositories_cached": cached_repos_count,
+        "autonomy_anomalies_count": len(autonomy_anomalies),
         "anomalies_count": len(all_anomalies),
         "anomalies": all_anomalies,
         "_repo_fingerprints": repo_fingerprints,
@@ -652,10 +1105,24 @@ def _parse_subllm_response(text: str, fallback_anomaly: Dict[str, Any]) -> Dict[
         "GIT_CONFLICT_MARKERS": "Resolve merge conflicts, remove conflict markers, and verify syntax with git status and tests.",
         "BROKEN_VENV": "Recreate damaged virtual environment (.venv) and reinstall project dependencies.",
         "SYSTEM_LOG_ERROR": "Diagnose root cause of runtime system log error, apply code/configuration fix, and verify service stability with tests.",
+        "AUTONOMY_UNIT_FAILED": "Inspect failed systemd --user journal logs, repair unit configuration or runtime crash, and verify active service health.",
+        "AUTONOMY_DAEMON_INACTIVE": "Inspect heyasa.service user unit status and restart or re-enable autonomous orchestrator daemon.",
+        "AUTONOMY_ELIGIBLE_PROJECTS_ZERO": "Inspect Heyasa flowguard project_exclusions and unblock repository eligibility or lease gates.",
+        "AUTONOMY_ADMISSION_STALL": "Inspect Heyasa flowguard blocked_reasons and slot capacity to restore candidate admission.",
+        "AUTONOMY_VELOCITY_STALL": "Inspect stalled Heyasa execution pipeline, executor health, and open candidate backlog.",
+        "HOST_LOAD_SATURATION": "Inspect top CPU-consuming processes, runaway test suites, or duplicate agent loops causing host saturation.",
     }
     action = action_map.get(code, f"Resolve {code} in {target}.")
     ac1 = f"AC-01: {fallback_anomaly.get('summary', 'Anomaly is remediated')}."
     ac2 = "AC-02: Verification checks and automated test suite pass with exit code 0."
+    verify_cmd = "git status --porcelain && npm test || pytest -q"
+    if code in {"AUTONOMY_UNIT_FAILED", "AUTONOMY_DAEMON_INACTIVE"}:
+        unit_name = (fallback_anomaly.get("details") or {}).get("unit", "heyasa.service")
+        verify_cmd = f"systemctl --user is-active {unit_name}"
+    elif code in {"AUTONOMY_ELIGIBLE_PROJECTS_ZERO", "AUTONOMY_ADMISSION_STALL", "AUTONOMY_VELOCITY_STALL"}:
+        verify_cmd = "curl -fsS http://127.0.0.1:8765/v1/daemon/status || curl -fsS http://127.0.0.1:7080/v1/daemon/status"
+    elif code == "HOST_LOAD_SATURATION":
+        verify_cmd = "python3 -c 'import os; assert os.getloadavg()[0] <= 1.5 * (os.cpu_count() or 1)'"
 
     return {
         "title": f"[{target}] fix({code.lower().replace('_', '-')}): {fallback_anomaly.get('summary')}",
@@ -664,7 +1131,7 @@ def _parse_subllm_response(text: str, fallback_anomaly: Dict[str, Any]) -> Dict[
         "priority": TIER_PRIORITY_MAP.get(tier, "normal"),
         "action": action,
         "acceptance_criteria": [ac1, ac2],
-        "verification_command": "git status --porcelain && npm test || pytest -q",
+        "verification_command": verify_cmd,
         "satisfied_when": f"{code} condition is resolved and verified.",
         "labels": ["monag", "autodiagnosis", "koru-autonomous", f"tier:{tier}"],
     }
@@ -809,6 +1276,10 @@ Observed technical defect in `{target}`:
             "target_repo": target,
             "tier": tier,
             "priority": priority,
+            "weight": int(anom.get("weight", 0) or 0),
+            "autonomy_probe": bool(anom.get("autonomy_probe", False)),
+            "code": code_str,
+            "severity": str(anom.get("severity") or "WARNING"),
             "labels": labels,
             "action": ticket_spec.get("action"),
             "acceptance_criteria": ticket_spec.get("acceptance_criteria", []),
@@ -875,6 +1346,7 @@ def dispatch_tickets_to_planfile(tickets: List[Dict[str, Any]], root: Path,
         "dispatched": 0,
         "repositories_updated": [],
         "tickets_by_repo": {},
+        "skipped_external_targets": [],
         "errors": [],
     }
 
@@ -902,6 +1374,9 @@ def dispatch_tickets_to_planfile(tickets: List[Dict[str, Any]], root: Path,
             target_path = root
 
         if not target_path or not target_path.is_dir():
+            if all(bool(t.get("autonomy_probe")) for t in repo_tickets):
+                results["skipped_external_targets"].append(target)
+                continue
             results["errors"].append(f"Target repository directory not found for: {target}")
             continue
 

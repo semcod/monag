@@ -19,14 +19,14 @@ import subprocess
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 
-def command(cmd: list[str], cwd: Optional[Path] = None) -> tuple[str, str]:
+def command(cmd: list[str], cwd: Optional[Path] = None, timeout: float = 15.0) -> tuple[str, str]:
     try:
         proc = subprocess.run(
             cmd,
             cwd=str(cwd) if cwd else None,
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=max(0.2, float(timeout)),
         )
         out = proc.stdout.strip()
         err = proc.stderr.strip()
@@ -161,11 +161,11 @@ def _resolve_worktree_lease(
     return None
 
 
-def is_worktree_dirty(wt_path: Path) -> tuple[bool, str]:
+def is_worktree_dirty(wt_path: Path, timeout: float = 15.0) -> tuple[bool, str]:
     """Check if the worktree has any uncommitted or untracked changes, failing closed on errors."""
     if not wt_path.is_dir():
         return False, ""
-    out, err = command(["git", "-C", str(wt_path), "status", "--porcelain"])
+    out, err = command(["git", "-C", str(wt_path), "status", "--porcelain"], timeout=timeout)
     if err:
         return True, f"git_status_failed ({err})"
     lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
@@ -174,33 +174,56 @@ def is_worktree_dirty(wt_path: Path) -> tuple[bool, str]:
     return False, ""
 
 
-def _is_ancestor_commit(repo: Path, branch: str, target: str) -> bool:
-    proc = subprocess.run(
-        ["git", "-C", str(repo), "merge-base", "--is-ancestor", branch, target],
-        capture_output=True,
-        text=True,
-    )
-    return proc.returncode == 0
+def _is_ancestor_commit(repo: Path, branch: str, target: str, timeout: float = 15.0) -> bool:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), "merge-base", "--is-ancestor", branch, target],
+            capture_output=True,
+            text=True,
+            timeout=max(0.2, float(timeout)),
+        )
+        return proc.returncode == 0
+    except (subprocess.SubprocessError, OSError):
+        return False
 
 
-def is_branch_merged(repo: Path, branch: str) -> bool:
+def resolve_default_target_branch(repo: Path, timeout: float = 15.0) -> Optional[str]:
+    """Resolve repository default integration branch ('main' or 'master') once per repository."""
+    for candidate in ("main", "master"):
+        chk, _ = command(["git", "-C", str(repo), "rev-parse", "--verify", candidate], timeout=timeout)
+        if chk.strip():
+            return candidate
+    return None
+
+
+def is_branch_merged(
+    repo: Path,
+    branch: str,
+    target_branch: Optional[str] = None,
+    timeout: float = 15.0,
+) -> bool:
     """Check if branch is merged to main or master (cannot establish integration merely by comparing against own HEAD)."""
     if not branch:
         return False
 
-    b_sha, _ = command(["git", "-C", str(repo), "rev-parse", "--verify", branch])
+    b_sha, _ = command(["git", "-C", str(repo), "rev-parse", "--verify", branch], timeout=timeout)
     b_sha = b_sha.strip()
     if not b_sha:
         return False
 
+    if target_branch is not None:
+        if not target_branch:
+            return False
+        return _is_ancestor_commit(repo, branch, target_branch, timeout=timeout)
+
     targets = ["main", "master"]
     for t in targets:
-        chk, _ = command(["git", "-C", str(repo), "rev-parse", "--verify", t])
+        chk, _ = command(["git", "-C", str(repo), "rev-parse", "--verify", t], timeout=timeout)
         t_sha = chk.strip()
         if not t_sha:
             continue
         # Check merge-base --is-ancestor branch target
-        if _is_ancestor_commit(repo, branch, t):
+        if _is_ancestor_commit(repo, branch, t, timeout=timeout):
             return True
 
     return False
@@ -336,8 +359,8 @@ def prune_worktrees_safe(
         active_cwds, _ = audit_active_process_cwds()
 
     from . import doctor
-    wts = doctor.audit_worktrees(repo)
     leases = get_repo_leases(repo)
+    wts = doctor.audit_worktrees(repo, leases=leases)
 
     result = {
         "repo": repo.name,
@@ -497,7 +520,7 @@ def audit_fleet_worktrees(
 
     for repo in repos:
         leases = get_repo_leases(repo)
-        wts = doctor.audit_worktrees(repo)
+        wts = doctor.audit_worktrees(repo, leases=leases)
         non_primary = [w for w in wts if not w.get("is_primary")]
         if not non_primary:
             continue

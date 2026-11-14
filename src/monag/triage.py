@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import re
 import shutil
 from pathlib import Path
 import shlex
@@ -398,6 +399,219 @@ def synthesize_triage_action(
     }
 
 
+CATEGORY_IMPACT_BASE: Dict[str, int] = {
+    CATEGORY_IMMEDIATE_BLOCKER: 500,
+    CATEGORY_CORE_FOUNDATION: 250,
+    CATEGORY_STRATEGIC_ARCHITECTURE: 120,
+    CATEGORY_OPERATOR_IDE_ALERT: 100,
+    CATEGORY_FLEET_HEALTH_DIAGNOSTIC: 80,
+    CATEGORY_CODE_SMELL_HYGIENE: 40,
+}
+
+CATEGORY_ITEM_IMPACT: Dict[str, int] = {
+    CATEGORY_IMMEDIATE_BLOCKER: 60,
+    CATEGORY_CORE_FOUNDATION: 30,
+    CATEGORY_STRATEGIC_ARCHITECTURE: 20,
+    CATEGORY_OPERATOR_IDE_ALERT: 18,
+    CATEGORY_FLEET_HEALTH_DIAGNOSTIC: 15,
+    CATEGORY_CODE_SMELL_HYGIENE: 10,
+}
+
+
+def derive_candidate_cause(candidate: Dict[str, Any], category: str = "") -> str:
+    """Derive a stable normalized cause key for deduplicating repeated findings per repository."""
+    explicit = str(candidate.get("cause") or candidate.get("code") or "").strip().lower()
+    if explicit:
+        return re.sub(r"[^a-z0-9_.-]+", "_", explicit).strip("_") or "general"
+
+    origin = str(candidate.get("origin") or "").strip().lower()
+    title = str(candidate.get("title") or "").strip()
+    title_low = title.lower()
+
+    if origin in ("worktree-observed", "worktree-active"):
+        return origin
+    if origin == "prs-ahead-commits":
+        return "prs-ahead-commits"
+    if origin == "prs-open-pr":
+        return "prs-open-pr-ready" if candidate.get("checks_passed") is True else "prs-open-pr"
+
+    for token, norm in (
+        ("no-license", "missing_license"),
+        ("missing a license", "missing_license"),
+        ("no-readme", "missing_readme"),
+        ("missing a readme", "missing_readme"),
+        ("stale git worktree", "stale_worktrees"),
+        ("prune stale", "stale_worktrees"),
+        ("planfile-github-sync", "planfile_github_sync_missing"),
+        ("dirty-worktree", "dirty_worktree"),
+        ("uncommitted changes", "dirty_worktree"),
+        ("shotgun", "code_smell"),
+        ("god class", "code_smell"),
+        ("data clump", "code_smell"),
+        ("dead code", "code_smell"),
+        ("duplicate", "duplicate_item"),
+    ):
+        if token in title_low:
+            return norm
+
+    stem = title_low.split(":", 1)[0].strip()
+    stem = re.sub(r"#\d+", "#n", stem)
+    stem = re.sub(r"\bticket[-_/]?\d+[a-z0-9_-]*", "ticket", stem)
+    stem = re.sub(r"[^a-z0-9]+", "_", stem).strip("_")
+    if origin and stem:
+        return f"{origin}:{stem[:48]}"
+    if origin:
+        return origin
+    if stem:
+        return stem[:48]
+    return category or "general"
+
+
+def _candidate_sample_label(candidate: Dict[str, Any]) -> str:
+    origin = str(candidate.get("origin") or "")
+    path_str = str(candidate.get("path") or "").strip()
+    if origin in ("worktree-observed", "worktree-active") and path_str:
+        return Path(path_str).name
+    if candidate.get("pr_number"):
+        return f"PR #{candidate['pr_number']}: {str(candidate.get('title') or '').strip()}"[:80]
+    if candidate.get("issue_number"):
+        return f"#{candidate['issue_number']}: {str(candidate.get('title') or '').strip()}"[:80]
+    title = str(candidate.get("title") or "").strip()
+    if title:
+        return title[:80]
+    return Path(path_str).name if path_str else "item"
+
+
+def compute_unblock_impact(
+    category: str,
+    affected_count: int,
+    collision_info: Dict[str, Any],
+    group: List[Dict[str, Any]],
+) -> int:
+    """Compute deterministic estimated unblock impact from severity and affected item count."""
+    explicit_vals = [
+        int(c["unblock_impact"])
+        for c in group
+        if isinstance(c.get("unblock_impact"), (int, float))
+    ]
+    if explicit_vals:
+        return max(1, sum(explicit_vals))
+
+    base = CATEGORY_IMPACT_BASE.get(category, 100)
+    per_item = CATEGORY_ITEM_IMPACT.get(category, 15)
+    impact = base + max(1, affected_count) * per_item
+    if any(c.get("checks_passed") is True for c in group):
+        impact += 50
+    ahead_total = sum(int(c.get("ahead_count") or 0) for c in group if str(c.get("ahead_count") or "").isdigit() or isinstance(c.get("ahead_count"), int))
+    if ahead_total > 0:
+        impact += min(50, ahead_total * 5)
+    if collision_info.get("blocking") or collision_info.get("has_collision"):
+        impact = max(1, impact - 60)
+    return impact
+
+
+def deduplicate_and_rank_candidates(
+    raw_candidates: List[Dict[str, Any]],
+    collisions_by_repo: Dict[str, Dict[str, Any]],
+    repo_paths_by_name: Dict[str, Path] | None = None,
+) -> List[Dict[str, Any]]:
+    """Group repeated candidates by (repository, cause) and sort by estimated unblock impact descending."""
+    repo_paths = repo_paths_by_name or {}
+    groups: Dict[Tuple[str, str], List[Tuple[Dict[str, Any], str, int, Dict[str, Any]]]] = {}
+
+    for c in raw_candidates:
+        repo_name = str(c.get("repo") or Path(str(c.get("path") or "workspace")).name)
+        collision_info = collisions_by_repo.get(repo_name, {"has_collision": False})
+        category, score = classify_candidate(c, repo_name, collision_info)
+        cause = derive_candidate_cause(c, category)
+        details = synthesize_triage_action(c, category, repo_name, collision_info)
+        groups.setdefault((repo_name, cause), []).append((c, category, score, details))
+
+    deduped: List[Dict[str, Any]] = []
+    for (repo_name, cause), entries in groups.items():
+        collision_info = collisions_by_repo.get(repo_name, {"has_collision": False})
+        # Pick highest-scoring representative entry in group
+        entries_sorted = sorted(
+            entries,
+            key=lambda e: (-e[2], CATEGORY_ORDER.index(e[1]) if e[1] in CATEGORY_ORDER else 99, str(e[0].get("title") or "")),
+        )
+        rep_cand, best_category, best_score, rep_details = entries_sorted[0]
+        affected_count = len(entries)
+        raw_group = [e[0] for e in entries_sorted]
+
+        seen_samples: List[str] = []
+        for cand_item in raw_group:
+            lbl = _candidate_sample_label(cand_item)
+            if lbl and lbl not in seen_samples:
+                seen_samples.append(lbl)
+        sample_items = seen_samples[:5]
+
+        unblock_impact = compute_unblock_impact(best_category, affected_count, collision_info, raw_group)
+
+        if affected_count == 1:
+            title = rep_cand.get("title", "")
+            action = rep_details["action"]
+            suggested_command = rep_details["suggested_command"]
+            evidence = rep_details["evidence"]
+            final_score = best_score
+        else:
+            final_score = best_score + min(600, (affected_count - 1) * 25)
+            preview = ", ".join(sample_items[:3])
+            if len(seen_samples) > 3:
+                preview += f", +{len(seen_samples) - 3} more"
+
+            origin = str(rep_cand.get("origin") or "")
+            if origin == "worktree-observed":
+                title = f"Registered worktrees to inspect ({affected_count} observed: {preview})"
+                repo_checkout = repo_paths.get(repo_name)
+                if repo_checkout is None and rep_cand.get("path"):
+                    wt_p = Path(str(rep_cand["path"]))
+                    repo_checkout = wt_p.parent.parent if wt_p.parent.name == ".worktrees" else wt_p.parent
+                cmd_target = shlex.quote(str(repo_checkout or repo_name))
+                suggested_command = f"git -C {cmd_target} worktree list"
+                action = (
+                    f"Inspect {affected_count} registered worktrees and ownership evidence in {repo_name} "
+                    f"(samples: {preview})"
+                )
+                evidence = f"{repo_name}: {affected_count} worktrees observed ({preview})"
+            else:
+                base_stem = str(rep_cand.get("title") or cause).split(":", 1)[0].strip()
+                title = f"{base_stem} ({affected_count} affected: {preview})"
+                action = f"{rep_details['action']} ({affected_count} grouped occurrences: {preview})"
+                suggested_command = rep_details["suggested_command"]
+                evidence = f"{rep_details['evidence']} [{affected_count} grouped occurrences]"
+
+        deduped.append({
+            "repo": repo_name,
+            "cause": cause,
+            "title": title,
+            "origin": rep_cand.get("origin", ""),
+            "category": best_category,
+            "score": final_score,
+            "affected_count": affected_count,
+            "sample_items": sample_items,
+            "estimated_unblock_impact": unblock_impact,
+            "action": action,
+            "suggested_command": suggested_command,
+            "guardrails": rep_details["guardrails"],
+            "evidence": evidence,
+            "collision": collision_info,
+            "radar": rep_cand.get("radar"),
+        })
+
+    deduped.sort(
+        key=lambda item: (
+            -item["estimated_unblock_impact"],
+            -item["score"],
+            -item["affected_count"],
+            CATEGORY_ORDER.index(item["category"]) if item["category"] in CATEGORY_ORDER else 99,
+            item["repo"],
+            item["cause"],
+        )
+    )
+    return deduped
+
+
 def run_holistic_triage(
     root: Path,
     depth: int = 2,
@@ -531,32 +745,13 @@ def run_holistic_triage(
         all_raw_candidates.extend(repo_candidates)
         errors.extend(repo_errors)
 
-    # 3. Algorithmic categorization, ranking, and step synthesis
-    categorized_items: List[Dict[str, Any]] = []
-
-    for c in all_raw_candidates:
-        repo_name = c.get("repo") or Path(c.get("path", "")).name
-        collision_info = collisions_by_repo.get(repo_name, {"has_collision": False})
-
-        category, score = classify_candidate(c, repo_name, collision_info)
-        details = synthesize_triage_action(c, category, repo_name, collision_info)
-
-        categorized_items.append({
-            "repo": repo_name,
-            "title": c.get("title", ""),
-            "origin": c.get("origin", ""),
-            "category": category,
-            "score": score,
-            "action": details["action"],
-            "suggested_command": details["suggested_command"],
-            "guardrails": details["guardrails"],
-            "evidence": details["evidence"],
-            "collision": collision_info,
-            "radar": c.get("radar"),
-        })
-
-    # Sort descending by score
-    categorized_items.sort(key=lambda item: item["score"], reverse=True)
+    # 3. Algorithmic deduplication by (repository, cause), impact ranking, and step synthesis
+    repo_paths_by_name = {name: path for name, path in discovered_repos}
+    categorized_items = deduplicate_and_rank_candidates(
+        all_raw_candidates,
+        collisions_by_repo=collisions_by_repo,
+        repo_paths_by_name=repo_paths_by_name,
+    )
     capped_items = categorized_items[:limit]
 
     # Generate sequential deterministic guidance steps
@@ -567,8 +762,12 @@ def run_holistic_triage(
             "step": idx,
             "category": item["category"],
             "repo": item["repo"],
+            "cause": item["cause"],
             "title": item["title"],
             "score": item["score"],
+            "affected_count": item["affected_count"],
+            "sample_items": item["sample_items"],
+            "estimated_unblock_impact": item["estimated_unblock_impact"],
             "action": item["action"],
             "command": item["suggested_command"],
             "collision_safe": False if is_collision else None,
@@ -589,6 +788,7 @@ def run_holistic_triage(
         "duration_seconds": duration,
         "discovered_repos_count": len(discovered_repos),
         "total_candidates": len(all_raw_candidates),
+        "deduplicated_candidates_count": len(categorized_items),
         "active_agents_count": len(active_fleet),
         "active_agent_pids": active_pids,
         "dirty_worktrees_count": dirty_wts,
@@ -612,6 +812,10 @@ def triage_markdown(report: Dict[str, Any]) -> str:
         f"- **Root**: `{report.get('root')}`",
         f"- **Discovered Repositories**: {report.get('discovered_repos_count')}",
         f"- **Total Candidates Evaluated**: {report.get('total_candidates')}",
+    ]
+    if report.get("deduplicated_candidates_count") is not None:
+        lines.append(f"- **Deduplicated Action Groups (`repo, cause`)**: {report.get('deduplicated_candidates_count')}")
+    lines.extend([
         f"- **Active Agent Processes**: {report.get('active_agents_count', 0)} (PIDs: {report.get('active_agent_pids', [])})",
         f"- **Dirty / Uncommitted Worktrees**: {report.get('dirty_worktrees_count', 0)}",
         f"- **Declared Scope / Worktree Conflicts**: {report.get('collision_count')}",
@@ -620,7 +824,7 @@ def triage_markdown(report: Dict[str, Any]) -> str:
         "",
         "## Deterministic Step-by-Step Guidance Plan",
         "",
-    ]
+    ])
 
     steps = report.get("guidance_steps", [])
     if not steps:
@@ -630,8 +834,14 @@ def triage_markdown(report: Dict[str, Any]) -> str:
     for s in steps:
         cat_tag = s["category"].upper().replace("_", " ")
         safety = "Ownership verified" if s.get("ownership_verified") else ("⚠️ Declared conflict / active agent" if s.get("collision_safe") is False else "Ownership unverified (collision-safe)")
+        affected = s.get("affected_count", 1)
+        impact = s.get("estimated_unblock_impact")
+        impact_str = f" | **Unblock Impact**: `{impact}`" if impact is not None else ""
+        count_str = f" | **Affected**: `{affected}`" if affected and affected > 1 else ""
         lines.append(f"### Step {s['step']}: [{cat_tag}] `{s['repo']}` — {s['title']}")
-        lines.append(f"- **Score**: `{s['score']}` | **Status**: {safety}")
+        lines.append(f"- **Score**: `{s['score']}`{impact_str}{count_str} | **Status**: {safety}")
+        if affected and affected > 1 and s.get("sample_items"):
+            lines.append(f"- **Sample Items ({len(s['sample_items'])}/{affected})**: `{', '.join(map(str, s['sample_items']))}`")
         lines.append(f"- **Action**: {s['action']}")
         lines.append("- **Suggested Command**:")
         lines.append("  ```sh")
