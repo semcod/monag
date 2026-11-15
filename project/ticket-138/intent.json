@@ -1,0 +1,25 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-138",
+  "summary": "MON-01 follow-up: report ExecCondition skips as AUTONOMY_UNIT_SKIPPED instead of a CRITICAL failure",
+  "workstream": "application",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-138/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/autodiagnosis.py",
+    "tests/test_autonomy_unit_skip.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}

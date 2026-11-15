@@ -638,12 +638,45 @@ def _probe_systemd_user_units(
         target = AUTONOMY_UNIT_TARGETS.get(unit_id, "subactor/autonom")
         target_path = root / target if (root / target).is_dir() else root
 
-        is_failed = (
+        # An ExecCondition= exit of 1-254 is a deliberate cycle skip that
+        # systemd records as Result=exec-condition on an inactive unit; it is
+        # not a crash (exit 255 or above still leaves the unit failed).
+        is_skipped = (
+            result_state == "exec-condition"
+            and active_state == "inactive"
+            and sub_state != "failed"
+        )
+        is_failed = not is_skipped and (
             active_state == "failed"
             or sub_state == "failed"
             or (result_state not in ("", "success") and active_state != "active")
         )
-        if is_failed:
+        if is_skipped:
+            anomalies.append({
+                "code": "AUTONOMY_UNIT_SKIPPED",
+                "tier": TIER_FLOOR,
+                "severity": "MEDIUM",
+                "weight": 700,
+                "autonomy_probe": True,
+                "target": target,
+                "path": str(target_path),
+                "summary": (
+                    f"Autonomy systemd --user unit '{unit_id}' skipped its last run: "
+                    "ExecCondition declined to start it (Result=exec-condition)."
+                ),
+                "evidence": (
+                    f"systemctl --user show {unit_id}: LoadState={load_state}, "
+                    f"ActiveState={active_state}, SubState={sub_state}, Result={result_state}."
+                ),
+                "details": {
+                    "unit": unit_id,
+                    "load_state": load_state,
+                    "active_state": active_state,
+                    "sub_state": sub_state,
+                    "result": result_state,
+                },
+            })
+        elif is_failed:
             anomalies.append({
                 "code": "AUTONOMY_UNIT_FAILED",
                 "tier": TIER_FLOOR,
@@ -1107,6 +1140,7 @@ def _parse_subllm_response(text: str, fallback_anomaly: Dict[str, Any]) -> Dict[
         "SYSTEM_LOG_ERROR": "Diagnose root cause of runtime system log error, apply code/configuration fix, and verify service stability with tests.",
         "AUTONOMY_UNIT_FAILED": "Inspect failed systemd --user journal logs, repair unit configuration or runtime crash, and verify active service health.",
         "AUTONOMY_DAEMON_INACTIVE": "Inspect heyasa.service user unit status and restart or re-enable autonomous orchestrator daemon.",
+        "AUTONOMY_UNIT_SKIPPED": "Inspect why the unit ExecCondition declines to start it (journal of the condition check) and restore the missing precondition.",
         "AUTONOMY_ELIGIBLE_PROJECTS_ZERO": "Inspect Heyasa flowguard project_exclusions and unblock repository eligibility or lease gates.",
         "AUTONOMY_ADMISSION_STALL": "Inspect Heyasa flowguard blocked_reasons and slot capacity to restore candidate admission.",
         "AUTONOMY_VELOCITY_STALL": "Inspect stalled Heyasa execution pipeline, executor health, and open candidate backlog.",
