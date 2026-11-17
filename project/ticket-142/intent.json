@@ -1,0 +1,24 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-142",
+  "summary": "Align procache integration tests with credential-bound caching",
+  "workstream": "application",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P3",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-142/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "tests/test_procache_integration.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}
