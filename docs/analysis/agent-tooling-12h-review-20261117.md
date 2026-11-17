@@ -21,9 +21,10 @@
     "repo://semcod/diagit/src/diagit/application/service.py",
     "repo://semcod/diagit/src/diagit/infrastructure/projection.py",
     "repo://subactor/reflex/src/reflex/model.py",
-    "observation://monag-status-doctor-day-autodiagnose/2026-11-17T20:40Z",
-    "observation://diagit-audit/bc60e266-602d-4e57-8cee-0c7c571d941a",
-    "observation://reflex-transcripts-12h/2026-11-17T20:44Z"
+    "repo://semcod/monag/tests/test_day_window.py",
+    "repo://semcod/diagit/tests/test_audit_coverage_counts.py",
+    "repo://semcod/diagit/tests/test_window_baseline_scope.py",
+    "repo://subactor/reflex/tests/test_repository_inference.py"
   ]
 }
 ---
