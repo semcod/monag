@@ -13,7 +13,9 @@
     "TODO.md",
     "project/TICKETS.md",
     "src/monag/summary.py",
-    "tests/test_day_window.py"
+    "tests/test_day_window.py",
+    "docs/README.md",
+    "docs/analysis/agent-tooling-12h-review-20261117.md"
   ],
   "forbiddenPaths": [
     "project/ticket-*/user-*.md"
