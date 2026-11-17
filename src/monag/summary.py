@@ -197,7 +197,7 @@ def _scan_planfile_portfolio_and_blockers(
     target_date = target_date or date.today()
     today_str = target_date.strftime("%Y-%m-%d")
     ref_now = now or datetime.now(timezone.utc)
-    cutoff = ref_now - timedelta(hours=max(1, int(hours)))
+    cutoff = ref_now - timedelta(hours=max(1.0, float(hours)))
     sprint_dirs = _discover_sprint_dirs(root, depth=depth)
 
     open_or_todo = 0
@@ -401,10 +401,18 @@ def _scan_active_leases_snapshot(root: Path, depth: int = 2) -> Dict[str, Any]:
     }
 
 
-def query_github_pr_metrics(target_date: Optional[date] = None, timeout: int = 15) -> Dict[str, Any]:
-    """Fast query of open, newly opened, and merged Pull Requests using gh search prs."""
+def query_github_pr_metrics(
+    target_date: Optional[date] = None,
+    timeout: int = 15,
+    since: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Fast query of open, newly opened, and merged Pull Requests using gh search prs.
+
+    ``since`` selects a rolling UTC window (``>=YYYY-MM-DDTHH:MM:SSZ``); without
+    it the merged/opened lists start at ``target_date`` 00:00.
+    """
     target_date = target_date or date.today()
-    today_str = target_date.strftime("%Y-%m-%d")
+    today_str = _github_window_start(target_date, since)
 
     result: Dict[str, Any] = {
         "open_prs_count": 0,
@@ -489,6 +497,12 @@ def query_github_pr_metrics(target_date: Optional[date] = None, timeout: int = 1
     return result
 
 
+def _github_window_start(target_date: date, since: Optional[datetime]) -> str:
+    if since is None:
+        return target_date.strftime("%Y-%m-%d")
+    return since.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def gather_summary(
     root: Path,
     hours: int = 24,
@@ -506,7 +520,7 @@ def gather_summary(
     pf_extended = _scan_planfile_portfolio_and_blockers(
         root,
         target_date=target_date,
-        hours=int(hours),
+        hours=hours,
         depth=depth,
         now=started,
     )
@@ -519,8 +533,18 @@ def gather_summary(
         "merged_prs": [],
         "opened_prs": [],
     }
+    # `day` is a rolling delta over the requested hours unless a calendar date
+    # was pinned; `summary` keeps its "today" PR lists.
+    gh_since: Optional[datetime] = (
+        started - timedelta(hours=max(1.0, float(hours)))
+        if normalized_mode == "day" and target_date is None
+        else None
+    )
+    gh_window = _github_window_start(
+        target_date or datetime.strptime(day_str, "%Y-%m-%d").date(), gh_since
+    )
     if github:
-        queried_prs = query_github_pr_metrics(target_date=target_date)
+        queried_prs = query_github_pr_metrics(target_date=target_date, since=gh_since)
         pr_summary.update(queried_prs)
         pr_summary.setdefault("opened_prs_count", len(pr_summary.get("opened_prs", [])))
         pr_summary.setdefault("opened_prs", [])
@@ -529,7 +553,7 @@ def gather_summary(
     gh_scope = "github:author=@me" if github else "github:disabled(--no-github)"
 
     if normalized_mode == "day":
-        agent_runs = _scan_agent_runs_window(root, state_dir=state_dir, hours=int(hours))
+        agent_runs = _scan_agent_runs_window(root, state_dir=state_dir, hours=hours)
         counts_labeled = {
             "planfile_completed_24h": _labeled_count(
                 planfile_data["completed_count"],
@@ -559,13 +583,13 @@ def gather_summary(
                 pr_summary.get("merged_prs_count", 0),
                 source="gh search prs",
                 scope=gh_scope,
-                filter_expr=f"author:@me state:closed is:merged merged:>={day_str}",
+                filter_expr=f"author:@me state:closed is:merged merged:>={gh_window}",
             ),
             "github_opened_prs_24h": _labeled_count(
                 pr_summary.get("opened_prs_count", 0),
                 source="gh search prs",
                 scope=gh_scope,
-                filter_expr=f"author:@me created:>={day_str}",
+                filter_expr=f"author:@me created:>={gh_window}",
             ),
         }
         return {
@@ -577,6 +601,7 @@ def gather_summary(
             "depth": depth,
             "timestamp": started.isoformat(),
             "date": day_str,
+            "github_window_since": gh_window,
             "delta_24h": {
                 "window_hours": hours,
                 "completed_tasks_count": planfile_data["completed_count"],
@@ -737,6 +762,9 @@ def format_markdown(data: Dict[str, Any]) -> str:
         delta = data.get("delta_24h") or {}
         gh = data.get("github") or {}
         hours = data.get("hours", 24)
+        if isinstance(hours, float) and hours.is_integer():
+            hours = int(hours)
+        gh_window = data.get("github_window_since") or day
         comp_cnt = delta.get("completed_tasks_count", (data.get("planfile") or {}).get("completed_today", 0))
         blk_cnt = delta.get("new_blockers_count", 0)
         runs_ok = delta.get("agent_runs_completed", 0)
@@ -745,11 +773,11 @@ def format_markdown(data: Dict[str, Any]) -> str:
         opened_cnt = delta.get("opened_prs_count", gh.get("opened_prs_count", 0))
 
         lines = [
-            f"# MONAG 24h Operational Delta (`day` — {day}, okno: {hours}h)",
+            f"# MONAG {hours}h Operational Delta (`day` — {day}, okno: {hours}h)",
             "",
-            "## 1. 24h Delta — Planfile & Uruchomienia Agentów",
+            f"## 1. {hours}h Delta — Planfile & Uruchomienia Agentów",
             (
-                f"- **Ukończone zadania (okno 24h)**: `{comp_cnt}` zadań"
+                f"- **Ukończone zadania (dzień kalendarzowy {day})**: `{comp_cnt}` zadań"
                 + _fmt_label_suffix(labels.get("planfile_completed_24h"), ".planfile/sprints", f"date=={day}")
             ),
             (
@@ -765,28 +793,28 @@ def format_markdown(data: Dict[str, Any]) -> str:
                 + _fmt_label_suffix(labels.get("agent_runs_failed_24h"), "state_dir/tasks/*.json", f"status in {{failed,stale}} & updated<={hours}h")
             ),
             "",
-            "## 2. 24h Delta — GitHub Pull Requests",
+            f"## 2. {hours}h Delta — GitHub Pull Requests",
             (
-                f"- **Zmergowane PR (>= {day})**: `{merged_cnt}`"
-                + _fmt_label_suffix(labels.get("github_merged_prs_24h"), "gh search prs", f"is:merged merged:>={day}")
+                f"- **Zmergowane PR (>= {gh_window})**: `{merged_cnt}`"
+                + _fmt_label_suffix(labels.get("github_merged_prs_24h"), "gh search prs", f"is:merged merged:>={gh_window}")
             ),
             (
-                f"- **Nowo otwarte PR (>= {day})**: `{opened_cnt}`"
-                + _fmt_label_suffix(labels.get("github_opened_prs_24h"), "gh search prs", f"created:>={day}")
+                f"- **Nowo otwarte PR (>= {gh_window})**: `{opened_cnt}`"
+                + _fmt_label_suffix(labels.get("github_opened_prs_24h"), "gh search prs", f"created:>={gh_window}")
             ),
             "",
         ]
 
         new_blockers = delta.get("new_blockers") or []
         if new_blockers:
-            lines.append("### Nowe blokery wykryte w oknie 24h:")
+            lines.append(f"### Nowe blokery wykryte w oknie {hours}h:")
             for b in new_blockers[:5]:
                 lines.append(f"- 🛑 **[{b.get('repo')}]** `{b.get('id')}`: {b.get('title')} ({b.get('reason')})")
             lines.append("")
 
         recent_runs = delta.get("recent_agent_runs") or []
         if recent_runs:
-            lines.append("### Ostatnie przebiegi agentów (24h):")
+            lines.append(f"### Ostatnie przebiegi agentów ({hours}h):")
             for r in recent_runs[:5]:
                 icon = "✓" if r.get("status") in ("completed", "done", "ok", "success") else "✗"
                 tkt = f" (`{r.get('ticket')}`)" if r.get("ticket") else ""
@@ -795,21 +823,21 @@ def format_markdown(data: Dict[str, Any]) -> str:
 
         merged_prs = delta.get("merged_prs") or gh.get("merged_prs", [])
         if merged_prs:
-            lines.append("### Zmergowane Pull Requesty w oknie 24h:")
+            lines.append(f"### Zmergowane Pull Requesty w oknie {hours}h:")
             for pr in merged_prs[:5]:
                 lines.append(f"- ✓ **[{pr.get('repo')}]** `#{pr.get('number')}`: {pr.get('title')}")
             lines.append("")
 
         opened_prs = delta.get("opened_prs") or gh.get("opened_prs", [])
         if opened_prs:
-            lines.append("### Nowo otwarte Pull Requesty w oknie 24h:")
+            lines.append(f"### Nowo otwarte Pull Requesty w oknie {hours}h:")
             for pr in opened_prs[:5]:
                 lines.append(f"- ➕ **[{pr.get('repo')}]** `#{pr.get('number')}`: {pr.get('title')}")
             lines.append("")
 
         completed = delta.get("completed_tickets") or (data.get("planfile") or {}).get("completed_tickets", [])
         if completed:
-            lines.append("### Ukończone zadania Planfile w oknie 24h:")
+            lines.append(f"### Ukończone zadania Planfile (dzień kalendarzowy {day}):")
             for t in completed[:5]:
                 lines.append(f"- ✓ **[{t.get('repo')}]** `{t.get('id')}`: {t.get('title')}")
             lines.append("")
