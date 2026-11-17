@@ -197,7 +197,7 @@ def _scan_planfile_portfolio_and_blockers(
     target_date = target_date or date.today()
     today_str = target_date.strftime("%Y-%m-%d")
     ref_now = now or datetime.now(timezone.utc)
-    cutoff = ref_now - timedelta(hours=max(1, int(hours)))
+    cutoff = ref_now - timedelta(hours=max(1.0, float(hours)))
     sprint_dirs = _discover_sprint_dirs(root, depth=depth)
 
     open_or_todo = 0
@@ -520,7 +520,7 @@ def gather_summary(
     pf_extended = _scan_planfile_portfolio_and_blockers(
         root,
         target_date=target_date,
-        hours=int(hours),
+        hours=hours,
         depth=depth,
         now=started,
     )
@@ -536,7 +536,7 @@ def gather_summary(
     # `day` is a rolling delta over the requested hours unless a calendar date
     # was pinned; `summary` keeps its "today" PR lists.
     gh_since: Optional[datetime] = (
-        started - timedelta(hours=max(1, int(hours)))
+        started - timedelta(hours=max(1.0, float(hours)))
         if normalized_mode == "day" and target_date is None
         else None
     )
@@ -553,7 +553,7 @@ def gather_summary(
     gh_scope = "github:author=@me" if github else "github:disabled(--no-github)"
 
     if normalized_mode == "day":
-        agent_runs = _scan_agent_runs_window(root, state_dir=state_dir, hours=int(hours))
+        agent_runs = _scan_agent_runs_window(root, state_dir=state_dir, hours=hours)
         counts_labeled = {
             "planfile_completed_24h": _labeled_count(
                 planfile_data["completed_count"],

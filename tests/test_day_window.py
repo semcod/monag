@@ -75,3 +75,11 @@ def test_integral_float_hours_render_without_decimal(tmp_path: Path) -> None:
     md = summary.format_markdown(data)
     assert "MONAG 12h Operational Delta" in md
     assert "12.0h" not in md
+
+
+def test_fractional_hours_are_not_truncated(tmp_path: Path) -> None:
+    before = datetime.now(timezone.utc)
+    with patch("monag.summary.query_github_pr_metrics", return_value=dict(_EMPTY_PRS)) as gh:
+        summary.gather_summary(tmp_path, hours=12.5, github=True, mode="day", state_dir=tmp_path)  # type: ignore[arg-type]
+    since = gh.call_args.kwargs["since"]
+    assert since <= before - timedelta(hours=12, minutes=29)
