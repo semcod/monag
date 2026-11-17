@@ -20,6 +20,9 @@ class Mon01AutonomyStallProbeTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        zombie_probe = patch("monag.autodiagnosis._probe_host_zombies", return_value=[])
+        zombie_probe.start()
+        self.addCleanup(zombie_probe.stop)
 
     def _init_hygiene_repo(self, rel_path: str) -> Path:
         repo = self.root / rel_path

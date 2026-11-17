@@ -955,6 +955,105 @@ def _probe_host_load_saturation(
     ]
 
 
+def _read_process_state(path: Path) -> Tuple[str, int, int]:
+    """Read only bounded stat metadata, without command lines or environments."""
+    with (path / "stat").open(encoding="utf-8", errors="replace") as stream:
+        raw = stream.read(8192)
+    pid, _, tail = raw.partition(" (")
+    fields = tail.rsplit(")", 1)[1].split()
+    if int(pid) != int(path.name) or len(fields[0]) != 1:
+        raise ValueError("invalid process identity")
+    parent, start = int(fields[1]), int(fields[19])
+    if parent < 0 or start < 0:
+        raise ValueError("invalid process metadata")
+    return fields[0], parent, start
+
+
+def _probe_host_zombies(
+    root: Path,
+    proc_root: Path = Path("/proc"),
+    *,
+    max_processes: int = 8192,
+    budget_seconds: float = 0.5,
+    clock: Callable[[], float] = time.monotonic,
+) -> List[Dict[str, Any]]:
+    """Bound a procfs observation and identify parents; never signal processes."""
+    deadline = clock() + max(0.0, budget_seconds)
+    scanned = unreadable = 0
+    reasons = set()
+    parents: Dict[int, Dict[str, Any]] = {}
+
+    def identity(pid: int) -> Optional[int]:
+        try:
+            return _read_process_state(proc_root / str(pid))[2]
+        except (OSError, ValueError, IndexError):
+            return None
+
+    try:
+        with os.scandir(proc_root) as entries:
+            for entry in entries:
+                if clock() >= deadline:
+                    reasons.add("time_budget")
+                    break
+                if not entry.name.isdigit():
+                    continue
+                if scanned >= max_processes:
+                    reasons.add("process_limit")
+                    break
+                scanned += 1
+                try:
+                    state, parent, _ = _read_process_state(Path(entry.path))
+                except (OSError, ValueError, IndexError):
+                    unreadable += 1
+                    reasons.add("unreadable_or_vanished_process")
+                    continue
+                if state == "Z":
+                    if parent not in parents:
+                        parents[parent] = {"pid": parent, "start_ticks": identity(parent), "zombies": 0}
+                    parents[parent]["zombies"] += 1
+    except OSError:
+        reasons.add("procfs_unavailable")
+
+    for parent in parents.values():
+        within_budget = clock() < deadline
+        unchanged = (within_budget and parent["start_ticks"] is not None
+                     and identity(parent["pid"]) == parent["start_ticks"])
+        parent["identity_status"] = "stable_during_probe" if unchanged else "unavailable_or_changed"
+        if not unchanged:
+            parent["start_ticks"] = None
+        if not within_budget:
+            reasons.add("time_budget")
+    total = sum(parent["zombies"] for parent in parents.values())
+    if not total and not reasons:
+        return []
+    ordered = sorted(parents.values(), key=lambda item: (-item["zombies"], item["pid"]))
+    return [{
+        "code": "HOST_UNREAPED_CHILDREN" if total else "HOST_PROCESS_VISIBILITY_PARTIAL",
+        "tier": TIER_MISSION if total else TIER_HYGIENE,
+        "severity": "WARNING" if total else "INFO",
+        "weight": 840 if total else 100,
+        "autonomy_probe": True,
+        "target": "host/system",
+        "path": str(root),
+        "summary": (f"Observed {total} zombie processes; inspect parent child-reaping paths."
+                    if total else "Process visibility is incomplete; a healthy host is not established."),
+        "evidence": f"Bounded procfs snapshot: {scanned} process records, {unreadable} unreadable; history unavailable.",
+        "details": {
+            "zombies_observed": total,
+            "parents": ordered[:8],
+            "omitted_parent_groups": max(0, len(ordered) - 8),
+            "processes_scanned": scanned,
+            "unreadable_processes": unreadable,
+            "partial": bool(reasons),
+            "partial_reasons": sorted(reasons),
+            "visibility": "current procfs PID namespace and access permissions; not an atomic host-wide census",
+            "history_available": False,
+            "trend": "unknown",
+            "remediation": "Inspect wait/reaping and orphan adoption in the identified parent; do not kill zombies or infer RAM usage from their count.",
+        },
+    }]
+
+
 def probe_autonomy_health(
     root: Path,
     *,
@@ -967,6 +1066,7 @@ def probe_autonomy_health(
     http_opener: Optional[Callable[..., Any]] = None,
     load_fn: Optional[Callable[[], Tuple[float, float, float]]] = None,
     cpu_count_fn: Optional[Callable[[], Optional[int]]] = None,
+    proc_root: Path = Path("/proc"),
 ) -> List[Dict[str, Any]]:
     """Run deterministic, read-only host & daemon autonomy stall probes."""
     if os.environ.get("MONAG_DISABLE_AUTONOMY_PROBES") == "1":
@@ -996,6 +1096,7 @@ def probe_autonomy_health(
             cpu_count_fn=cpu_count_fn,
         )
     )
+    findings.extend(_probe_host_zombies(root, proc_root))
     findings.sort(key=anomaly_sort_key)
     return findings
 
@@ -1145,6 +1246,8 @@ def _parse_subllm_response(text: str, fallback_anomaly: Dict[str, Any]) -> Dict[
         "AUTONOMY_ADMISSION_STALL": "Inspect Heyasa flowguard blocked_reasons and slot capacity to restore candidate admission.",
         "AUTONOMY_VELOCITY_STALL": "Inspect stalled Heyasa execution pipeline, executor health, and open candidate backlog.",
         "HOST_LOAD_SATURATION": "Inspect top CPU-consuming processes, runaway test suites, or duplicate agent loops causing host saturation.",
+        "HOST_UNREAPED_CHILDREN": "Inspect child reaping in the observed parents; verify PID and start time before any intervention. Check orphan adoption and wait handling on success, timeout and cancellation.",
+        "HOST_PROCESS_VISIBILITY_PARTIAL": "Resolve procfs visibility or scan-budget limits before concluding that the host has no zombie processes; retain unknown history and trend.",
     }
     action = action_map.get(code, f"Resolve {code} in {target}.")
     ac1 = f"AC-01: {fallback_anomaly.get('summary', 'Anomaly is remediated')}."
@@ -1157,6 +1260,8 @@ def _parse_subllm_response(text: str, fallback_anomaly: Dict[str, Any]) -> Dict[
         verify_cmd = "curl -fsS http://127.0.0.1:8765/v1/daemon/status || curl -fsS http://127.0.0.1:7080/v1/daemon/status"
     elif code == "HOST_LOAD_SATURATION":
         verify_cmd = "python3 -c 'import os; assert os.getloadavg()[0] <= 1.5 * (os.cpu_count() or 1)'"
+    elif code in {"HOST_UNREAPED_CHILDREN", "HOST_PROCESS_VISIBILITY_PARTIAL"}:
+        verify_cmd = "python3 -c 'from pathlib import Path; from monag.autodiagnosis import _probe_host_zombies; assert not _probe_host_zombies(Path.cwd())'"
 
     return {
         "title": f"[{target}] fix({code.lower().replace('_', '-')}): {fallback_anomaly.get('summary')}",
