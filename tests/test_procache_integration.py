@@ -19,6 +19,17 @@ from monag.monitor import command
 from monag.prs import github_open_prs
 
 
+# procache shares a cached gh response only when the credential scope is
+# provable: an explicit token plus host for `gh api`, or both public and
+# enterprise tokens for other read commands. Tests pin that scope with
+# placeholder tokens and an isolated gh configuration directory.
+CREDENTIAL_SCOPE = {
+    "GH_TOKEN": "placeholder-public-token",
+    "GH_ENTERPRISE_TOKEN": "placeholder-enterprise-token",
+    "GH_HOST": "github.com",
+}
+
+
 @pytest.fixture(autouse=True)
 def clean_cache_state(tmp_path):
     """Ensure a fresh cache database and clean environment for each test."""
@@ -27,6 +38,8 @@ def clean_cache_state(tmp_path):
     old_env = dict(os.environ)
     os.environ["XDG_CACHE_HOME"] = str(tmp_path)
     os.environ["MONAG_GITHUB_READ_TTL"] = "60"
+    os.environ["GH_CONFIG_DIR"] = str(tmp_path / "gh")
+    os.environ.update(CREDENTIAL_SCOPE)
     yield cache_db
     reset_cache_runner()
     os.environ.clear()
@@ -63,6 +76,18 @@ class TestProcacheIntegration:
             assert errs2 == []
             assert prs2 == fake_prs
             assert call_count == 1, "Expected second call to be served from procache without calling subprocess"
+
+    def test_unprovable_credential_scope_is_never_shared(self, tmp_path):
+        """Without an explicit token procache executes every read directly."""
+        for name in CREDENTIAL_SCOPE:
+            os.environ.pop(name, None)
+        args = ["gh", "api", "repos/semcod/test-repo/pulls"]
+        with mock.patch(
+            "subprocess.run", return_value=subprocess.CompletedProcess(args, 0, "[]", "")
+        ) as transport:
+            assert command(args) == ("[]", None)
+            assert command(args) == ("[]", None)
+        assert transport.call_count == 2
 
     def test_mutating_command_never_cached(self, tmp_path):
         """Mutating commands such as `gh pr merge` must never be cached."""
@@ -217,7 +242,8 @@ class CacheContextTests(unittest.TestCase):
         self.root = Path(temporary.name)
         environment = mock.patch.dict(os.environ, {
             "XDG_CACHE_HOME": str(self.root), "MONAG_GITHUB_READ_TTL": "60",
-            "MONAG_DISABLE_PROCACHE": "0",
+            "MONAG_DISABLE_PROCACHE": "0", "GH_CONFIG_DIR": str(self.root / "gh"),
+            **CREDENTIAL_SCOPE,
         })
         environment.start()
         self.addCleanup(environment.stop)
