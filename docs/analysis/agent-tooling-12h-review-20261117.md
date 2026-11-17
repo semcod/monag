@@ -3,6 +3,7 @@
   "schema": "wellmanifest.docs/document/v1",
   "id": "agent-tooling-12h-review-20261117",
   "kind": "analysis",
+  "scope": "repository",
   "version": 1,
   "title": "Twelve-hour review of Monag, Diagit and Reflex observations (2026-11-17)",
   "status": "accepted",
