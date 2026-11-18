@@ -51,6 +51,7 @@
           ".githooks/**",
           ".github/copilot-instructions.md",
           ".github/workflows/new-project-governance.yml",
+          ".github/workflows/new-project-branch-hygiene.yml",
           ".gitignore",
           ".governance/**",
           ".subactor/**",

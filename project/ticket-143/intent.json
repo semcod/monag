@@ -15,14 +15,16 @@
     ".gitattributes",
     ".gitignore",
     ".githooks/**",
-    ".github/workflows/**",
     ".governance/**",
     "AGENTS.md",
     "project/**",
-    "scripts/**",
     "wellmanifest_governance.py",
     "worktree-guard.yaml",
-    "pyproject.toml"
+    "pyproject.toml",
+    ".github/workflows/new-project-governance.yml",
+    ".github/workflows/new-project-branch-hygiene.yml",
+    "scripts/runtime.sh",
+    "scripts/install-agent-hosts.sh"
   ],
   "forbiddenPaths": [
     "project/ticket-*/user-*.md"
@@ -45,7 +47,17 @@
     "standardAdoption": {
       "sourceRepository": "wellmanifest/new-project",
       "fromRevision": "b6ba9c21a65a6a5648ecf904b64c3b75295e136f",
-      "toRevision": "5d846f305a98f6cddbcaf8f95e7c0d19d7842cc8"
+      "toRevision": "5d846f305a98f6cddbcaf8f95e7c0d19d7842cc8",
+      "managedTargetTakeovers": [
+        {
+          "path": ".github/workflows/new-project-branch-hygiene.yml",
+          "baseDigest": "ee765e68f8a8a2febf468da8301566e0676cffb46fbef0ba96cd756f742a30a2"
+        },
+        {
+          "path": ".governance/managed-copies.json",
+          "baseDigest": "01561991acb51710dc0a4f8750e5320d2000638b048367dfcbf8ded382f70dfb"
+        }
+      ]
     },
     "budgets": {
       "maxImplementationFiles": 15,
@@ -60,17 +72,19 @@
         {
           "name": "governance-adoption",
           "paths": [
+            ".gitattributes",
+            ".gitignore",
+            ".githooks/**",
             ".governance/**",
             "AGENTS.md",
-            ".githooks/**",
-            ".github/workflows/**",
             "project/**",
-            "scripts/**",
             "wellmanifest_governance.py",
             "worktree-guard.yaml",
             "pyproject.toml",
-            ".gitignore",
-            ".gitattributes"
+            ".github/workflows/new-project-governance.yml",
+            ".github/workflows/new-project-branch-hygiene.yml",
+            "scripts/runtime.sh",
+            "scripts/install-agent-hosts.sh"
           ]
         }
       ],

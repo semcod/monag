@@ -49,7 +49,7 @@
       "artifacts": [
         {
           "target": ".governance/manifest.json",
-          "sha256": "c1454a5bd6889c807d5a0d633a7e7cd1931e51bfe10d428b6056b9b52e6acfbe"
+          "sha256": "3de6a6d92a9c86fec93628b3f0727f00efd6ed3a9fe5ea007a6e9e0d071a2f3c"
         },
         {
           "target": ".governance/standard-packs.json",
@@ -103,7 +103,7 @@
       "artifacts": [
         {
           "target": ".governance/manifest.json",
-          "sha256": "c1454a5bd6889c807d5a0d633a7e7cd1931e51bfe10d428b6056b9b52e6acfbe"
+          "sha256": "3de6a6d92a9c86fec93628b3f0727f00efd6ed3a9fe5ea007a6e9e0d071a2f3c"
         },
         {
           "target": ".governance/standard-packs.json",
@@ -142,7 +142,7 @@
       "artifacts": [
         {
           "target": ".governance/manifest.json",
-          "sha256": "c1454a5bd6889c807d5a0d633a7e7cd1931e51bfe10d428b6056b9b52e6acfbe"
+          "sha256": "3de6a6d92a9c86fec93628b3f0727f00efd6ed3a9fe5ea007a6e9e0d071a2f3c"
         },
         {
           "target": ".governance/standard-packs.json",
@@ -181,7 +181,7 @@
       "artifacts": [
         {
           "target": ".governance/manifest.json",
-          "sha256": "c1454a5bd6889c807d5a0d633a7e7cd1931e51bfe10d428b6056b9b52e6acfbe"
+          "sha256": "3de6a6d92a9c86fec93628b3f0727f00efd6ed3a9fe5ea007a6e9e0d071a2f3c"
         },
         {
           "target": ".governance/standard-packs.json",
@@ -220,7 +220,7 @@
       "artifacts": [
         {
           "target": ".governance/manifest.json",
-          "sha256": "c1454a5bd6889c807d5a0d633a7e7cd1931e51bfe10d428b6056b9b52e6acfbe"
+          "sha256": "3de6a6d92a9c86fec93628b3f0727f00efd6ed3a9fe5ea007a6e9e0d071a2f3c"
         },
         {
           "target": ".governance/standard-packs.json",
@@ -259,7 +259,7 @@
       "artifacts": [
         {
           "target": ".governance/manifest.json",
-          "sha256": "c1454a5bd6889c807d5a0d633a7e7cd1931e51bfe10d428b6056b9b52e6acfbe"
+          "sha256": "3de6a6d92a9c86fec93628b3f0727f00efd6ed3a9fe5ea007a6e9e0d071a2f3c"
         },
         {
           "target": ".governance/standard-packs.json",
