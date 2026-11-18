@@ -1,0 +1,112 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-143",
+  "summary": "Adopt new-project 0.20.156 with provable standard levels",
+  "workstream": "governance",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "regression"
+  },
+  "allowedPaths": [
+    "project/ticket-143/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    ".gitattributes",
+    ".gitignore",
+    ".githooks/**",
+    ".github/workflows/**",
+    ".governance/**",
+    "AGENTS.md",
+    "project/**",
+    "scripts/**",
+    "wellmanifest_governance.py",
+    "worktree-guard.yaml",
+    "pyproject.toml"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "df08cbe13c525a61096d64f8305bb133dd8ad0f9",
+    "targetBranch": "main",
+    "outcome": "Adopt wellmanifest/new-project 0.20.156 with the official Goal generator and record standard packs only at levels their evidence proves, in audit mode until a hosted ruleset requires the exact checks (S4).",
+    "nonGoals": [
+      "No manual editing of .governance lock digests or managed copies.",
+      "No S4 or S5 evidence: main has no ruleset or branch protection yet.",
+      "No product code changes."
+    ],
+    "complexity": "L",
+    "estimatedMinutes": 90,
+    "standardAdoption": {
+      "sourceRepository": "wellmanifest/new-project",
+      "fromRevision": "b6ba9c21a65a6a5648ecf904b64c3b75295e136f",
+      "toRevision": "5d846f305a98f6cddbcaf8f95e7c0d19d7842cc8"
+    },
+    "budgets": {
+      "maxImplementationFiles": 15,
+      "maxAffectedComponents": 5,
+      "maxPublicInterfaceChanges": 3,
+      "maxRuntimeDependencies": 3
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Goal generates the managed 0.20.156 set; the target-owned standard-adoption.json records each pack at the highest level its evidence proves and uses catalog rollout mode audit, as in semcod/diagit#80.",
+      "components": [
+        {
+          "name": "governance-adoption",
+          "paths": [
+            ".governance/**",
+            "AGENTS.md",
+            ".githooks/**",
+            ".github/workflows/**",
+            "project/**",
+            "scripts/**",
+            "wellmanifest_governance.py",
+            "worktree-guard.yaml",
+            "pyproject.toml",
+            ".gitignore",
+            ".gitattributes"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Restore accepted base df08cbe13c525a61096d64f8305bb133dd8ad0f9; no runtime data is migrated."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-1",
+        "commands": [
+          "goal governance adopt --target-root . --source-revision 5d846f305a98f6cddbcaf8f95e7c0d19d7842cc8 --check"
+        ],
+        "evidence": "Goal reports the target up-to-date at 0.20.156."
+      },
+      {
+        "criterion": "AC-2",
+        "commands": [
+          "python3 .governance/standard_pack_check.py --root ."
+        ],
+        "evidence": "No evidence or drift findings; only STD-PACK-LEVEL gaps remain, in audit mode."
+      },
+      {
+        "criterion": "AC-3",
+        "commands": [
+          "bash project/governance-check.sh"
+        ],
+        "evidence": "The adopted gate passes on the ticket branch."
+      }
+    ]
+  }
+}

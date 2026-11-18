@@ -30,8 +30,8 @@ monag = "monag.cli:main"
 where = ["src"]
 
 [tool.wellmanifest]
-standard = "0.20.32"
-revision = "b6ba9c21a65a6a5648ecf904b64c3b75295e136f"
+standard = "0.20.156"
+revision = "5d846f305a98f6cddbcaf8f95e7c0d19d7842cc8"
 gate = "project/governance-check.sh"
 
 [tool.pytest.ini_options]

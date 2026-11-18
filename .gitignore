@@ -11,3 +11,8 @@
 *.egg-info/
 __pycache__/
 *.pyc
+
+# Repository-local worktrees and operational state
+*.egg
+build/
+dist/
