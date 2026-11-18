@@ -45,7 +45,7 @@
       "version": "0.20.156",
       "revision": "5d846f305a98f6cddbcaf8f95e7c0d19d7842cc8",
       "model": "protected-conformance",
-      "level": "S3",
+      "level": "S4",
       "artifacts": [
         {
           "target": ".governance/manifest.json",
@@ -76,6 +76,11 @@
           "level": "S3",
           "uri": ".github/workflows/new-project-governance.yml",
           "sha256": "297606a400885f0a0d131de6df8d6fd6870940bdb5ecdd7f2f746fe77da033b9"
+        },
+        {
+          "level": "S4",
+          "uri": "https://api.github.com/repos/semcod/monag/rulesets/27538025",
+          "sha256": "e611b1a97677d87cd36f3d87a0ac97a1bbb97cd75f8962e322a78fa1aad43f8e"
         }
       ]
     },
@@ -99,7 +104,7 @@
       "version": "0.20.156",
       "revision": "5d846f305a98f6cddbcaf8f95e7c0d19d7842cc8",
       "model": "protected-conformance",
-      "level": "S3",
+      "level": "S4",
       "artifacts": [
         {
           "target": ".governance/manifest.json",
@@ -130,6 +135,11 @@
           "level": "S3",
           "uri": ".github/workflows/new-project-governance.yml",
           "sha256": "297606a400885f0a0d131de6df8d6fd6870940bdb5ecdd7f2f746fe77da033b9"
+        },
+        {
+          "level": "S4",
+          "uri": "https://api.github.com/repos/semcod/monag/rulesets/27538025",
+          "sha256": "e611b1a97677d87cd36f3d87a0ac97a1bbb97cd75f8962e322a78fa1aad43f8e"
         }
       ]
     },
@@ -138,7 +148,7 @@
       "version": "0.20.156",
       "revision": "5d846f305a98f6cddbcaf8f95e7c0d19d7842cc8",
       "model": "protected-conformance",
-      "level": "S3",
+      "level": "S4",
       "artifacts": [
         {
           "target": ".governance/manifest.json",
@@ -169,6 +179,11 @@
           "level": "S3",
           "uri": ".github/workflows/new-project-governance.yml",
           "sha256": "297606a400885f0a0d131de6df8d6fd6870940bdb5ecdd7f2f746fe77da033b9"
+        },
+        {
+          "level": "S4",
+          "uri": "https://api.github.com/repos/semcod/monag/rulesets/27538025",
+          "sha256": "e611b1a97677d87cd36f3d87a0ac97a1bbb97cd75f8962e322a78fa1aad43f8e"
         }
       ]
     },
@@ -216,7 +231,7 @@
       "version": "0.20.156",
       "revision": "5d846f305a98f6cddbcaf8f95e7c0d19d7842cc8",
       "model": "protected-conformance",
-      "level": "S3",
+      "level": "S4",
       "artifacts": [
         {
           "target": ".governance/manifest.json",
@@ -247,6 +262,11 @@
           "level": "S3",
           "uri": ".github/workflows/new-project-governance.yml",
           "sha256": "297606a400885f0a0d131de6df8d6fd6870940bdb5ecdd7f2f746fe77da033b9"
+        },
+        {
+          "level": "S4",
+          "uri": "https://api.github.com/repos/semcod/monag/rulesets/27538025",
+          "sha256": "e611b1a97677d87cd36f3d87a0ac97a1bbb97cd75f8962e322a78fa1aad43f8e"
         }
       ]
     },

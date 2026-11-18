@@ -1,0 +1,87 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-146",
+  "summary": "Record S4 ruleset evidence for protected standard packs",
+  "workstream": "governance",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-146/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    ".governance/standard-adoption.json"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "9e706f412c5b45dc31f50a433ff2b50c878d6d0b",
+    "targetBranch": "main",
+    "outcome": "Record hosted-ruleset S4 evidence for the four protected-conformance packs now that ruleset 27538025 requires the governance and OneDev checks on main.",
+    "nonGoals": [
+      "No switch to enforce mode while worktrees, logs and docs lack S3.",
+      "No managed governance file changes.",
+      "No S5 claims."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 20,
+    "budgets": {
+      "maxImplementationFiles": 1,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "S4 evidence is the ruleset API URI with the SHA-256 of its canonical JSON (id, target, enforcement, conditions, bypass_actors, rules; sorted keys, compact separators).",
+      "components": [
+        {
+          "name": "standard-adoption",
+          "paths": [
+            ".governance/standard-adoption.json"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert to accepted base 9e706f412c5b45dc31f50a433ff2b50c878d6d0b; the ruleset can stay or be removed independently."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-1",
+        "commands": [
+          "gh api repos/semcod/monag/rules/branches/main"
+        ],
+        "evidence": "Ruleset 27538025 applies deletion, non_fast_forward and required_status_checks to main."
+      },
+      {
+        "criterion": "AC-2",
+        "commands": [
+          "python3 .governance/standard_pack_check.py --root ."
+        ],
+        "evidence": "Only the three S3 gaps (worktrees, logs, docs) remain."
+      },
+      {
+        "criterion": "AC-3",
+        "commands": [
+          "bash project/governance-check.sh"
+        ],
+        "evidence": "The governance gate passes."
+      }
+    ]
+  }
+}
