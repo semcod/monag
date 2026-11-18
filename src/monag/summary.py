@@ -5,7 +5,7 @@ GitHub PR metrics, and explicit source/scope/filter labels across a workspace.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -26,142 +26,106 @@ def _load_yaml_cached(path_str: str, mtime_ns: int) -> Any:
     return yaml.safe_load(Path(path_str).read_text(encoding="utf-8"))
 
 
-def gather_planfile_daily(root: Path, target_date: Optional[date] = None, depth: int = 2) -> Dict[str, Any]:
-    """Scan Planfile sprints for tasks completed on target_date and currently queued tasks."""
-    target_date = target_date or date.today()
-    today_str = target_date.strftime("%Y-%m-%d")
+def _sprint_tickets(path: Path) -> dict[str, dict]:
+    """Read sprint records, falling back to YAML when the fast cache is stale or invalid."""
+    fast = path.with_suffix(".yaml.fast.json")
+    try:
+        document = json.loads(fast.read_text(encoding="utf-8"))
+        cache_mtime = document.get("yaml_mtime_ns")
+        if cache_mtime is None or not path.exists() or cache_mtime == path.stat().st_mtime_ns:
+            tickets = document["data"]["sprint"]["tickets"]
+            if isinstance(tickets, dict):
+                return {key: row for key, row in tickets.items() if isinstance(row, dict)}
+    except (OSError, UnicodeError, ValueError, TypeError, AttributeError, KeyError):
+        pass
+    if not path.is_file():
+        return {}
+    try:
+        data = _load_yaml_cached(str(path), path.stat().st_mtime_ns)
+    except Exception:
+        # A single unreadable or malformed sprint should not suppress sibling repositories.
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    sprint = data.get("sprint")
+    if isinstance(sprint, dict) and isinstance(sprint.get("tickets"), dict):
+        return {str(key): row for key, row in sprint["tickets"].items() if isinstance(row, dict)}
+    tasks = data.get("tasks")
+    if not isinstance(tasks, list):
+        return {}
+    return {str(row["id"]): row for row in tasks if isinstance(row, dict) and row.get("id")}
 
-    done_tickets: List[Dict[str, Any]] = []
-    queued_tickets: List[Dict[str, Any]] = []
 
-    sprint_dirs: List[Path] = []
-    if (root / ".planfile" / "sprints").is_dir():
-        sprint_dirs.append(root / ".planfile" / "sprints")
-    if depth >= 1:
-        sprint_dirs.extend(root.glob("*/.planfile/sprints"))
-    if depth >= 2:
-        sprint_dirs.extend(root.glob("*/*/.planfile/sprints"))
-    sprint_dirs = sorted(set(sprint_dirs))
-
-    total_est_minutes = 0
-
-    for sprints_dir in sprint_dirs:
+def _report_time(value: Any, archive_day: Optional[date]) -> Optional[tuple[date, str]]:
+    display = value.isoformat() if isinstance(value, (datetime, date, time)) else str(value)
+    stamp = display.strip().replace("Z", "+00:00")
+    try:
+        observed = datetime.fromisoformat(stamp)
+    except ValueError:
+        if archive_day is None:
+            return None
         try:
-            repo_rel = str(sprints_dir.parent.parent.relative_to(root)) if sprints_dir.parent.parent != root else root.name
-        except Exception:
-            repo_rel = sprints_dir.parent.parent.name
+            observed = datetime.combine(archive_day, time.fromisoformat(stamp))
+        except ValueError:
+            return None
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=timezone.utc)
+    return observed.astimezone(timezone.utc).date(), display
 
-        # 1. Check history file for today
-        hist_fast = sprints_dir / f"history-{today_str}.yaml.fast.json"
-        hist_yaml = sprints_dir / f"history-{today_str}.yaml"
-        if hist_fast.is_file():
-            try:
-                data = json.loads(hist_fast.read_text(encoding="utf-8"))
-                tickets = data.get("data", {}).get("sprint", {}).get("tickets", {})
-                for tid, t in tickets.items():
-                    fin_at = (t.get("execution") or {}).get("finished_at") or t.get("updated_at", "")
-                    done_tickets.append({
-                        "repo": repo_rel,
-                        "id": tid,
-                        "title": t.get("name") or t.get("description", "")[:80],
-                        "status": t.get("status", "done"),
-                        "finished_at": fin_at[-14:-5] if len(fin_at) >= 19 else fin_at,
-                    })
-            except Exception:
-                pass
-        elif hist_yaml.is_file():
-            try:
-                data = _load_yaml_cached(str(hist_yaml), hist_yaml.stat().st_mtime_ns)
-                if isinstance(data, dict):
-                    tasks = data.get("tasks", [])
-                    for t in tasks:
-                        if isinstance(t, dict):
-                            done_tickets.append({
-                                "repo": repo_rel,
-                                "id": t.get("id", ""),
-                                "title": t.get("title") or t.get("description", "")[:80],
-                                "status": t.get("status", "done"),
-                                "finished_at": t.get("finished_at", ""),
-                            })
-            except Exception:
-                pass
 
-        # 2. Check current sprint file
-        curr_fast = sprints_dir / "current.yaml.fast.json"
-        curr_yaml = sprints_dir / "current.yaml"
-        if curr_fast.is_file():
-            try:
-                data = json.loads(curr_fast.read_text(encoding="utf-8"))
-                tickets = data.get("data", {}).get("sprint", {}).get("tickets", {})
-                for tid, t in tickets.items():
-                    status = t.get("status", "open")
-                    created = (t.get("created_at") or "")[:10]
-                    updated = (t.get("updated_at") or "")[:10]
-                    title = t.get("name") or t.get("description", "")[:80]
+def _completion_time(row: dict, archived: Optional[dict], day: date) -> tuple[Optional[date], str, str]:
+    """Prefer explicit finishes from either copy over a terminal record's update time."""
+    copies = [(row, row is archived)]
+    if archived and archived is not row and archived.get("status") in ("done", "completed"):
+        copies.append((archived, True))
+    for fields in (("execution.finished_at", "finished_at"), ("updated_at",)):
+        for ticket, in_history in copies:
+            for field in fields:
+                record = ticket.get("execution") if field == "execution.finished_at" else ticket
+                value = record.get(field.rsplit(".", 1)[-1]) if isinstance(record, dict) else None
+                if value:
+                    result = _report_time(value, day if in_history else None)
+                    if result:
+                        return result[0], result[1], field
+    return None, "", ""
 
-                    if status in ("done", "completed") and (updated == today_str or created == today_str):
-                        fin_at = (t.get("execution") or {}).get("finished_at") or t.get("updated_at", "")
-                        done_tickets.append({
-                            "repo": repo_rel,
-                            "id": tid,
-                            "title": title,
-                            "status": "done",
-                            "finished_at": fin_at[-14:-5] if len(fin_at) >= 19 else fin_at,
-                        })
-                    elif status in ("todo", "open", "in_progress", "planned"):
-                        est_sec = t.get("estimated_duration_seconds")
-                        est_mins = max(1, int(round(est_sec / 60))) if est_sec else 5
-                        total_est_minutes += est_mins
-                        queued_tickets.append({
-                            "repo": repo_rel,
-                            "id": tid,
-                            "title": title,
-                            "priority": t.get("priority", "normal"),
-                            "status": status,
-                            "estimated_minutes": est_mins,
-                        })
-            except Exception:
-                pass
-        elif curr_yaml.is_file():
-            try:
-                data = _load_yaml_cached(str(curr_yaml), curr_yaml.stat().st_mtime_ns)
-                if isinstance(data, dict):
-                    tasks = data.get("tasks", [])
-                    for t in tasks:
-                        if isinstance(t, dict):
-                            status = t.get("status", "open")
-                            updated = str(t.get("updated_at") or t.get("created_at") or "")[:10]
-                            title = t.get("title") or t.get("description", "")[:80]
-                            if status in ("done", "completed") and updated == today_str:
-                                done_tickets.append({
-                                    "repo": repo_rel,
-                                    "id": t.get("id", ""),
-                                    "title": title,
-                                    "status": "done",
-                                    "finished_at": str(t.get("finished_at", "")),
-                                })
-                            elif status in ("todo", "open", "in_progress", "planned"):
-                                est_sec = t.get("estimated_duration_seconds")
-                                est_mins = max(1, int(round(est_sec / 60))) if est_sec else 5
-                                total_est_minutes += est_mins
-                                queued_tickets.append({
-                                    "repo": repo_rel,
-                                    "id": t.get("id", ""),
-                                    "title": title,
-                                    "priority": t.get("priority", "normal"),
-                                    "status": status,
-                                    "estimated_minutes": est_mins,
-                                })
-            except Exception:
-                pass
 
+def gather_planfile_daily(root: Path, target_date: Optional[date] = None, depth: int = 2) -> Dict[str, Any]:
+    """Count distinct terminal tickets on the UTC report day and list the current queue."""
+    day = target_date or datetime.now(timezone.utc).date()
+    completed = []
+    queued = []
+    unknown = 0
+    for directory in _discover_sprint_dirs(root, depth):
+        repo = directory.parent.parent
+        repo_name = str(repo.relative_to(root)) if repo != root else root.name
+        history = _sprint_tickets(directory / f"history-{day}.yaml")
+        current = _sprint_tickets(directory / "current.yaml")
+        for tid, row in (history | current).items():
+            status = row.get("status", "open")
+            item = {"repo": repo_name, "id": tid, "status": status,
+                    "title": row.get("name") or row.get("title") or str(row.get("description") or "")[:80]}
+            if status in ("done", "completed"):
+                finished_day, stamp, source = _completion_time(row, history.get(tid), day)
+                if finished_day is None:
+                    unknown += 1
+                elif finished_day == day:
+                    completed.append({**item, "finished_at": stamp, "finished_at_source": source})
+            elif tid in current and status in ("todo", "open", "in_progress", "planned"):
+                seconds = row.get("estimated_duration_seconds")
+                try:
+                    minutes = max(1, round(float(seconds) / 60)) if seconds else 5
+                except (TypeError, ValueError, OverflowError):
+                    minutes = 5
+                queued.append({**item, "priority": row.get("priority", "normal"), "estimated_minutes": minutes})
     return {
-        "date": today_str,
-        "completed_count": len(done_tickets),
-        "queued_count": len(queued_tickets),
-        "total_estimated_minutes": total_est_minutes,
-        "completed_tickets": done_tickets,
-        "queued_tickets": queued_tickets,
+        "date": day.isoformat(),
+        "completed_count": len(completed),
+        "unknown_completion_time_count": unknown,
+        "queued_count": len(queued),
+        "total_estimated_minutes": sum(row["estimated_minutes"] for row in queued),
+        "completed_tickets": completed,
+        "queued_tickets": queued,
     }
 
 
@@ -229,30 +193,7 @@ def _scan_planfile_portfolio_and_blockers(
         except Exception:
             repo_rel = sprints_dir.parent.parent.name
 
-        curr_fast = sprints_dir / "current.yaml.fast.json"
-        curr_yaml = sprints_dir / "current.yaml"
-        records: List[tuple[str, Dict[str, Any]]] = []
-        if curr_fast.is_file():
-            try:
-                data = json.loads(curr_fast.read_text(encoding="utf-8"))
-                tickets = data.get("data", {}).get("sprint", {}).get("tickets", {})
-                if isinstance(tickets, dict):
-                    records = [(str(tid), t) for tid, t in tickets.items() if isinstance(t, dict)]
-            except Exception:
-                records = []
-        elif curr_yaml.is_file():
-            try:
-                data = _load_yaml_cached(str(curr_yaml), curr_yaml.stat().st_mtime_ns)
-                if isinstance(data, dict):
-                    sprint_tickets = (data.get("sprint") or {}).get("tickets") if isinstance(data.get("sprint"), dict) else None
-                    if isinstance(sprint_tickets, dict) and sprint_tickets:
-                        records = [(str(tid), t) for tid, t in sprint_tickets.items() if isinstance(t, dict)]
-                    elif isinstance(data.get("tasks"), list):
-                        records = [(str(t.get("id", "")), t) for t in data["tasks"] if isinstance(t, dict)]
-            except Exception:
-                records = []
-
-        for tid, t in records:
+        for tid, t in _sprint_tickets(sprints_dir / "current.yaml").items():
             all_entries += 1
             status = str(t.get("status", "open")).lower()
             title = t.get("name") or t.get("title") or str(t.get("description", ""))[:80]
@@ -559,7 +500,7 @@ def gather_summary(
                 planfile_data["completed_count"],
                 source=".planfile/sprints/{history-YYYY-MM-DD,current}.yaml(.fast.json)",
                 scope=scope_str,
-                filter_expr=f"history-{day_str} U (current.status in {{done,completed}} & date=={day_str})",
+                filter_expr=f"distinct repo/id, status in {{done,completed}}, UTC finish date=={day_str} (updated_at fallback)",
             ),
             "planfile_new_blockers_24h": _labeled_count(
                 pf_extended["new_blockers_count"],
@@ -619,6 +560,7 @@ def gather_summary(
             },
             "planfile": {
                 "completed_today": planfile_data["completed_count"],
+                "unknown_completion_time_count": planfile_data.get("unknown_completion_time_count", 0),
                 "new_blockers_24h": pf_extended["new_blockers_count"],
                 "completed_tickets": planfile_data["completed_tickets"],
                 "new_blockers": pf_extended["new_blockers"][:20],
@@ -663,7 +605,7 @@ def gather_summary(
             planfile_data["completed_count"],
             source=".planfile/sprints/{history-YYYY-MM-DD,current}.yaml(.fast.json)",
             scope=scope_str,
-            filter_expr=f"history-{day_str} U (current.status in {{done,completed}} & date=={day_str})",
+            filter_expr=f"distinct repo/id, status in {{done,completed}}, UTC finish date=={day_str} (updated_at fallback)",
         ),
         "subactor_active_leases": _labeled_count(
             leases_snap["active_leases_count"],
@@ -709,6 +651,7 @@ def gather_summary(
         },
         "planfile": {
             "completed_today": planfile_data["completed_count"],
+            "unknown_completion_time_count": planfile_data.get("unknown_completion_time_count", 0),
             "queued": planfile_data["queued_count"],
             "in_progress": pf_extended["in_progress_count"],
             "blocked": pf_extended["blocked_total_count"],
@@ -758,6 +701,9 @@ def format_markdown(data: Dict[str, Any]) -> str:
     day = data.get("date", str(date.today()))
     labels = data.get("counts_labeled") or {}
 
+    undated = (data.get("planfile") or {}).get("unknown_completion_time_count", 0)
+    time_note = f" (pominięte zadania bez daty ukończenia: {undated})" if undated else ""
+
     if mode == "day":
         delta = data.get("delta_24h") or {}
         gh = data.get("github") or {}
@@ -777,7 +723,7 @@ def format_markdown(data: Dict[str, Any]) -> str:
             "",
             f"## 1. {hours}h Delta — Planfile & Uruchomienia Agentów",
             (
-                f"- **Ukończone zadania (dzień kalendarzowy {day})**: `{comp_cnt}` zadań"
+                f"- **Ukończone zadania (dzień kalendarzowy {day})**: `{comp_cnt}` zadań{time_note}"
                 + _fmt_label_suffix(labels.get("planfile_completed_24h"), ".planfile/sprints", f"date=={day}")
             ),
             (
@@ -902,7 +848,7 @@ def format_markdown(data: Dict[str, Any]) -> str:
             )
         ),
         (
-            f"- **Wykonane dzisiaj**: `{pf.get('completed_today', 0)}` zadań"
+            f"- **Wykonane dzisiaj**: `{pf.get('completed_today', 0)}` zadań{time_note}"
             + _fmt_label_suffix(
                 labels.get("planfile_completed_today"),
                 ".planfile/sprints/{history,current}.yaml",
