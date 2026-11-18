@@ -20,6 +20,12 @@
       "executable": true
     },
     {
+      "source": "scripts/owner_handoff.py",
+      "target": ".governance/owner_handoff.py",
+      "strategy": "managed",
+      "executable": true
+    },
+    {
       "source": "scripts/snapshot_allocation.py",
       "target": ".governance/snapshot_allocation.py",
       "strategy": "managed",

@@ -1,0 +1,96 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-147",
+  "summary": "Adopt new-project 0.20.162 and record S4 ruleset evidence",
+  "workstream": "governance",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "regression"
+  },
+  "allowedPaths": [
+    "project/ticket-147/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    ".githooks/**",
+    ".governance/**",
+    "pyproject.toml"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "9e706f412c5b45dc31f50a433ff2b50c878d6d0b",
+    "targetBranch": "main",
+    "outcome": "Adopt wellmanifest/new-project 0.20.162, record ruleset 27538025 as S4 evidence, and switch the standard adoption to enforce now that every baseline requirement is proven.",
+    "nonGoals": [
+      "No manual editing of lock digests or managed copies.",
+      "No product code changes.",
+      "No S5 claims."
+    ],
+    "complexity": "L",
+    "estimatedMinutes": 60,
+    "standardAdoption": {
+      "sourceRepository": "wellmanifest/new-project",
+      "fromRevision": "5d846f305a98f6cddbcaf8f95e7c0d19d7842cc8",
+      "toRevision": "8e6b51dc91a2ac7e1e771908e0fac5e12da0b9a0"
+    },
+    "budgets": {
+      "maxImplementationFiles": 15,
+      "maxAffectedComponents": 5,
+      "maxPublicInterfaceChanges": 3,
+      "maxRuntimeDependencies": 3
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Goal generates the managed 0.20.162 set; the target-owned standard-adoption.json is rebuilt from verifiable evidence, adds the ruleset as S4 evidence and moves to enforce per the catalog rollout.",
+      "components": [
+        {
+          "name": "governance-adoption",
+          "paths": [
+            ".githooks/**",
+            ".governance/**",
+            "pyproject.toml"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Restore accepted base 9e706f412c5b45dc31f50a433ff2b50c878d6d0b; no runtime data is migrated."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-1",
+        "commands": [
+          "goal governance adopt --target-root . --source-revision 8e6b51dc91a2ac7e1e771908e0fac5e12da0b9a0 --check"
+        ],
+        "evidence": "Goal reports the target up-to-date at 0.20.162."
+      },
+      {
+        "criterion": "AC-2",
+        "commands": [
+          "python3 .governance/standard_pack_check.py --root . --strict"
+        ],
+        "evidence": "mode=enforce, 0 findings."
+      },
+      {
+        "criterion": "AC-3",
+        "commands": [
+          "bash project/governance-check.sh"
+        ],
+        "evidence": "The governance gate passes."
+      }
+    ]
+  }
+}

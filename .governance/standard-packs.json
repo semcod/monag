@@ -52,7 +52,7 @@
         },
         {
           "id": "wellmanifest/worktrees",
-          "minimumLevel": "S3"
+          "minimumLevel": "S2"
         },
         {
           "id": "wellmanifest/merge",
@@ -67,12 +67,8 @@
           "minimumLevel": "S3"
         },
         {
-          "id": "wellmanifest/logs",
-          "minimumLevel": "S3"
-        },
-        {
           "id": "wellmanifest/docs",
-          "minimumLevel": "S3"
+          "minimumLevel": "S2"
         }
       ]
     },

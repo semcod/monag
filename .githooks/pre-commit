@@ -118,6 +118,36 @@ else
   exit 1
 fi
 
+# A carrier-only follow-up commit (for example the delivery contract that the
+# gate asks for after the material change) is admitted only when the ticket
+# branch already delivers a material change relative to its target branch.
+# A branch without one still needs a material first commit; CI re-checks the
+# whole range (GOV-MATERIAL-001).
+branch_has_material_delivery() {
+  local target base path
+  target="$(PYTHONDONTWRITEBYTECODE=1 python3 - "$root/project/$ticket/intent.json" 2>/dev/null <<'PYTARGET'
+import json
+import sys
+try:
+    delivery = json.load(open(sys.argv[1], encoding="utf-8")).get("delivery")
+    value = delivery.get("targetBranch") if isinstance(delivery, dict) else None
+except (OSError, ValueError, AttributeError):
+    value = None
+ok = isinstance(value, str) and value and not any(c.isspace() for c in value) and ".." not in value
+print(value if ok else "main")
+PYTARGET
+)" || return 1
+  base="$(git merge-base HEAD "refs/remotes/origin/$target" 2>/dev/null)" || return 1
+  [[ -n "$base" ]] || return 1
+  while IFS= read -r -d '' path; do
+    case "$path" in
+      project/ticket-*/*|TODO.md|project/TICKETS.md|config/artifact-registry.json) ;;
+      *) return 0 ;;
+    esac
+  done < <(git diff --no-renames --name-only -z "$base" HEAD --)
+  return 1
+}
+
 governance_only_transition() {
   # SQLite transitions never require a Git carrier commit.
   [[ "${ticket_storage:-files}" == files ]] || return 1
@@ -162,7 +192,7 @@ if grep -Eiq '^-[[:space:]]+\*\*Status\*\*:[[:space:]]*IN_PROGRESS([[:space:]]|$
     done
     if [[ "$material" == true ]]; then break; fi
   done < <(git diff --cached --name-status -z --diff-filter=AMR --)
-  if [[ "$material" != true ]]; then
+  if [[ "$material" != true ]] && ! branch_has_material_delivery; then
     echo "GOV-AGENT-HOST-007: staged change contains only ticket tracking carriers." >&2
     echo "  Add a material deliverable, or emit an external no-change receipt without committing." >&2
     exit 1

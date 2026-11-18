@@ -49,6 +49,15 @@ task -> registered clone observation
    owner, fencing and the governance gate at the effect boundary. A saved
    report is evidence, never a replayable admission token.
 
+For an unfinished `released` slot, ordinary owner handoff and checkout
+restoration deliberately remain unavailable. A protected host may use the
+independently published `resume_released` API only with independently
+authenticated original-writer release/stopped evidence, exact lease/Git/intent
+CAS, a complete managed terminal registry and a fresh bounded successor.
+See [explicit owner handoff](../docs/EXPLICIT_OWNER_HANDOFF.md). Preserve dirty
+work and reuse the same ticket; never edit lease JSON, infer release authority
+from expiry/PID absence, or allocate a competing implementation.
+
 For a branch without a registered worktree, distinct commit IDs alone are not
 a competing delta. Admission compares the complete Git tree of **every**
 commit unique to that branch with target trees strictly after the common
@@ -231,3 +240,20 @@ local handoff file, update ownership, renew a timeout, or infer caller identity
 from lease contents. Do not copy another session's identity or fencing values.
 These local checks do not defend against an OS user who can alter hooks or
 impersonate launcher environment, and do not replace protected publication.
+
+### Explicit owner consent with an expired local lease
+
+For the registered `local-single-clone` policy, a protected host adapter may
+use the public `owner_handoff.handoff` API independently of idle takeover.
+It must authenticate the previous owner's explicit consent and bind the full
+request to its protected authorization verifier. A request, actor label, FD or
+expiry alone never authenticates ownership. The standalone CLI is read-only;
+without the protected adapter, preserve the checkpoint and queue the handoff.
+See [Explicit local owner handoff](../docs/EXPLICIT_OWNER_HANDOFF.md).
+
+A successful operation preserves scope, intent and the worktree, archives the
+old lease and authorization before replacement, advances fencing and creates a
+bounded fresh session. Run work-start and writer checks with its returned
+context before editing. Exact replay re-authenticates and never renews the
+successor. Later file, Git, policy, authorization or fencing changes require a
+new observation and an authenticated handoff; never repair lease JSON manually.
