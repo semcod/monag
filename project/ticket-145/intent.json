@@ -1,0 +1,88 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-145",
+  "summary": "Mark delivered Planfile bootstrap PLF-001 done",
+  "workstream": "integration",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P3",
+    "origin": "regression"
+  },
+  "allowedPaths": [
+    "project/ticket-145/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    ".planfile/sprints/current.yaml"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "95a512a1223ef84c8b9bdb38456cfa28c6a33d74",
+    "targetBranch": "main",
+    "outcome": "The committed Planfile store no longer lists delivered PLF-001 as open, so the GitHub sync stops reopening semcod/monag#5.",
+    "nonGoals": [
+      "No change to Planfile tooling, sync workflow or operational-store mode.",
+      "No other ticket state changes."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 20,
+    "budgets": {
+      "maxImplementationFiles": 1,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Use planfile ticket done against the committed store (operational store disabled for this invocation) so the archive follows Planfile's own terminal-status policy.",
+      "components": [
+        {
+          "name": "planfile-store",
+          "paths": [
+            ".planfile/sprints/current.yaml"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [
+        ".planfile/sprints/current.yaml: PLF-001 archived as done"
+      ],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert to accepted base 95a512a1223ef84c8b9bdb38456cfa28c6a33d74."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-1",
+        "commands": [
+          "grep -c PLF-001 .planfile/sprints/current.yaml"
+        ],
+        "evidence": "PLF-001 is absent from the current sprint."
+      },
+      {
+        "criterion": "AC-2",
+        "commands": [
+          "gh issue view 5 -R semcod/monag --json state"
+        ],
+        "evidence": "After the sync run on main, the issue stays closed."
+      },
+      {
+        "criterion": "AC-3",
+        "commands": [
+          "bash project/governance-check.sh"
+        ],
+        "evidence": "The governance gate passes."
+      }
+    ]
+  }
+}
