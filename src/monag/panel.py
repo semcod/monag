@@ -19,7 +19,7 @@ never binds to a substitute port silently: it tries the preferred port, then
 a bounded number of ports after it, then finally lets the OS assign any free
 port, and always reports which port it actually used.
 """
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -272,6 +272,7 @@ async function disableReport(){
   const res = await fetch('/api/report/disable.json').then(r=>r.json());
   showToast(res.status === 'ok' ? 'Schedule disabled!' : 'Disable failed: ' + JSON.stringify(res.detail), res.status !== 'ok');
 }
+let diagnosisPoll;
 async function loadAutodiagnosis(){
   try{
     const res = await fetch('/api/autodiagnosis.json').then(r=>r.json());
@@ -281,6 +282,13 @@ async function loadAutodiagnosis(){
   }
 }
 function renderAutodiag(res){
+  clearTimeout(diagnosisPoll);
+  if (res.status === 'running' || res.error) {
+    document.querySelector('#autodiagnosis tbody').replaceChildren();
+    document.getElementById('autodiag-summary').textContent = res.error || 'Fleet autodiagnosis in progress…';
+    if (!res.error) diagnosisPoll = setTimeout(loadAutodiagnosis, 1000);
+    return;
+  }
   const sum = res.summary || {};
   const cachedStr = sum.repositories_cached ? ` (${sum.repositories_cached} cached)` : '';
   document.getElementById('autodiag-summary').textContent =
@@ -329,7 +337,7 @@ async function runAutodiagnosis(){
   try{
     const res = await fetch('/api/autodiagnosis/run.json').then(r=>r.json());
     renderAutodiag(res);
-    showToast('✓ Fleet autodiagnosis completed!');
+    if (res.status === 'ok') showToast('✓ Fleet autodiagnosis completed!');
   }catch(e){
     showToast('Autodiagnosis failed: ' + e, true);
   }
@@ -590,6 +598,7 @@ async function sendAssistantPrompt(text) {
   try {
     const res = await fetch('/api/assistant?q=' + encodeURIComponent(trimmed)).then(r => r.json());
     appendChatMessage('assistant', res.answer || 'Brak odpowiedzi', res.cards || []);
+    if (res.target === 'autodiagnosis' && res.status === 'running') loadAutodiagnosis();
     if (ttsEnabled && res.answer) {
       speakTts(res.answer);
     }
@@ -629,7 +638,8 @@ class State:
         self._catalog, self._catalog_at = None, 0.0
         self._export, self._export_at = None, 0.0
         self._prs, self._prs_at = None, 0.0
-        self._autodiag, self._autodiag_at = None, 0.0
+        self._diagnosis_future = None
+        self._diagnosis_finished_at = 0.0
         self._triage, self._triage_at = None, 0.0
 
     def get_prs(self, ttl=60):
@@ -727,36 +737,45 @@ class State:
         res = report.send_email([email_addr], f"MONAG on-demand report — {self.root.name}", body, smtp_cfg)
         return {'status': 'ok' if res.get('ok') else 'error', 'detail': res}
 
-    def get_autodiagnosis(self, ttl=60):
+    def _refresh_diagnosis(self, future):
+        try:
+            from . import autodiagnosis
+            report = autodiagnosis.diagnose_fleet(self.root, depth=self.depth, state_dir=self.state_dir)
+            data = {
+                'status': 'ok',
+                'summary': report.get('summary', {}),
+                'tickets': autodiagnosis.synthesize_tickets_with_subllm(report),
+                'timestamp': report.get('timestamp'),
+            }
+        except Exception as error:
+            with self.lock:
+                self._diagnosis_finished_at = time.monotonic()
+                future.set_exception(error)
+        else:
+            with self.lock:
+                self._diagnosis_finished_at = time.monotonic()
+                future.set_result(data)
+
+    def get_autodiagnosis(self, ttl=60, *, wait_seconds=0.25):
+        """Share an in-flight diagnosis across readers and explicit refresh requests."""
         with self.lock:
-            if getattr(self, '_autodiag', None) is not None and time.monotonic() - getattr(self, '_autodiag_at', 0) < ttl:
-                return self._autodiag
-        from . import autodiagnosis
-        report = autodiagnosis.diagnose_fleet(self.root, depth=self.depth)
-        tickets = autodiagnosis.synthesize_tickets_with_subllm(report)
-        data = {
-            'status': 'ok',
-            'summary': report.get('summary', {}),
-            'tickets': tickets,
-            'timestamp': report.get('timestamp'),
-        }
-        with self.lock:
-            self._autodiag, self._autodiag_at = data, time.monotonic()
-        return data
+            future = self._diagnosis_future
+            if future is None or (future.done() and time.monotonic() - self._diagnosis_finished_at >= ttl):
+                future = Future()
+                worker = threading.Thread(target=self._refresh_diagnosis, args=(future,),
+                                          name='monag-panel-diagnosis', daemon=True)
+                worker.start()
+                self._diagnosis_future = future
+        if not wait([future], timeout=wait_seconds).done:
+            return {'status': 'running'}
+        try:
+            return future.result()
+        except Exception as error:
+            raise ValueError(f'Autodiagnosis failed: {error}') from error
 
     def autodiagnosis_run(self):
-        from . import autodiagnosis
-        report = autodiagnosis.diagnose_fleet(self.root, depth=self.depth)
-        tickets = autodiagnosis.synthesize_tickets_with_subllm(report)
-        data = {
-            'status': 'ok',
-            'summary': report.get('summary', {}),
-            'tickets': tickets,
-            'timestamp': report.get('timestamp'),
-        }
-        with self.lock:
-            self._autodiag, self._autodiag_at = data, time.monotonic()
-        return data
+        """Dispatch callers require a finished, fresh diagnosis."""
+        return self.get_autodiagnosis(ttl=0, wait_seconds=None)
 
     def autodiagnosis_dispatch(self):
         from . import autodiagnosis
@@ -928,8 +947,8 @@ ROUTES = {'/api/snapshot.json': lambda s: s.snapshot,
           '/api/triage/dispatch-koru.json': State.triage_dispatch_koru,
           '/api/autodiagnosis': State.get_autodiagnosis,
           '/api/autodiagnosis.json': State.get_autodiagnosis,
-          '/api/autodiagnosis/run': State.autodiagnosis_run,
-          '/api/autodiagnosis/run.json': State.autodiagnosis_run,
+          '/api/autodiagnosis/run': lambda s: s.get_autodiagnosis(ttl=0),
+          '/api/autodiagnosis/run.json': lambda s: s.get_autodiagnosis(ttl=0),
           '/api/autodiagnosis/dispatch': State.autodiagnosis_dispatch,
           '/api/autodiagnosis/dispatch.json': State.autodiagnosis_dispatch,
           '/api/autodiagnosis/dispatch-koru': State.autodiagnosis_dispatch_koru,
@@ -1087,6 +1106,9 @@ def handle_assistant_query(state, query_str):
     if any(k in low for k in ['autodiagnoz', 'diagnoz', 'anomali', 'health', 'flot']):
         try:
             data = state.get_autodiagnosis()
+            if data['status'] == 'running':
+                return {'status': 'running', 'target': 'autodiagnosis', 'query': q, 'cards': [],
+                        'answer': 'Autodiagnoza trwa. Wynik pojawi się w panelu autodiagnozy.'}
             tickets = data.get('tickets', [])
             summary = data.get('summary', {})
             cards = []
@@ -1106,7 +1128,7 @@ def handle_assistant_query(state, query_str):
             }
         except Exception as e:
             return {
-                "status": "ok",
+                "status": "failed",
                 "target": "autodiagnosis",
                 "query": q,
                 "answer": f"Błąd autodiagnozy: {e}",
@@ -1209,6 +1231,10 @@ def handle_assistant_query(state, query_str):
         }
 
 
+def _assistant_http_status(response):
+    return {'error': 400, 'failed': 500, 'running': 202}.get(response.get('status'), 200)
+
+
 def make_handler(state):
     class Handler(BaseHTTPRequestHandler):
         server_version = 'monag-panel/1'
@@ -1271,7 +1297,7 @@ def make_handler(state):
                 resp = handle_assistant_query(state, q)
                 self._send(json.dumps(resp, ensure_ascii=False).encode(),
                            'application/json; charset=utf-8',
-                           status=400 if resp.get('status') == 'error' else 200)
+                           status=_assistant_http_status(resp))
                 return
             if parsed.path in {'/api/query', '/api/query.json'}:
                 params = parse_qs(parsed.query)
@@ -1316,7 +1342,9 @@ def make_handler(state):
                 self._send(json.dumps({'error': str(error)}).encode(),
                           'application/json; charset=utf-8', status=500)
                 return
-            self._send(json.dumps(payload, ensure_ascii=True).encode(), 'application/json; charset=utf-8')
+            accepted = isinstance(payload, dict) and payload.get('status') == 'running' and parsed.path.startswith('/api/autodiagnosis')
+            self._send(json.dumps(payload, ensure_ascii=True).encode(), 'application/json; charset=utf-8',
+                       status=202 if accepted else 200)
 
         def do_POST(self):
             parsed = urlparse(self.path)
@@ -1388,7 +1416,7 @@ def make_handler(state):
                 resp = handle_assistant_query(state, q)
                 self._send(json.dumps(resp, ensure_ascii=False).encode(),
                            'application/json; charset=utf-8',
-                           status=400 if resp.get('status') == 'error' else 200)
+                           status=_assistant_http_status(resp))
                 return
             if parsed.path in {'/api/query', '/api/query.json'}:
                 try:

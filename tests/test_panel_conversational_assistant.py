@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 from monag import dsl, panel
 
@@ -34,9 +35,9 @@ class ConversationalAssistantTests(unittest.TestCase):
         state.refresh_live()
         thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.05}, daemon=True)
         thread.start()
-        self.addCleanup(server.shutdown)
-        self.addCleanup(server.server_close)
         self.addCleanup(thread.join, 2)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
         return server, state
 
     def request(self, server, method, path, body=None, headers=None):
@@ -70,7 +71,8 @@ class ConversationalAssistantTests(unittest.TestCase):
         self.assertIn('initSpeechRecognition', html)
         self.assertIn('sendAssistantPrompt', html)
 
-    def test_assistant_api_get_endpoints(self):
+    @patch('monag.autodiagnosis.diagnose_fleet', return_value={'anomalies': [], 'summary': {}})
+    def test_assistant_api_get_endpoints(self, diagnosis):
         server, state = self.start()
         # Seed mock agents and repo
         state.snapshot['agents'] = [{'pid': 4321, 'kind': 'koru', 'task': 'Refactor models', 'cwd': str(self.repo)}]
@@ -103,6 +105,7 @@ class ConversationalAssistantTests(unittest.TestCase):
         data = json.loads(body)
         self.assertEqual(data['status'], 'ok')
         self.assertEqual(data['target'], 'tickets')
+        diagnosis.assert_called_with(self.root, depth=2, state_dir=self.root / 'state')
 
     def test_assistant_api_post_endpoint(self):
         server, state = self.start()

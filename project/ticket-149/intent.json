@@ -1,0 +1,26 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-149",
+  "summary": "Bound panel autodiagnosis request latency",
+  "workstream": "application",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-149/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/panel.py",
+    "tests/test_panel.py",
+    "tests/test_panel_conversational_assistant.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}

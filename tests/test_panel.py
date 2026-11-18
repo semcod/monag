@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 from monag import panel
 
@@ -35,9 +36,9 @@ class PanelTests(unittest.TestCase):
         state.refresh_live()
         thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.05}, daemon=True)
         thread.start()
-        self.addCleanup(server.shutdown)
-        self.addCleanup(server.server_close)
         self.addCleanup(thread.join, 2)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
         return server, state
 
     def get(self, server, path, headers=None):
@@ -246,7 +247,8 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(data['config']['recipients'], ['custom@dev.local'])
         self.assertFalse(data['config']['enabled'])
 
-    def test_autodiagnosis_endpoints(self):
+    @patch('monag.autodiagnosis.diagnose_fleet', return_value={'anomalies': [], 'summary': {}})
+    def test_autodiagnosis_endpoints(self, diagnosis):
         server, state = self.start()
         # Verify page HTML includes autodiagnosis section and JS
         status, content_type, body = self.get(server, '/')
@@ -286,6 +288,64 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(data['status'], 'ok')
         self.assertEqual(data['action'], 'daily_automation_completed')
         self.assertTrue(data['koru_ready'])
+        diagnosis.assert_called_with(self.root, depth=2, state_dir=self.root / 'state')
+
+    def test_slow_diagnosis_serves_progress_and_shares_the_dispatch_scan(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        server, state = self.start()
+        entered, release = threading.Event(), threading.Event()
+        ticket = {'title': 'Inspect stalled job'}
+        workers = []
+
+        def slow_diagnosis(*args, **kwargs):
+            workers.append(threading.current_thread())
+            entered.set()
+            if not release.wait(10):
+                raise TimeoutError('test did not release diagnosis')
+            return {'summary': {'total_anomalies': 1}}
+
+        with patch('monag.autodiagnosis.diagnose_fleet', side_effect=slow_diagnosis) as scan, \
+             patch('monag.autodiagnosis.synthesize_tickets_with_subllm', return_value=[ticket]), \
+             patch('monag.autodiagnosis.dispatch_tickets_to_planfile', return_value={'dispatched': 1}) as send, \
+             ThreadPoolExecutor(max_workers=1) as pool:
+            dispatch = pool.submit(state.autodiagnosis_dispatch)
+            try:
+                self.assertTrue(entered.wait(5))
+                for path in ('/api/autodiagnosis.json', '/api/autodiagnosis/run.json',
+                             '/api/assistant?q=autodiagnoza'):
+                    status, _, body = self.get(server, path)
+                    self.assertEqual(status, 202)
+                    result = json.loads(body)
+                    self.assertEqual(result['status'], 'running')
+                    self.assertNotIn('tickets', result)
+                send.assert_not_called()
+            finally:
+                release.set()
+            self.assertEqual(dispatch.result(timeout=5)['dispatched_count'], 1)
+            send.assert_called_once_with([ticket], root=self.root)
+            status, _, body = self.get(server, '/api/autodiagnosis.json')
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)['tickets'], [ticket])
+            scan.assert_called_once()
+            workers[0].join(timeout=2)
+            self.assertFalse(workers[0].is_alive())
+
+    def test_failed_probe_can_be_refreshed_and_never_dispatches(self):
+        server, state = self.start()
+        with patch('monag.autodiagnosis.diagnose_fleet', side_effect=TimeoutError('probe timeout')) as scan, \
+             patch('monag.autodiagnosis.dispatch_tickets_to_planfile') as send:
+            with self.assertRaisesRegex(ValueError, 'probe timeout'):
+                state.autodiagnosis_dispatch()
+            send.assert_not_called()
+            status, _, body = self.get(server, '/api/autodiagnosis.json')
+            self.assertEqual(status, 500)
+            self.assertIn('probe timeout', json.loads(body)['error'])
+            scan.assert_called_once()
+        with patch('monag.autodiagnosis.diagnose_fleet', return_value={'summary': {}, 'anomalies': []}):
+            status, _, body = self.get(server, '/api/autodiagnosis/run.json')
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)['status'], 'ok')
 
     def test_cli_serve_and_aliases(self):
         from unittest.mock import patch
