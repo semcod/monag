@@ -47,13 +47,21 @@ def require_repository(value: Any, label: str, *, nullable: bool = False) -> str
 
 
 def require_ref(value: Any, label: str) -> str:
+    # Snapshot fields are literal branch names. Validate Git's branch syntax
+    # offline; invoking --branch here could expand revision shorthand (@{-1}).
     if (
         not isinstance(value, str)
         or not value
         or len(value) > 255
-        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+        or value in {"HEAD", "@"}
+        or value.startswith(("/", "-"))
+        or value.endswith(("/", "."))
+        or any(token in value for token in ("..", "//", "@{"))
+        or any(part.startswith(".") or part.endswith(".lock") for part in value.split("/"))
+        or any(ord(character) <= 32 or ord(character) == 127 or character in "~^:?*[\\"
+               for character in value)
     ):
-        raise SnapshotError(f"{label} must be a non-empty bounded Git ref name")
+        raise SnapshotError(f"{label} must be a non-empty bounded literal Git branch name")
     return value
 
 
@@ -131,9 +139,10 @@ def parse_snapshot(value: Any, expected_repository: str | None) -> dict[str, Any
     }
 
 
-def evaluate(snapshot: dict[str, Any]) -> list[Finding]:
-    findings: list[Finding] = []
+def evaluate(snapshot: dict[str, Any], focus_branch: str | None = None) -> list[Finding]:
     repository = snapshot["repository"]
+    branch_set = set(snapshot["branches"])
+    findings: list[Finding] = []
     if not snapshot["deleteBranchOnMerge"]:
         findings.append(Finding(
             code="GOV-BRANCH-LIFECYCLE-001",
@@ -143,7 +152,6 @@ def evaluate(snapshot: dict[str, Any]) -> list[Finding]:
             evidence={"repository": repository, "deleteBranchOnMerge": False},
         ))
 
-    branch_set = set(snapshot["branches"])
     internal_heads = {
         item["headRef"]
         for item in snapshot["openPullRequests"]
@@ -162,6 +170,8 @@ def evaluate(snapshot: dict[str, Any]) -> list[Finding]:
 
     allowed = {snapshot["defaultBranch"], *internal_heads}
     orphaned = sorted(branch_set - allowed)
+    if focus_branch is not None:
+        orphaned = [b for b in orphaned if b == focus_branch]
     if orphaned:
         findings.append(Finding(
             code="GOV-BRANCH-LIFECYCLE-002",
@@ -206,6 +216,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--snapshot", required=True, type=Path)
     parser.add_argument("--expected-repository")
     parser.add_argument("--format", choices=("text", "json"), default="text")
+    parser.add_argument(
+        "--focus-branch",
+        help="When validating in the context of a pull request, evaluate orphan status specifically for this branch.",
+    )
     args = parser.parse_args(argv)
 
     expected_repository: str | None = None
@@ -220,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
         with args.snapshot.open("r", encoding="utf-8") as handle:
             raw = json.load(handle)
         snapshot = parse_snapshot(raw, expected_repository)
-        findings = evaluate(snapshot)
+        findings = evaluate(snapshot, focus_branch=args.focus_branch)
     except (OSError, json.JSONDecodeError, SnapshotError) as error:
         findings = [Finding(
             code="GOV-BRANCH-LIFECYCLE-003",
