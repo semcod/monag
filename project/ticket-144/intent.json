@@ -1,0 +1,87 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-144",
+  "summary": "Pin published procache credential guard for tests",
+  "workstream": "governance",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P2",
+    "origin": "regression"
+  },
+  "allowedPaths": [
+    "project/ticket-144/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "pyproject.toml"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "0494b2d3124eb3af90807740067321b39ad5c22b",
+    "targetBranch": "main",
+    "outcome": "Fresh test environments load the published procache credential guard so the credential-scope regression test passes without changing runtime dependencies.",
+    "nonGoals": [
+      "No runtime dependency change; procache stays an optional runtime integration.",
+      "No weakening of the credential-scope test.",
+      "No change to the shared primary .venv or running services."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 30,
+    "budgets": {
+      "maxImplementationFiles": 2,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Declare the test-only procache pin as a PEP 735 dependency group so installs of the published wheel are unaffected.",
+      "components": [
+        {
+          "name": "build-metadata",
+          "paths": [
+            "pyproject.toml"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert to accepted base 0494b2d3124eb3af90807740067321b39ad5c22b; no data is migrated."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-1",
+        "commands": [
+          "uv run --group test --no-dev pytest -q tests/test_procache_integration.py"
+        ],
+        "evidence": "All procache integration tests pass in a fresh environment, including the credential-scope test."
+      },
+      {
+        "criterion": "AC-2",
+        "commands": [
+          "python -m build --wheel"
+        ],
+        "evidence": "Wheel Requires-Dist does not include subactor-procache."
+      },
+      {
+        "criterion": "AC-3",
+        "commands": [
+          "bash project/governance-check.sh"
+        ],
+        "evidence": "The governance gate passes."
+      }
+    ]
+  }
+}

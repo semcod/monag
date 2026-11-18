@@ -23,6 +23,12 @@ dev = ["build>=1,<2", "twine>=6,<7", "setuptools>=77.0.3",
     "pfix>=0.1.60; python_version >= '3.10'",
 ]
 
+[dependency-groups]
+test = [
+    "pytest>=7",
+    "subactor-procache @ git+https://github.com/dockuri/procache.git@72538629383fdd74ef0d8f9744a5b889af6ba0db",
+]
+
 [project.scripts]
 monag = "monag.cli:main"
 
