@@ -353,6 +353,36 @@ def classify_candidate(
     return CATEGORY_STRATEGIC_ARCHITECTURE, score
 
 
+EXPIRED_CLAIM_PHASES = frozenset({"claimed", "editing", "validating"})
+
+
+def expired_claim_candidates(repo_name: str, collision_info: dict[str, Any]) -> list[dict[str, Any]]:
+    """Expired claims still block allocation and dispatch; surface them as blockers.
+
+    An owner that died leaves ``phase: claimed`` with ``expiresAt`` in the past.
+    The claim keeps scope reservations and project slots occupied, yet looks
+    like ordinary activity. Observation only: expiry never authorizes takeover.
+    """
+    found = []
+    for row in collision_info.get("lease_evidence") or []:
+        if row.get("lease_status") not in EXPIRED_CLAIM_PHASES or row.get("lease_expired") is not True:
+            continue
+        ticket = row.get("lease_ticket") or Path(str(row.get("path") or "")).stem
+        owner = row.get("lease_owner") or "unknown owner"
+        found.append({
+            "origin": "lease-expired-claim",
+            "cause": "expired_claimed_lease",
+            "repo": repo_name,
+            "path": str(row.get("path") or ""),
+            "title": f"Blocker: expired {row['lease_status']} lease {ticket} held by {owner} (expiresAt {row.get('lease_expires_at')})",
+            "priority": "high",
+            "lease_ticket": ticket,
+            "lease_owner": owner,
+            "repo_root": str(collision_info.get("repo_path") or ""),
+        })
+    return found
+
+
 def synthesize_triage_action(
     candidate: Dict[str, Any],
     category: str,
@@ -387,6 +417,11 @@ def synthesize_triage_action(
     if origin == "prs-open-pr" and str(pr_num or "").isdigit():
         action = f"Inspect current PR #{pr_num} before protected publication in {repo_name}"
         suggested_command = f"gh pr view {int(pr_num)} --repo {repo_arg} --json number,state,headRefOid,mergeable,statusCheckRollup"
+    elif origin == "lease-expired-claim":
+        owner = candidate.get("lease_owner") or "the owner"
+        action = (f"Ask {owner} to release lease {candidate.get('lease_ticket')} in {repo_name}, or classify it with the "
+                  "governed idle-takeover observer before any takeover decision")
+        suggested_command = f"python3 .governance/idle_takeover.py --root {shlex.quote(str(candidate.get('repo_root') or repo_name))} observe"
     elif issue_num and str(issue_num).isdigit():
         action = f"Verify requirements and resolution evidence for issue #{issue_num} in {repo_name}"
         suggested_command = f"gh issue view {int(issue_num)} --repo {repo_arg}"
@@ -691,6 +726,7 @@ def run_holistic_triage(
         repo_candidates: List[Dict[str, Any]] = []
         repo_errors: List[str] = []
         collision_info = check_agent_collision(repo_path, fleet_processes=active_fleet)
+        repo_candidates.extend(expired_claim_candidates(repo_name, {**collision_info, "repo_path": str(repo_path)}))
 
         # Check for unpushed commits / ahead of origin
         try:
