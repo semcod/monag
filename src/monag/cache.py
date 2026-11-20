@@ -4,8 +4,10 @@ from __future__ import annotations
 import math
 import os
 import re
+import threading
+import time
 from pathlib import Path
-from typing import Sequence, Tuple, Optional
+from typing import Callable, Sequence, Tuple, Optional
 
 try:
     from procache import CachedReadCommand, SQLiteResponseCache
@@ -62,9 +64,54 @@ def get_cache_runner(
 
 def reset_cache_runner() -> None:
     """Reset the cached runner (useful for tests and reinitialization)."""
-    global _runner, _cache_path
+    global _runner, _cache_path, _identity
     _runner = None
     _cache_path = None
+    _identity = None
+
+
+IDENTITY_REFRESH_SECONDS = 300.0
+_IDENTITY_KEYS = ("GH_HOST", "GH_TOKEN", "GH_ENTERPRISE_TOKEN")
+_TOKEN_KEYS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
+_identity: Optional[Tuple[float, str, dict]] = None
+_identity_lock = threading.Lock()
+
+
+def with_github_identity(
+    env: dict[str, str] | None, clock: Callable[[], float] = time.monotonic,
+) -> dict[str, str] | None:
+    """Add the keyring identity gh would use, so procache can share the read.
+
+    procache never shares reads authenticated only through the gh keyring.
+    ``procache.github_env`` reads that token locally (``gh auth token``) and
+    pins ``GH_HOST``; it only succeeds when the host is configured, so the
+    request target does not change. The result is reused for a few minutes.
+    Opt-in with ``MONAG_GITHUB_IDENTITY=1``; otherwise, with explicit tokens,
+    an older procache or any failure the environment is untouched and
+    keyring-only reads keep bypassing the cache.
+    """
+    global _identity
+    source = dict(os.environ if env is None else env)
+    if os.environ.get("MONAG_GITHUB_IDENTITY") != "1" or any(source.get(key) for key in _TOKEN_KEYS):
+        return env
+    try:
+        from procache import github_env
+    except ImportError:
+        return env
+    host = (source.get("GH_HOST") or "github.com").lower()
+    with _identity_lock:
+        now = clock()
+        if _identity is None or _identity[1] != host or now - _identity[0] >= IDENTITY_REFRESH_SECONDS:
+            try:
+                resolved = github_env(host, env=source)
+                values = {key: resolved[key] for key in _IDENTITY_KEYS if resolved.get(key)}
+            except Exception:
+                values = {}
+            _identity = (now, host, values)
+        values = dict(_identity[2])
+    if not (values.get("GH_TOKEN") or values.get("GH_ENTERPRISE_TOKEN")):
+        return env
+    return {**source, **values}
 
 
 def run_cached_gh(
@@ -92,7 +139,7 @@ def run_cached_gh(
         return None
 
     try:
-        res = runner.run(args, timeout=timeout, env=env)
+        res = runner.run(args, timeout=timeout, env=with_github_identity(env))
         if res.returncode != 0:
             operation = " ".join(args[:2]) if len(args) > 1 else args[0]
             err_msg = res.stderr.strip() or f"{operation} failed (exit {res.returncode})"
