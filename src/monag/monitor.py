@@ -10,6 +10,7 @@ import time
 
 from .agents import ALIASES, identify
 from .cache import run_cached_gh
+from .urtlog_bridge import record_monag_snapshot
 
 AGENTS = set(ALIASES)
 SKIP = {'.git', '.worktrees', '.subactor', 'node_modules', 'venv', '.venv', '__pycache__', 'build', 'dist'}
@@ -569,7 +570,7 @@ def snapshot(root, state_dir, depth=2, since='24 hours ago', github=False, cache
         boot_id = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
     except OSError:
         boot_id = 'unknown'
-    return {'root': str(root), 'boot_id': boot_id, 'machine': machine,
+    result = {'root': str(root), 'boot_id': boot_id, 'machine': machine,
             'all_users': all_users, 'agents_only': agents_only, 'open_files': open_files, 'observed_at': datetime.now(timezone.utc).isoformat(),
             'agents': agents, 'agent_count': len(agents), 'repositories': repos,
             'repositories_age_seconds': age,
@@ -581,3 +582,6 @@ def snapshot(root, state_dir, depth=2, since='24 hours ago', github=False, cache
             'tasks': tasks, 'github': sorted(events, key=lambda e: e['updatedAt'], reverse=True),
             'errors': errors, 'inaccessible_processes': denied,
             'duration_seconds': round(time.monotonic() - start, 2)}
+    if os.environ.get('URTLOG_STATE_DIR'):
+        record_monag_snapshot(result)
+    return result
