@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 import sys
 import types
 
@@ -118,20 +117,20 @@ def test_run_cached_gh_passes_identity_to_runner(monkeypatch):
     assert seen[0]["GH_TOKEN"] == "test-keyring-token" and seen[0]["GH_HOST"] == "github.com"
 
 
-def test_new_procache_keeps_unprovable_scope_unshared_without_opt_in(monkeypatch, tmp_path):
-    procache = pytest.importorskip("procache")
-    if not hasattr(procache, "github_env"):
-        pytest.skip("installed procache predates github_env")
-    monkeypatch.setitem(sys.modules, "procache", procache)
-    calls = []
+def test_without_opt_in_run_cached_gh_never_resolves_identity(monkeypatch):
+    calls = _procache_with_github_env(monkeypatch)
+    seen = []
 
-    def execute(args, **kwargs):
-        calls.append(args)
-        return subprocess.CompletedProcess(args, 0, "[]", "")
+    class Runner:
+        @staticmethod
+        def is_read(args):
+            return True
 
-    monkeypatch.setattr("procache.commands.subprocess.run", execute)
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
-    args = ["gh", "pr", "list", "--repo", "acme/demo"]
-    for _ in range(2):
-        assert cache.run_cached_gh(args, env={"PATH": "/usr/bin"}) == ("[]", None)
-    assert len(calls) == 2
+        def run(self, args, *, timeout=None, env=None):
+            seen.append(env)
+            return types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(cache, "get_cache_runner", lambda: Runner())
+    env = {"PATH": "/usr/bin"}
+    assert cache.run_cached_gh(["gh", "pr", "list", "--repo", "acme/demo"], env=env) == ("[]", None)
+    assert calls == [] and seen == [env] and "GH_TOKEN" not in seen[0]
