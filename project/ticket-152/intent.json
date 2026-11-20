@@ -1,0 +1,74 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-152",
+  "summary": "Add optional urtlog dependency extra in pyproject.toml",
+  "workstream": "governance",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-152/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "pyproject.toml"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "7861b7a89c4bc585b582903fd6d49f272af12107",
+    "targetBranch": "main",
+    "outcome": "Declare optional [project.optional-dependencies] urtlog extra in pyproject.toml without adding mandatory runtime dependencies.",
+    "nonGoals": [
+      "Adding uritime-urtlog to [project].dependencies",
+      "Changing default Monag observation behavior when URTLOG_STATE_DIR is unset",
+      "Automatic PyPI publication"
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 15,
+    "budgets": {
+      "maxImplementationFiles": 1,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Expose uritime-urtlog>=0.3.0 strictly under [project.optional-dependencies] urtlog so offline CI and core installs remain unchanged while monag[urtlog] installs cleanly from a wheelhouse or registry.",
+      "components": [
+        {
+          "name": "packaging",
+          "paths": [
+            "pyproject.toml"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Remove urtlog extra line from [project.optional-dependencies] in pyproject.toml"
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "pytest -q tests/test_urtlog_bridge.py tests/test_monitor.py",
+          "./project/governance-check.sh --base origin/main"
+        ],
+        "evidence": "Verified optional urtlog extra declaration, untouched mandatory dependencies, pytest pass, and GOV-PASS."
+      }
+    ]
+  }
+}
