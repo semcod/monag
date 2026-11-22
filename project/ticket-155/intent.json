@@ -1,0 +1,28 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-155",
+  "summary": "Surface live autonomy blockers in triage with budget and stale ledger in usage",
+  "workstream": "application",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-155/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/autonomy_probes.py",
+    "src/monag/cli.py",
+    "src/monag/triage.py",
+    "src/monag/usage.py",
+    "tests/test_monag_185_autonomy_triage_usage.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}
