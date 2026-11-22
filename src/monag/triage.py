@@ -414,7 +414,10 @@ def synthesize_triage_action(
     path_arg = shlex.quote(str(candidate.get("path") or repo_name))
     suggested_command = f"git -C {path_arg} status --short"
     action = f"Inspect ticket, checkout and ownership evidence in {repo_name}: {title}"
-    if origin == "prs-open-pr" and str(pr_num or "").isdigit():
+    if origin.startswith("runtime-") and candidate.get("suggested_command"):
+        action = f"Resolve P0 autonomy blocker ({repo_name}): {title}"
+        suggested_command = str(candidate["suggested_command"])
+    elif origin == "prs-open-pr" and str(pr_num or "").isdigit():
         action = f"Inspect current PR #{pr_num} before protected publication in {repo_name}"
         suggested_command = f"gh pr view {int(pr_num)} --repo {repo_arg} --json number,state,headRefOid,mergeable,statusCheckRollup"
     elif origin == "lease-expired-claim":
@@ -653,17 +656,29 @@ def run_holistic_triage(
     limit: int = 15,
     scan_issues: bool = True,
     extra_candidates: List[Dict[str, Any]] | None = None,
+    budget_seconds: float | None = None,
+    include_runtime_probes: bool | None = None,
 ) -> Dict[str, Any]:
     """Inspect local repositories; scan_issues is reserved and performs no API calls."""
+    from .autonomy_probes import probe_live_autonomy_blockers
+
     root = root.resolve()
     started = time.monotonic()
+    deadline = (started + max(0.0, float(budget_seconds))) if budget_seconds is not None else None
     discovered_repos: List[Tuple[str, Path]] = []
 
     # Audit running agent fleet across system/workspace once for performance
     active_fleet = audit_active_fleet_processes(root)
 
     errors = []
+    timed_out = False
+    skipped_repos: List[str] = []
+
     def visit(path: Path, level: int) -> None:
+        nonlocal timed_out
+        if deadline is not None and time.monotonic() >= deadline:
+            timed_out = True
+            return
         if (path / ".git").exists():
             name = str(path.relative_to(root)) if path != root else f"{path.parent.name}/{path.name}"
             discovered_repos.append((name, path))
@@ -676,11 +691,19 @@ def run_holistic_triage(
             errors.append(f"{path}: {type(error).__name__}")
             return
         for child in children:
+            if deadline is not None and time.monotonic() >= deadline:
+                timed_out = True
+                break
             if child.is_dir() and not child.is_symlink() and not child.name.startswith("."):
                 visit(child, level + 1)
     visit(root, 0)
 
     all_raw_candidates: List[Dict[str, Any]] = list(extra_candidates or [])
+    probe_budget = min(1.5, max(0.2, deadline - time.monotonic())) if deadline is not None else 1.5
+    if deadline is None or time.monotonic() < deadline:
+        all_raw_candidates.extend(
+            probe_live_autonomy_blockers(timeout=probe_budget, include_runtime_probes=include_runtime_probes)
+        )
 
     # 2. Inspect each repo for active checkouts, unpushed commits, active processes and leases
     collisions_by_repo: Dict[str, Dict[str, Any]] = {}
@@ -769,7 +792,15 @@ def run_holistic_triage(
 
         return repo_name, collision_info, repo_candidates, repo_errors
 
-    if len(discovered_repos) > 4:
+    if deadline is not None:
+        inspected = []
+        for idx, item in enumerate(discovered_repos):
+            if time.monotonic() >= deadline:
+                timed_out = True
+                skipped_repos.extend(r[0] for r in discovered_repos[idx:])
+                break
+            inspected.append(_inspect_repo(item))
+    elif len(discovered_repos) > 4:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=16) as pool:
             inspected = list(pool.map(_inspect_repo, discovered_repos))
@@ -822,6 +853,11 @@ def run_holistic_triage(
         "root": str(root),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "duration_seconds": duration,
+        "budget_seconds": budget_seconds,
+        "timed_out": timed_out,
+        "partial_coverage": timed_out,
+        "skipped_repos_count": len(skipped_repos),
+        "skipped_repos": skipped_repos,
         "discovered_repos_count": len(discovered_repos),
         "total_candidates": len(all_raw_candidates),
         "deduplicated_candidates_count": len(categorized_items),

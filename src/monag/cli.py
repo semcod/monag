@@ -449,6 +449,8 @@ def main(argv=None):
                                help='directly feed guidance steps into Planfile backlog/sprint')
     triage_parser.add_argument('--sprint', default='current',
                                help='target sprint for --feed-planfile (default: current)')
+    triage_parser.add_argument('--budget-seconds', type=float, default=None,
+                               help='optional wall-clock time budget in seconds for bounded triage')
     autodiagnose_parser = sub.add_parser('autodiagnose', parents=[common_sub_parser],
                                          help='autonomous fleet diagnostic engine with SubLLM ticket synthesis and Planfile dispatch')
     autodiagnose_parser.add_argument('--subllm', action='store_true', default=True,
@@ -463,6 +465,8 @@ def main(argv=None):
                                      help='synchronize dispatched Planfile tickets to GitHub Issues via planfile sync github')
     autodiagnose_parser.add_argument('--sprint', default='current',
                                      help='target sprint for --feed-planfile (default: current)')
+    autodiagnose_parser.add_argument('--budget-seconds', type=float, default=None,
+                                     help='optional wall-clock time budget in seconds for bounded autodiagnose')
     autodiagnose_parser.add_argument('--emit-planfile', action='store_true',
                                      help='print synthesized tickets as Planfile JSON envelope')
     summary_parser = sub.add_parser('summary', parents=[common_sub_parser],
@@ -974,7 +978,12 @@ def main(argv=None):
                 if output_format != 'json' and sys.stderr.isatty():
                     print('MONAG: executing holistic algorithmic multi-org workspace triage...',
                           file=sys.stderr, flush=True)
-                data = triage.run_holistic_triage(root, depth=args.depth, limit=args.limit)
+                data = triage.run_holistic_triage(
+                    root,
+                    depth=args.depth,
+                    limit=args.limit,
+                    budget_seconds=getattr(args, 'budget_seconds', None),
+                )
                 if getattr(args, 'emit_planfile', False):
                     tasks = triage.export_planfile_tasks(data)
                     print(json.dumps(tasks, ensure_ascii=False, indent=2))
@@ -1029,8 +1038,38 @@ def main(argv=None):
             return 0
         if args.mode == 'autodiagnose':
             from . import autodiagnosis
-            diag_report = autodiagnosis.diagnose_fleet(root, depth=args.depth,
-                use_cache=not args.no_cache, state_dir=args.state_dir)
+            budget = getattr(args, 'budget_seconds', None)
+            if budget is not None:
+                from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    fut = pool.submit(
+                        autodiagnosis.diagnose_fleet,
+                        root,
+                        depth=args.depth,
+                        use_cache=not args.no_cache,
+                        state_dir=args.state_dir,
+                    )
+                    try:
+                        diag_report = fut.result(timeout=max(0.05, float(budget)))
+                    except FuturesTimeoutError:
+                        timeout_payload = {
+                            'schema': 'monag.autodiagnosis/v1',
+                            'root': str(root),
+                            'budget_seconds': budget,
+                            'timed_out': True,
+                            'partial_coverage': True,
+                            'recommendations': [],
+                            'tickets': [],
+                        }
+                        if output_format == 'json':
+                            print(json.dumps(timeout_payload, ensure_ascii=False, indent=2))
+                        else:
+                            print(f"MONAG autodiagnose reached budget ({budget}s); returning bounded partial coverage.")
+                        return 0
+            else:
+                diag_report = autodiagnosis.diagnose_fleet(
+                    root, depth=args.depth, use_cache=not args.no_cache, state_dir=args.state_dir
+                )
             database = diag_report.get('_database')
             if database is not None:
                 # Synthesis still needs the cache; the CLI owns its lifetime.

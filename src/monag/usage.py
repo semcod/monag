@@ -219,6 +219,10 @@ def ledger_record(source, path, text, home=None, now=None, max_age_seconds=DEFAU
 
     reset_in_seconds = (round(reset_ts - now_ts)
                         if isinstance(reset_ts, (int, float)) else None)
+    stale_days = 7 * 86400
+    warnings = []
+    if isinstance(reset_in_seconds, (int, float)) and reset_in_seconds < -stale_days:
+        warnings.append('STALE_LEDGER')
 
     return {
         'provider': provider,
@@ -230,6 +234,7 @@ def ledger_record(source, path, text, home=None, now=None, max_age_seconds=DEFAU
         'is_fresh': is_fresh,
         'freshness': freshness,
         'freshness_reason': reason,
+        'warnings': warnings,
         'reset_at': reset_at if isinstance(reset_at, (int, float)) else (reset_ts if isinstance(reset_ts, (int, float)) else None),
         'reset_in_seconds': reset_in_seconds,
         'last_decision': row.get('last_decision'),
@@ -343,11 +348,22 @@ def scan(root, registry=None, machine=False, all_users=False, ledgers=(), proc=P
     agents, denied = processes(root, proc=proc, registry=registry,
                                machine=machine, all_users=all_users)
     now_ts = time.time() if now is None else float(now)
+    idle_threshold = 86400
+    idle_long_agents = []
     for agent in agents:
         members = [agent, *agent.get('descendants', [])]
         rss = [resident_bytes(m['pid'], proc) for m in members]
         agent['rss_bytes'] = sum(r for r in rss if r is not None) if any(r is not None for r in rss) else None
         agent['uptime_seconds'] = uptime_seconds(agent, proc, now_ts)
+        agent_warnings = []
+        if (
+            agent['uptime_seconds'] is not None
+            and agent['uptime_seconds'] > idle_threshold
+            and (agent.get('cpu_seconds_tree') or 0) < 60
+        ):
+            agent_warnings.append('IDLE_LONG_RUNNING_AGENT')
+            idle_long_agents.append(agent['pid'])
+        agent['warnings'] = agent_warnings
     agents.sort(key=lambda a: -(a.get('cpu_seconds_tree') or 0))
     sources = list(ledgers) if ledgers else default_ledgers(enabled=(proc == Path('/proc')))
     ledger_rows, errors = [], []
@@ -356,8 +372,15 @@ def scan(root, registry=None, machine=False, all_users=False, ledgers=(), proc=P
         ledger_rows += rows
         errors += err
     agent_accounts(agents, ledger_rows, home=home)
+    stale_ledgers = [r.get('provider') for r in ledger_rows if 'STALE_LEDGER' in (r.get('warnings') or ())]
     return {'root': str(root), 'observed_at': datetime.now(timezone.utc).isoformat(),
             'agents': agents, 'agent_count': len(agents), 'ledgers': ledger_rows,
+            'warnings': {
+                'stale_ledgers': stale_ledgers,
+                'stale_ledger_count': len(stale_ledgers),
+                'idle_long_running_agents': idle_long_agents,
+                'idle_long_running_agent_count': len(idle_long_agents),
+            },
             'errors': errors, 'inaccessible_processes': denied,
             'duration_seconds': round(time.monotonic() - started, 2)}
 
@@ -442,6 +465,8 @@ def render(data, limit=12):
         task = agent.get('task')
         if task and task != 'unknown (process only)':
             lines.append(f"    task: {task}")
+        if agent.get('warnings'):
+            lines.append(f"    warnings: {', '.join(agent['warnings'])}")
     if len(data['agents']) > limit:
         lines.append(f"  … {len(data['agents']) - limit} more agents; increase --limit")
     if data['agents']:
@@ -452,7 +477,8 @@ def render(data, limit=12):
             remaining = '—' if row['remaining'] is None else str(int(row['remaining']))
             account = row.get('account') or '—'
             balance = row.get('balance') or '—'
-            lines.append(f"  {row['provider']:<11} {account:<30} {remaining:>9}  {balance:<12}  {reset_cell(row)}")
+            warn = f" [{','.join(row['warnings'])}]" if row.get('warnings') else ''
+            lines.append(f"  {row['provider']:<11} {account:<30} {remaining:>9}  {balance:<12}  {reset_cell(row)}{warn}")
         lines += ['', 'ACCOUNTS PROVIDER     ACCOUNT                        REMAINING  BALANCE       RESET              LAST DECISION                   SOURCE']
         for row in data['ledgers']:
             remaining = '—' if row['remaining'] is None else str(int(row['remaining']))
