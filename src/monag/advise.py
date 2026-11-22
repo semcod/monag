@@ -306,10 +306,17 @@ def synthesize_guidelines(candidate: dict[str, Any], matched_risks: list[str],
 
     # Determine base action and satisfied_when condition
     if origin == 'audit-untracked-issue':
-        issue_num = candidate.get('issue_number', '')
-        action = f"Rozpocznij realizację zgłoszenia #{issue_num} w {repo}: stwórz ticket i gałąź roboczą."
+        raw_num = candidate.get('issue_number')
+        if raw_num in (None, '') and isinstance(candidate.get('url'), str):
+            import re
+            m = re.search(r'/issues/(\d+)(?:[/?#]|$)', candidate['url'])
+            if m:
+                raw_num = int(m.group(1))
+        has_num = str(raw_num or '').strip().isdigit()
+        issue_ref = f"#{int(str(raw_num).strip())}" if has_num else (candidate.get('id') or f"„{title[:60]}”")
+        action = f"Rozpocznij realizację zgłoszenia {issue_ref} w {repo}: stwórz ticket i gałąź roboczą."
         evidence = f"Otwarte zgłoszenie GitHub bez powiązanego ticketu Planfile: '{title}'."
-        satisfied_when = f"Zgłoszenie #{issue_num} w {repo} zostało zamknięte lub zintegrowane w PR."
+        satisfied_when = f"Zgłoszenie {issue_ref} w {repo} zostało zamknięte lub zintegrowane w PR."
     elif origin == 'catalog-undescribed':
         action = f"Uzupełnij opis projektu i stosu technologicznego w {repo} (README/pyproject.toml/package.json)."
         evidence = f"Katalog repozytoriów wskazuje brak metadanych w {repo}."

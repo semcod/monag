@@ -31,6 +31,7 @@ would update README/CHANGELOG/TODO -- carrying taskill's own reasons
 """
 from datetime import datetime, timezone
 import json
+import re
 import shutil
 import subprocess
 import time
@@ -41,6 +42,24 @@ from .monitor import command
 SCHEMA = 'monag.export/v1'
 RADAR_BIN = 'ticket-radar'
 TASKILL_BIN = 'taskill'
+
+
+def _issue_number_from_raw(issue: dict) -> int | None:
+    for key in ('issue_number', 'number', 'github_issue', 'external_id'):
+        val = issue.get(key)
+        if type(val) is int and val > 0:
+            return val
+        if isinstance(val, str) and val.strip().lstrip('#').isdigit():
+            parsed = int(val.strip().lstrip('#'))
+            if parsed > 0:
+                return parsed
+    for url_key in ('github_url', 'url'):
+        raw_url = issue.get(url_key)
+        if isinstance(raw_url, str):
+            m = re.search(r'/issues/(\d+)(?:[/?#]|$)', raw_url)
+            if m:
+                return int(m.group(1))
+    return None
 
 
 def audit_candidates(audit_data):
@@ -56,13 +75,16 @@ def audit_candidates(audit_data):
         for issue in repository.get('untracked_issues', []):
             if issue.get('state') != 'OPEN':
                 continue
+            num = _issue_number_from_raw(issue)
+            num_label = f'#{num}' if num is not None else '(brak numeru)'
             candidates.append({
                 'origin': 'audit-untracked-issue',
                 'repo': repository['repo'], 'path': repository['path'],
-                'title': issue.get('title') or f"Issue #{issue.get('number')}",
+                'issue_number': num,
+                'title': issue.get('title') or (f"Issue #{num}" if num is not None else 'Untracked issue'),
                 'priority': 'unknown',
                 'url': issue.get('url'),
-                'evidence': f"{label} issue #{issue.get('number')} "
+                'evidence': f"{label} issue {num_label} "
                            f"({issue.get('state', 'UNKNOWN')}) has no matching Planfile ticket.",
             })
     return candidates
