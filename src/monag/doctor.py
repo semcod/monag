@@ -579,11 +579,7 @@ def diagnose(
         timed_out = True
         skipped_phases.append('agent_storage')
     else:
-        if 'agent_storage' not in configured_phase_budgets and overall_deadline is not None:
-            rem_overall = max(0.0, overall_deadline - p4_start)
-            p4_dead: float | None = p4_start + min(rem_overall, 10.0)
-        else:
-            p4_dead = _phase_deadline('agent_storage', p4_start)
+        p4_dead: float | None = _phase_deadline('agent_storage', p4_start)
         _emit_progress('agent_storage', state='started')
         agent_health = audit_agent_storage_health(home=home, deadline=p4_dead, clock=clock)
         p4_end = clock()
@@ -605,8 +601,17 @@ def diagnose(
         )
 
     if timed_out:
+        elapsed_now = round(max(0.0, clock() - started), 4)
+        phase_capped = [p for p in timed_out_phases if p in configured_phase_budgets]
+        if overall_deadline is not None and elapsed_now >= budget_seconds:
+            reason = f"Doctor reached time budget ({budget_seconds}s)"
+        elif phase_capped:
+            caps = ", ".join(f"{p}={configured_phase_budgets[p]}s" for p in phase_capped)
+            reason = f"Doctor reached phase budget cap ({caps}) before overall budget ({budget_seconds}s)"
+        else:
+            reason = f"Doctor reached time budget ({budget_seconds}s)"
         recommendations.append(
-            f"Doctor reached time budget ({budget_seconds}s); partial diagnostics returned "
+            f"{reason}; partial diagnostics returned "
             f"(timed_out_phases={timed_out_phases}, skipped_repositories={len(skipped_repositories)}). "
             "Pass a larger --timeout for an exhaustive scan."
         )

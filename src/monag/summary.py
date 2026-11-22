@@ -321,7 +321,10 @@ def _scan_active_leases_snapshot(root: Path, depth: int = 2) -> Dict[str, Any]:
     lease_dirs = sorted(set(lease_dirs))
 
     active_count = 0
+    active_live_count = 0
+    expired_non_terminal_count = 0
     terminal_count = 0
+    now_utc = datetime.now(timezone.utc)
     for ldir in lease_dirs:
         for lf in sorted(ldir.glob("*.json")):
             try:
@@ -332,12 +335,28 @@ def _scan_active_leases_snapshot(root: Path, depth: int = 2) -> Dict[str, Any]:
             is_act, _ = worktrees.is_lease_active(data)
             if is_act:
                 active_count += 1
+                raw_exp = str(data.get("expiresAt") or "").strip()
+                is_expired = False
+                if raw_exp:
+                    try:
+                        exp_dt = datetime.fromisoformat(raw_exp.replace("Z", "+00:00"))
+                        if exp_dt.tzinfo is None:
+                            exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                        is_expired = exp_dt < now_utc
+                    except ValueError:
+                        is_expired = False
+                if is_expired:
+                    expired_non_terminal_count += 1
+                else:
+                    active_live_count += 1
             else:
                 terminal_count += 1
 
     return {
         "repositories_with_leases": len(lease_dirs),
         "active_leases_count": active_count,
+        "active_live_leases_count": active_live_count,
+        "expired_non_terminal_leases_count": expired_non_terminal_count,
         "terminal_leases_count": terminal_count,
     }
 
@@ -359,6 +378,9 @@ def query_github_pr_metrics(
         "open_prs_count": 0,
         "merged_prs_count": 0,
         "opened_prs_count": 0,
+        "open_prs_truncated": False,
+        "merged_prs_truncated": False,
+        "opened_prs_truncated": False,
         "open_prs": [],
         "merged_prs": [],
         "opened_prs": [],
@@ -378,6 +400,7 @@ def query_github_pr_metrics(
         if proc_open.returncode == 0 and proc_open.stdout.strip():
             raw_open = json.loads(proc_open.stdout)
             result["open_prs_count"] = len(raw_open)
+            result["open_prs_truncated"] = len(raw_open) >= 50
             result["open_prs"] = [
                 {
                     "repo": p.get("repository", {}).get("nameWithOwner", ""),
@@ -400,6 +423,7 @@ def query_github_pr_metrics(
         if proc_merged.returncode == 0 and proc_merged.stdout.strip():
             raw_merged = json.loads(proc_merged.stdout)
             result["merged_prs_count"] = len(raw_merged)
+            result["merged_prs_truncated"] = len(raw_merged) >= 100
             result["merged_prs"] = [
                 {
                     "repo": p.get("repository", {}).get("nameWithOwner", ""),
@@ -422,6 +446,7 @@ def query_github_pr_metrics(
         if proc_opened.returncode == 0 and proc_opened.stdout.strip():
             raw_opened = json.loads(proc_opened.stdout)
             result["opened_prs_count"] = len(raw_opened)
+            result["opened_prs_truncated"] = len(raw_opened) >= 100
             result["opened_prs"] = [
                 {
                     "repo": p.get("repository", {}).get("nameWithOwner", ""),
@@ -444,6 +469,70 @@ def _github_window_start(target_date: date, since: Optional[datetime]) -> str:
     return since.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _collect_runtime_telemetry_24h(
+    hours: int,
+    telemetry_paths: Optional[Dict[str, Path]] = None,
+) -> Dict[str, Any]:
+    """Optional read-only 24h runtime telemetry adapter for Willman, URTLog, and Heyasa."""
+    if os.environ.get("PYTEST_CURRENT_TEST") and telemetry_paths is None:
+        return {"enabled": False, "reason": "skipped_in_pytest"}
+    import sqlite3
+
+    paths = telemetry_paths or {}
+    xdg_state = Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state"))
+    willman_db = Path(paths.get("willman_db") or (xdg_state / "subactor" / "willman-project-jobs" / "projects.sqlite"))
+    urtlog_db = Path(paths.get("urtlog_db") or (xdg_state / "uritime" / "urtlog" / "urilog.sqlite3"))
+    heyasa_plans = Path(paths.get("heyasa_plans") or (xdg_state / "heyasa" / "plans.json"))
+
+    cutoff = datetime.now(timezone.utc).timestamp() - max(1.0, float(hours)) * 3600.0
+    out: Dict[str, Any] = {
+        "enabled": True,
+        "willman_jobs_24h": 0,
+        "willman_uncertain_jobs": 0,
+        "urtlog_events_24h": 0,
+        "urtlog_failed_events_24h": 0,
+        "heyasa_paused_plans": 0,
+    }
+    if willman_db.is_file():
+        try:
+            conn = sqlite3.connect(f"file:{willman_db}?mode=ro", uri=True, timeout=1.0)
+            out["willman_jobs_24h"] = int(conn.execute("SELECT count(*) FROM jobs WHERE updated >= ?", (cutoff,)).fetchone()[0])
+            out["willman_uncertain_jobs"] = int(conn.execute("SELECT count(*) FROM jobs WHERE phase='uncertain'").fetchone()[0])
+            conn.close()
+        except Exception:
+            pass
+    if urtlog_db.is_file():
+        try:
+            conn = sqlite3.connect(f"file:{urtlog_db}?mode=ro", uri=True, timeout=1.0)
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            tbl = "events" if "events" in tables else ("runs" if "runs" in tables else None)
+            if tbl:
+                cols = {r[1] for r in conn.execute(f"PRAGMA table_info({tbl})").fetchall()}
+                ts_col = next((c for c in ("occurred_at", "created_at", "ts", "timestamp") if c in cols), None)
+                st_col = next((c for c in ("status", "outcome") if c in cols), None)
+                if ts_col:
+                    out["urtlog_events_24h"] = int(conn.execute(f"SELECT count(*) FROM {tbl} WHERE {ts_col} >= ?", (cutoff,)).fetchone()[0])
+                    if st_col:
+                        out["urtlog_failed_events_24h"] = int(conn.execute(
+                            f"SELECT count(*) FROM {tbl} WHERE {ts_col} >= ? AND lower({st_col}) IN ('failed','error','canceled','timeout')",
+                            (cutoff,),
+                        ).fetchone()[0])
+            conn.close()
+        except Exception:
+            pass
+    if heyasa_plans.is_file():
+        try:
+            pdata = json.loads(heyasa_plans.read_text(encoding="utf-8"))
+            plans = pdata.get("plans", pdata) if isinstance(pdata, dict) else pdata
+            if isinstance(plans, list):
+                out["heyasa_paused_plans"] = sum(
+                    1 for p in plans if isinstance(p, dict) and str(p.get("status", "")).lower() in {"paused", "blocked"}
+                )
+        except Exception:
+            pass
+    return out
+
+
 def gather_summary(
     root: Path,
     hours: int = 24,
@@ -452,6 +541,7 @@ def gather_summary(
     depth: int = 2,
     state_dir: Optional[Path] = None,
     mode: str = "summary",
+    telemetry_paths: Optional[Dict[str, Path]] = None,
 ) -> Dict[str, Any]:
     """Compile either current portfolio/queue snapshot (`summary`) or 24h operational delta (`day`)."""
     normalized_mode = "day" if str(mode).lower() == "day" else "summary"
@@ -533,6 +623,7 @@ def gather_summary(
                 filter_expr=f"author:@me created:>={gh_window}",
             ),
         }
+        runtime_telemetry = _collect_runtime_telemetry_24h(hours, telemetry_paths=telemetry_paths)
         return {
             "schema": SCHEMA,
             "mode": "day",
@@ -553,9 +644,12 @@ def gather_summary(
                 "agent_runs_failed": agent_runs["failed_runs_count"],
                 "agent_runs_running": agent_runs["running_runs_count"],
                 "recent_agent_runs": agent_runs["recent_runs"],
+                "runtime_telemetry_24h": runtime_telemetry,
                 "merged_prs_count": pr_summary.get("merged_prs_count", 0),
+                "merged_prs_truncated": bool(pr_summary.get("merged_prs_truncated")),
                 "merged_prs": pr_summary.get("merged_prs", []),
                 "opened_prs_count": pr_summary.get("opened_prs_count", 0),
+                "opened_prs_truncated": bool(pr_summary.get("opened_prs_truncated")),
                 "opened_prs": pr_summary.get("opened_prs", []),
             },
             "planfile": {
@@ -569,6 +663,8 @@ def gather_summary(
             "github": {
                 "merged_prs_count": pr_summary.get("merged_prs_count", 0),
                 "opened_prs_count": pr_summary.get("opened_prs_count", 0),
+                "merged_prs_truncated": bool(pr_summary.get("merged_prs_truncated")),
+                "opened_prs_truncated": bool(pr_summary.get("opened_prs_truncated")),
                 "merged_prs": pr_summary.get("merged_prs", []),
                 "opened_prs": pr_summary.get("opened_prs", []),
             },
@@ -613,11 +709,23 @@ def gather_summary(
             scope=scope_str,
             filter_expr="phase not in {released,merged,closed,cancelled}",
         ),
+        "subactor_active_live_leases": _labeled_count(
+            leases_snap["active_live_leases_count"],
+            source=".subactor/leases/*.json",
+            scope=scope_str,
+            filter_expr="non-terminal and expiresAt >= now",
+        ),
+        "subactor_expired_non_terminal_leases": _labeled_count(
+            leases_snap["expired_non_terminal_leases_count"],
+            source=".subactor/leases/*.json",
+            scope=scope_str,
+            filter_expr="non-terminal and expiresAt < now",
+        ),
         "github_open_prs_queue": _labeled_count(
             pr_summary.get("open_prs_count", 0),
             source="gh search prs",
             scope=gh_scope,
-            filter_expr="author:@me state:open (limit<=50)",
+            filter_expr="author:@me state:open (limit<=50, truncated>=50)" if pr_summary.get("open_prs_truncated") else "author:@me state:open (limit<=50)",
         ),
         "github_merged_prs_today": _labeled_count(
             pr_summary.get("merged_prs_count", 0),
@@ -646,8 +754,11 @@ def gather_summary(
             "all_current_sprint_entries": pf_extended["all_current_sprint_entries"],
             "estimated_minutes": planfile_data["total_estimated_minutes"],
             "active_leases_count": leases_snap["active_leases_count"],
+            "active_live_leases_count": leases_snap["active_live_leases_count"],
+            "expired_non_terminal_leases_count": leases_snap["expired_non_terminal_leases_count"],
             "terminal_leases_count": leases_snap["terminal_leases_count"],
             "open_prs_count": pr_summary.get("open_prs_count", 0),
+            "open_prs_truncated": bool(pr_summary.get("open_prs_truncated")),
         },
         "planfile": {
             "completed_today": planfile_data["completed_count"],

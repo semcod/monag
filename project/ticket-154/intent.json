@@ -1,0 +1,28 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-154",
+  "summary": "Fix advise blank issue number, doctor timeout, and summary lease split",
+  "workstream": "application",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P2",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-154/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/advise.py",
+    "src/monag/doctor.py",
+    "src/monag/export.py",
+    "src/monag/summary.py",
+    "tests/test_monag_184_regressions.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}
