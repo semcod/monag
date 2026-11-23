@@ -1,0 +1,26 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-156",
+  "summary": "Publish Monag resume snapshots and Bottlenecks observations for Reflex",
+  "workstream": "application",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-156/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/cli.py",
+    "src/monag/delivery_snapshot.py",
+    "tests/test_delivery_snapshot.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}

@@ -304,6 +304,11 @@ def main(argv=None):
                                choices=['critical', 'high', 'medium', 'normal', 'low', 'unknown'],
                                help='show only tickets with this Planfile priority; repeat to select several')
     resume_parser.add_argument('--all-projects', action='store_true')
+    resume_export = resume_parser.add_mutually_exclusive_group()
+    resume_export.add_argument('--snapshot-file', type=Path, metavar='JSON',
+                               help='atomically save the complete resume snapshot')
+    resume_export.add_argument('--reflex-output', type=Path, metavar='JSONL',
+                               help='save delivery observations using the optional Bottlenecks analyzer')
     audit_parser = sub.add_parser('audit', parents=[common_sub_parser], help='read-only report of Planfile ticket coverage against GitHub Issues, '
                                                 'for one repository or every repository under --root')
     audit_parser.add_argument('--issue-limit', type=int, default=200,
@@ -723,6 +728,9 @@ def main(argv=None):
             if output_format != 'json' and sys.stderr.isatty():
                 print('MONAG: skanuję repozytoria i worktree; Ctrl-C przerywa bez zmian.', file=sys.stderr, flush=True)
             data = resume.scan(root, args.depth, args.sort, args.priorities)
+            if args.snapshot_file or args.reflex_output:
+                from .delivery_snapshot import save_projection
+                save_projection(data, args.snapshot_file or args.reflex_output, reflex=bool(args.reflex_output))
             if output_format == 'json':
                 print(json.dumps(data, ensure_ascii=True))
             else:
