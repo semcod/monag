@@ -15,3 +15,22 @@ systemctl --user list-timers monag-urtlog-triage@production.timer
 ```
 
 The journal contains a JSON triage report on each run. Inspect its recommendations for the episode, deadline and retry status. A missing journal or an unobserved producer also yields a recommendation. A successful systemd exit means the scan ran. Read the recommendations to determine the health of the route. The timer reruns a minute after the service finishes.
+
+## Continuation snapshot
+
+For an existing `monag-worktree-continuation.service`, install the
+`atomic-snapshot.conf` drop-in from the adjacent directory. Bind the following
+environment variables in the user unit to absolute paths from the installation.
+
+| Variable | Value |
+| --- | --- |
+| `MONAG_EXECUTABLE` | Installed Monag supporting `resume --snapshot-file` |
+| `MONAG_ROOT` | Workspace scanned by this timer |
+| `MONAG_RESUME_SNAPSHOT` | Scheduled JSON file read by the continuation consumer |
+
+Use the same pinned runtime for the scan and its history command. After
+`systemctl --user daemon-reload`, let the timer run and wait for its oneshot
+service to finish. Parse the snapshot, verify its `monag.resume/v1` schema,
+workspace root and fresh observation timestamp, then inspect the expected
+project. Monag replaces the complete document atomically. The unit sends
+standard output to null so subsequent service commands cannot truncate it.
