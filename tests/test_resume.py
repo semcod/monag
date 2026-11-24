@@ -59,6 +59,31 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(result['conflicting_statuses'], 1)
         self.assertEqual(result['unknown_statuses'], 1)
 
+    def test_resume_preserves_only_consistent_execution_waits(self):
+        sprint = self.repo / '.planfile/sprints'
+        sprint.mkdir(parents=True)
+        (sprint / 'current.yaml').write_text(
+            'tickets:\n  T-1:\n    status: open\n    execution:\n'
+            '      state: waiting_dependency\n      last_error: private detail\n'
+        )
+        rows, _, errors = resume.planfile(self.repo)
+        self.assertFalse(errors)
+        summary = resume.summarize_tickets(rows)
+        item, = summary['remaining_tickets']
+        self.assertEqual(item['status'], 'open')
+        self.assertEqual(item['execution'], {'state': 'waiting_dependency'})
+        self.assertEqual(summary['blocked'], 1)
+        self.assertNotIn('private detail', json.dumps(summary))
+        for other in (None, 'waiting_input'):
+            conflict = resume.summarize_tickets([*rows, dict(rows[0], execution_wait=other)])
+            self.assertNotIn('execution', conflict['remaining_tickets'][0])
+            self.assertEqual(conflict['blocked'], 0)
+        collisions = [dict(rows[0], github_binding={'key': 'org/repo#' + n})
+                      for n in ('100', '101')]
+        conflict = resume.summarize_tickets(collisions)
+        self.assertTrue(conflict['remaining_tickets'][0]['identity_collision'])
+        self.assertNotIn('execution', conflict['remaining_tickets'][0])
+
     def test_planfile_failed_status_is_blocked_remaining_work(self):
         items = [{'id': 'A', 'status': 'failed'}, {'id': 'B', 'status': 'blocked'},
                  {'id': 'C', 'status': 'done'}]

@@ -19,6 +19,7 @@ CLOSED = {'done', 'closed', 'cancelled', 'canceled', 'completed', 'merged'}
 # Planfile's own terminal-failure status needs triage like a blocked ticket:
 # it stays visible as remaining work but is never ready to pick up.
 STALLED = {'blocked', 'failed'}
+EXECUTION_WAITS = ('blocked', 'waiting_dependency', 'waiting_input')
 OPEN = {'open', 'todo', 'backlog', 'planned', 'plan', 'ready', 'in_progress',
         'in-progress', 'active', 'review', 'pending'} | STALLED
 PLANFILE_PRIORITIES = ('critical', 'high', 'medium', 'normal', 'low')
@@ -166,7 +167,10 @@ def planfile(path):
                     # is unstarted work, not an ambiguous state that blocks the whole queue.
                     status = str(item.get('status') or 'open').lower()
                     priority = normalize_priority(item.get('priority'))
+                    execution = item.get('execution')
+                    state = execution.get('state') if isinstance(execution, dict) else None
                     result.append({'id': str(identity), 'status': status,
+                                   'execution_wait': state if state in EXECUTION_WAITS else None,
                                    'title': str(item.get('name', item.get('title', identity))),
                                    'priority': priority,
                                    'labels': [str(label) for label in item.get('labels', [])]
@@ -439,7 +443,12 @@ def summarize_tickets(items, priorities=None):
         unknown += bool(statuses - OPEN - CLOSED)
         if statuses & OPEN:
             pending.append(key)
-            blocked += bool(statuses & STALLED)
+            # Only attribute a runtime wait if all retained sources identify the same open task.
+            wait = rows[0].get('execution_wait')
+            if (identity_collision or statuses != {'open'} or wait not in EXECUTION_WAITS
+                    or any(row.get('execution_wait') != wait for row in rows)):
+                wait = None
+            blocked += bool(statuses & STALLED or wait)
             labels = sorted({str(label) for row in rows for label in row.get('labels', [])})
             import_evidence = sorted({str(finding) for row in rows
                                       for finding in row.get('import_evidence', [])})
@@ -456,6 +465,7 @@ def summarize_tickets(items, priorities=None):
                 'identity_collision': identity_collision,
                 'sources': sorted({str(r.get('source', '')) for r in rows}),
                 'github_bindings': identities,
+                **({'execution': {'state': wait}} if wait else {}),
             })
     pending_tickets.sort(key=lambda row: (-priority_rank(row['priority']), row['id']))
     priority_counts = {value: 0 for value in (*PLANFILE_PRIORITIES, 'unknown')}
