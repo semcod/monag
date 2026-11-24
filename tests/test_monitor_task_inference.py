@@ -1,7 +1,9 @@
 """An agent without a reported task is labelled by the ticket worktree it works in (ticket-107)."""
 import json
+import os
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from monag.monitor import UNKNOWN_TASK, inferred_task, processes
@@ -35,6 +37,18 @@ class TaskInferenceTests(unittest.TestCase):
     def test_missing_intent_still_names_ticket(self):
         wt = self.worktree('org/repo', 'ticket-007', 'x')
         self.assertEqual(inferred_task([str(wt)]), 'inferred from worktree: repo ticket-007')
+
+    def test_nested_execution_boundary_excludes_only_the_outer_ticket(self):
+        outer = self.worktree('org/repo', 'ticket-123', 'outer')
+        ceiling = outer / 'isolated'
+        ordinary = ceiling / 'plain'
+        inner = ceiling / 'repo' / '.worktrees' / 'ticket-124--inner'
+        ordinary.mkdir(parents=True)
+        inner.mkdir(parents=True)
+        with patch.dict(os.environ, {'GIT_CEILING_DIRECTORIES': str(ceiling)}):
+            self.assertIsNone(inferred_task([str(ordinary)]))
+            self.assertEqual(inferred_task([str(inner)]), 'inferred from worktree: repo ticket-124')
+            self.assertEqual(inferred_task([str(outer)]), 'inferred from worktree: repo ticket-123')
 
     def test_plain_directories_give_nothing(self):
         self.assertIsNone(inferred_task([str(self.root / 'org/repo'), '/tmp']))

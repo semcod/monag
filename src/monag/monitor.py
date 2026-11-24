@@ -35,10 +35,18 @@ def inferred_task(directories):
     The result is an observation, not a claim of ownership or progress: it only says
     which canonical ticket worktree the process tree has as a working directory.
     """
+    ceilings = [Path(os.path.realpath(entry))
+                for entry in os.environ.get('GIT_CEILING_DIRECTORIES', '').split(os.pathsep)
+                if os.path.isabs(entry)]
     found = []
     for directory in directories:
         match = TICKET_WORKTREE.match(str(directory))
         if match:
+            if ceilings:
+                cwd = Path(os.path.realpath(directory))
+                worktree = Path(os.path.realpath(match.group(0)))
+                if any(cwd.is_relative_to(limit) and not worktree.is_relative_to(limit) for limit in ceilings):
+                    continue
             key = (match.group('primary'), match.group('ticket'))
             if key not in [k for k, _ in found]:
                 found.append((key, match.group(0)))
@@ -59,7 +67,8 @@ def inferred_task(directories):
 
 
 def command(args, cwd=None, timeout=8):
-    env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith('GIT_') or k == 'GIT_CEILING_DIRECTORIES'}
     env.update(GIT_OPTIONAL_LOCKS='0', GIT_TERMINAL_PROMPT='0', GH_PROMPT_DISABLED='1')
     if args and args[0] == 'gh':
         cached_result = run_cached_gh(args, cwd=cwd, timeout=timeout, env=env)
