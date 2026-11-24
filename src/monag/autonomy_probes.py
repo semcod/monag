@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import urllib.error
@@ -85,6 +86,38 @@ def _planfile_bridge_alert(url: str, timeout: float) -> dict[str, Any] | None:
     }
 
 
+def _discovery_failure(url: str, *, configured: bool, timeout: float) -> tuple[int | None, str] | None:
+    """Check the projection selected by MONAG_PLANFILE_DISCOVERY_URL."""
+    try:
+        endpoint = urllib.parse.urlsplit(url)
+        if endpoint.scheme not in {"http", "https"} or not endpoint.hostname:
+            return None, "invalid_discovery_url"
+        query = urllib.parse.parse_qs(endpoint.query, keep_blank_values=True)
+        status, body = _http_probe(url, timeout)
+    except ValueError:
+        return None, "invalid_discovery_url"
+    if status is None:
+        return (None, "discovery_unreachable") if configured else None
+
+    data = body if isinstance(body, dict) else {}
+    if status != 200 or data.get("error") == "ticket_index_stale":
+        reason = data.get("detail") or data.get("error") or data.get("code")
+        if isinstance(reason, dict):
+            reason = reason.get("code")
+        # Retain machine codes. Backend diagnostics can contain ticket data.
+        if not isinstance(reason, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,79}", reason):
+            reason = f"http_{status}"
+        return status, reason
+
+    if query.get("mode") == ["queue"]:
+        scope = data.get("scope")
+        if (data.get("schema") != "planfile.ticket-discovery/v1"
+                or not isinstance(data.get("tickets"), list) or not isinstance(scope, dict)
+                or any(query[key] != [scope.get(key)] for key in ("mode", "queue", "state") if key in query)):
+            return status, "discovery_response_mismatch"
+    return None
+
+
 def probe_live_autonomy_blockers(
     *,
     timeout: float = 1.5,
@@ -102,7 +135,8 @@ def probe_live_autonomy_blockers(
     blockers: list[dict[str, Any]] = []
     urls = endpoint_urls or {}
     willman_url = urls.get("willman") or os.environ.get("MONAG_WILLMAN_HEALTH_URL", "http://127.0.0.1:7655/v1/health?readiness=1")
-    planfile_url = urls.get("planfile") or os.environ.get("MONAG_PLANFILE_DISCOVERY_URL", "http://127.0.0.1:8765/tickets/discovery")
+    configured_discovery = urls.get("planfile") or os.environ.get("MONAG_PLANFILE_DISCOVERY_URL")
+    planfile_url = configured_discovery or "http://127.0.0.1:8765/tickets/discovery"
     heyasa_url = urls.get("heyasa") or os.environ.get("MONAG_HEYASA_HEALTH_URL", "http://127.0.0.1:8787/health")
 
     # 1. Willman readiness probe
@@ -123,9 +157,9 @@ def probe_live_autonomy_blockers(
         })
 
     # 2. Central Planfile /tickets/discovery probe
-    p_status, p_body = _http_probe(planfile_url, timeout)
-    if p_status == 503 or (isinstance(p_body, dict) and p_body.get("error") == "ticket_index_stale"):
-        detail = p_body.get("error") if isinstance(p_body, dict) else str(p_body)
+    failure = _discovery_failure(planfile_url, configured=bool(configured_discovery), timeout=timeout)
+    if failure is not None:
+        p_status, detail = failure
         blockers.append({
             "origin": "runtime-planfile-health",
             "category": "autonomy-blocker",
@@ -133,8 +167,11 @@ def probe_live_autonomy_blockers(
             "tier": "floor",
             "score": 5150,
             "unblock_impact": 5150,
-            "suggested_command": f"curl -fsS {planfile_url}",
-            "repo": "wellmanifest/new-project",
+            "suggested_command": "monag --json triage",
+            "repo": "semcod/planfile",
+            "http_status": p_status,
+            "cause": detail,
+            "evidence": f"Planfile discovery: {detail} (HTTP {p_status})" if p_status else f"Planfile discovery: {detail}",
             "title": f"P0 Autonomy Blocker: Planfile /tickets/discovery unhealthy ({p_status or 'err'}: {detail})",
             "detail": detail,
         })
