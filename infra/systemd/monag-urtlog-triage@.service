@@ -1,0 +1,14 @@
+[Unit]
+Description=Read URTLog fact and bridge health for Monag profile %i
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/monag/urtlog-triage/%i.env
+ExecStartPre=/usr/bin/test -x ${MONAG_EXECUTABLE}
+ExecStartPre=/usr/bin/test -d ${MONAG_ROOT}
+ExecStartPre=/usr/bin/test -n ${MONAG_OQLLM_FACT_PRINCIPAL}
+ExecStartPre=/usr/bin/test -n ${URTLOG_STATE_DIR}
+ExecStart=/usr/bin/env -- ${MONAG_EXECUTABLE} --root ${MONAG_ROOT} --depth 0 --json triage --budget-seconds 30 --limit 100
+TimeoutStartSec=50s
+StandardOutput=journal
+StandardError=journal

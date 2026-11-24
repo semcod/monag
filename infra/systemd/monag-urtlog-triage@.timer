@@ -1,0 +1,10 @@
+[Unit]
+Description=Check URTLog fact and bridge health for Monag profile %i every minute
+
+[Timer]
+OnStartupSec=30s
+OnUnitInactiveSec=1min
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
