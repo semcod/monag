@@ -38,7 +38,22 @@ def inspect_snapshot(path, root, now, max_age):
                 projects=len(report["projects"]))
 
 
-def remember(fact, path):
+def confirm_queue_sample(fact, previous, progress, invocation):
+    """Replay the open incident until two distinct samples confirm the same recovery."""
+    at = fact["occurred_at"]
+    last_seen = progress["seen_at"] if progress else previous["occurred_at"]
+    if datetime.fromisoformat(at) <= datetime.fromisoformat(last_seen):
+        return previous, progress
+    latest = {"seen_at": at}
+    if previous.get("status") == "failure" and fact["status"] == "success":
+        pending = progress.get("pending") if progress else None
+        if not pending or pending["invocation"] == invocation or pending["evidence"] != fact["evidence"]:
+            latest["pending"] = {"invocation": invocation, "observed_at": at, "evidence": fact["evidence"]}
+            return previous, latest
+    return fact, latest
+
+
+def remember(fact, path, *, recovery_invocation=None):
     """Atomically retain the original event identity while the same evidence persists."""
     with path.with_suffix(path.suffix + ".lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -46,13 +61,24 @@ def remember(fact, path):
             previous = json.loads(path.read_bytes())
         except FileNotFoundError:
             previous = None
-        identity = ("event_type", "repository", "operation", "task_id", "failure_code", "status", "evidence")
-        if isinstance(previous, dict) and all(previous.get(key) == fact[key] for key in identity):
-            return previous
+        subject = ("event_type", "repository", "operation", "task_id", "failure_code")
+        same_subject = isinstance(previous, dict) and all(previous.get(k) == fact[k] for k in subject)
+        previous_progress = previous.pop("_queue_recovery", None) if isinstance(previous, dict) else None
+        progress = None
+        if recovery_invocation is not None:
+            if same_subject:
+                fact, progress = confirm_queue_sample(fact, previous, previous_progress, recovery_invocation)
+            else:
+                progress = {"seen_at": fact["occurred_at"]}
+        if same_subject and previous.get("status") == fact["status"] and previous.get("evidence") == fact["evidence"]:
+            fact = previous
+            if previous_progress == progress:
+                return previous
+        stored = dict(fact, _queue_recovery=progress) if progress is not None else fact
         with tempfile.NamedTemporaryFile(dir=path.parent, mode="w", delete=False) as tmp:
             name = Path(tmp.name)
             try:
-                json.dump(fact, tmp)
+                json.dump(stored, tmp)
                 tmp.flush()
                 os.fsync(tmp.fileno())
                 name.replace(path)
@@ -94,7 +120,11 @@ def main():
     cli.add_argument("--target", required=True, help="Stable check target in this workspace")
     cli.add_argument("--max-age-seconds", type=int)
     cli.add_argument("--last-observation", type=Path, help="Private state file for replay of unchanged evidence")
+    cli.add_argument("--confirm-queue-recovery", action="store_true",
+                     help="Keep an incident open until two independent queue checks succeed")
     args = cli.parse_args()
+    if args.confirm_queue_recovery and (args.planfile_queue_url is None or args.last_observation is None):
+        cli.error("--confirm-queue-recovery requires --planfile-queue-url and --last-observation")
     if args.snapshot is not None:
         if args.root is None or args.max_age_seconds is None or args.max_age_seconds <= 0:
             cli.error("--snapshot requires --root and positive --max-age-seconds")
@@ -117,7 +147,9 @@ def main():
             "task_id": args.target, "failure_code": code, "failure_category": reason,
             "occurred_at": now.isoformat(), "source_event_id": f"{prefix}-{invocation}-{now.isoformat()}",
             "status": "success" if success else "failure", "summary": f"{label}: {reason}", "evidence": proof}
-    print(json.dumps(remember(fact, args.last_observation) if args.last_observation else fact))
+    if args.last_observation:
+        fact = remember(fact, args.last_observation, recovery_invocation=invocation if args.confirm_queue_recovery else None)
+    print(json.dumps(fact))
 
 
 if __name__ == "__main__":
