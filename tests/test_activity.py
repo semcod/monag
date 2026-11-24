@@ -144,6 +144,27 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(sum(len(r) for r in results), 1)
         self.assertEqual(len(read(self.root)), 1)
 
+    def test_concurrent_processes_record_one_fact_in_a_new_journal(self):
+        script = (
+            "import json,sys; from pathlib import Path; from monag.history import record; "
+            "data=json.load(sys.stdin); print(len(record(Path(data['root']),data)))"
+        )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            def write():
+                return subprocess.run([sys.executable, '-c', script], input=json.dumps(self.data()),
+                                      capture_output=True, text=True, check=True).stdout.strip()
+            first, second = [pool.submit(write) for _ in range(2)]
+            self.assertEqual(sorted([first.result(), second.result()]), ['0', '1'])
+        self.assertEqual(len(read(self.root)), 1)
+
+    def test_existing_journal_can_be_read_during_an_uncommitted_write(self):
+        from contextlib import closing
+        with closing(connect(self.root)) as writer:
+            writer.execute('BEGIN IMMEDIATE')
+            writer.execute("INSERT INTO snapshots VALUES('pending','{}')")
+            with closing(connect(self.root)) as reader:
+                self.assertIsNone(reader.execute("SELECT payload FROM snapshots WHERE scope='pending'").fetchone())
+
     def test_history_deduplicates_and_records_pid_reuse(self):
         d = self.data()
         state = self.root / 'state'
