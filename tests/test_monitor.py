@@ -169,6 +169,20 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(row['errors'], [])
         self.assertEqual([r['path'] for r in row['files']], ['new.txt'])
 
+    def test_git_observation_stops_at_the_execution_boundary(self):
+        self.git(self.root, 'init', '-q')
+        ceiling = self.root / 'isolated'
+        child = ceiling / 'work'
+        child.mkdir(parents=True)
+        with patch.dict(os.environ, {'GIT_CEILING_DIRECTORIES': str(ceiling),
+                                     'GIT_DIR': str(self.root / '.git')}):
+            _, error = command(['git', 'rev-parse', '--show-toplevel'], child)
+            self.assertIn('git rev-parse failed', error)
+            command(['git', 'init', '-q'], child)
+            output, error = command(['git', 'rev-parse', '--show-toplevel'], child)
+            self.assertIsNone(error)
+            self.assertEqual(output.strip(), str(child))
+
     def test_command_failure_preserves_safe_operation_context(self):
         from monag.monitor import command
         _, error = command(['git', 'status', '--short'], self.root)
