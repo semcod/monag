@@ -11,6 +11,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
+from .advisory_probe import probe_fact_advisories
+
 _AUTONOMY_UNIT_PREFIXES = (
     "heyasa",
     "willman",
@@ -143,6 +145,7 @@ def probe_live_autonomy_blockers(
         alert = _planfile_bridge_alert(bridge_url, timeout)
         if alert is not None:
             blockers.append(alert)
+    blockers.extend(probe_fact_advisories(timeout))
 
     # 3. Heyasa /health & paused cyclic plans
     h_status, h_body = _http_probe(heyasa_url, timeout)
