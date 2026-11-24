@@ -1,10 +1,12 @@
 """ExecCondition skips are reported as AUTONOMY_UNIT_SKIPPED, not as failures."""
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from monag import autodiagnosis
 
@@ -62,8 +64,30 @@ class AutonomyUnitSkipTests(unittest.TestCase):
         )
         by_code = {a["code"]: a for a in anomalies}
         self.assertLess(by_code["AUTONOMY_UNIT_SKIPPED"]["weight"], by_code["AUTONOMY_UNIT_FAILED"]["weight"])
-        tickets = autodiagnosis.synthesize_tickets_with_subllm({"anomalies": [by_code["AUTONOMY_UNIT_SKIPPED"]]}, runner=None)
-        self.assertIn("ExecCondition", " ".join(str(v) for v in tickets[0].values()))
+        skipped = by_code["AUTONOMY_UNIT_SKIPPED"]
+        with patch.object(autodiagnosis, "_find_subllm_runner", return_value=None):
+            ticket, = autodiagnosis.synthesize_tickets_with_subllm([skipped])
+        self.assertIn("ExecCondition", ticket["description"])
+
+    def test_model_restart_cannot_replace_observed_skip(self) -> None:
+        skipped, failed = self.probe(
+            _unit("subactor-repair-agent.service", "inactive", "dead", "exec-condition"),
+            _unit("subactor-pr-controller.service", "failed", "failed", "exit-code"),
+        )
+        runner = Mock(return_value=json.dumps({
+            "title": "Restart the service", "action": "systemctl --user restart service",
+            "acceptance_criteria": ["Unit is active"],
+        }))
+        tickets = autodiagnosis.synthesize_tickets_with_subllm([skipped, failed], runner=runner)
+        by_code = {t["source"]["context"]["code"]: t for t in tickets}
+        ticket = by_code["AUTONOMY_UNIT_SKIPPED"]
+        self.assertNotIn("restart", ticket["description"].lower())
+        self.assertIn("ExecCondition", ticket["verification_command"])
+        self.assertIn("subactor-repair-agent.service", ticket["verification_command"])
+        self.assertIn("Result=exec-condition", ticket["description"])
+        self.assertFalse(ticket["inputs"]["expect_files_changed"])
+        self.assertEqual(by_code["AUTONOMY_UNIT_FAILED"]["title"], "Restart the service")
+        self.assertEqual(runner.call_count, 1)
 
 
 if __name__ == "__main__":
