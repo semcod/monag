@@ -1,0 +1,26 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-169",
+  "summary": "PLF-29795 Publish qualified queue readiness as a continuation check fact",
+  "workstream": "infrastructure",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-169/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "infra/systemd/check-continuation-snapshot.py",
+    "infra/systemd/test_continuation_queue_check.py",
+    "infra/systemd/triage.env.example"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}
