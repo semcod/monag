@@ -5,11 +5,13 @@ GitHub PR metrics, and explicit source/scope/filter labels across a workspace.
 """
 from __future__ import annotations
 
+from contextlib import closing
 from datetime import date, datetime, time, timedelta, timezone
 import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 from typing import Any, Dict, List, Optional
 
@@ -469,6 +471,37 @@ def _github_window_start(target_date: date, since: Optional[datetime]) -> str:
     return since.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _read_urtlog_window(db: Path, start_us: int, end_us: int) -> tuple[int, int, str]:
+    """Return total events, failures and the coverage of the selected journal."""
+    try:
+        if not db.is_file():
+            return 0, 0, "missing"
+        with closing(sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=1.0)) as conn:
+            for table in ("events", "runs"):
+                columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+                if columns:
+                    break
+            if "at_us" in columns:
+                window = "at_us BETWEEN ? AND ?"
+                bounds = (start_us, end_us)
+            else:
+                ts = next((c for c in ("occurred_at", "created_at", "ts", "timestamp") if c in columns), None)
+                if ts is None:
+                    return 0, 0, "unsupported_schema"
+                # Legacy journals store Unix seconds or ISO timestamps, sometimes in TEXT columns.
+                timestamp = f"COALESCE(julianday({ts}), julianday({ts}, 'unixepoch'))"
+                window = f"{timestamp} BETWEEN julianday(?, 'unixepoch') AND julianday(?, 'unixepoch')"
+                bounds = (start_us / 1_000_000, end_us / 1_000_000)
+            status = next((c for c in ("status", "outcome") if c in columns), None)
+            failures = "0"
+            if status:
+                failures = f"COUNT(CASE WHEN lower({status}) IN ('failed','error','canceled','timeout') THEN 1 END)"
+            total, failed = conn.execute(f"SELECT COUNT(*), {failures} FROM {table} WHERE {window}", bounds).fetchone()
+            return total, failed, "observed" if status else "status_unavailable"
+    except (OSError, sqlite3.Error):
+        return 0, 0, "unreadable"
+
+
 def _collect_runtime_telemetry_24h(
     hours: int,
     telemetry_paths: Optional[Dict[str, Path]] = None,
@@ -476,21 +509,25 @@ def _collect_runtime_telemetry_24h(
     """Optional read-only 24h runtime telemetry adapter for Willman, URTLog, and Heyasa."""
     if os.environ.get("PYTEST_CURRENT_TEST") and telemetry_paths is None:
         return {"enabled": False, "reason": "skipped_in_pytest"}
-    import sqlite3
-
     paths = telemetry_paths or {}
     xdg_state = Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state"))
     willman_db = Path(paths.get("willman_db") or (xdg_state / "subactor" / "willman-project-jobs" / "projects.sqlite"))
-    urtlog_db = Path(paths.get("urtlog_db") or (xdg_state / "uritime" / "urtlog" / "urilog.sqlite3"))
+    urtlog_state = Path(os.environ.get("URTLOG_STATE_DIR", "").strip() or (xdg_state / "uritime" / "urtlog"))
+    urtlog_db = Path(paths.get("urtlog_db") or (urtlog_state / "urilog.sqlite3"))
     heyasa_plans = Path(paths.get("heyasa_plans") or (xdg_state / "heyasa" / "plans.json"))
 
-    cutoff = datetime.now(timezone.utc).timestamp() - max(1.0, float(hours)) * 3600.0
+    now = datetime.now(timezone.utc)
+    end_us = int(now.timestamp()) * 1_000_000 + now.microsecond
+    start_us = end_us - int(max(1.0, float(hours)) * 3_600_000_000)
+    cutoff = start_us / 1_000_000
+    events, failures, read_status = _read_urtlog_window(urtlog_db, start_us, end_us)
     out: Dict[str, Any] = {
         "enabled": True,
         "willman_jobs_24h": 0,
         "willman_uncertain_jobs": 0,
-        "urtlog_events_24h": 0,
-        "urtlog_failed_events_24h": 0,
+        "urtlog_events_24h": events,
+        "urtlog_failed_events_24h": failures,
+        "urtlog_read_status": read_status,
         "heyasa_paused_plans": 0,
     }
     if willman_db.is_file():
@@ -498,25 +535,6 @@ def _collect_runtime_telemetry_24h(
             conn = sqlite3.connect(f"file:{willman_db}?mode=ro", uri=True, timeout=1.0)
             out["willman_jobs_24h"] = int(conn.execute("SELECT count(*) FROM jobs WHERE updated >= ?", (cutoff,)).fetchone()[0])
             out["willman_uncertain_jobs"] = int(conn.execute("SELECT count(*) FROM jobs WHERE phase='uncertain'").fetchone()[0])
-            conn.close()
-        except Exception:
-            pass
-    if urtlog_db.is_file():
-        try:
-            conn = sqlite3.connect(f"file:{urtlog_db}?mode=ro", uri=True, timeout=1.0)
-            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-            tbl = "events" if "events" in tables else ("runs" if "runs" in tables else None)
-            if tbl:
-                cols = {r[1] for r in conn.execute(f"PRAGMA table_info({tbl})").fetchall()}
-                ts_col = next((c for c in ("occurred_at", "created_at", "ts", "timestamp") if c in cols), None)
-                st_col = next((c for c in ("status", "outcome") if c in cols), None)
-                if ts_col:
-                    out["urtlog_events_24h"] = int(conn.execute(f"SELECT count(*) FROM {tbl} WHERE {ts_col} >= ?", (cutoff,)).fetchone()[0])
-                    if st_col:
-                        out["urtlog_failed_events_24h"] = int(conn.execute(
-                            f"SELECT count(*) FROM {tbl} WHERE {ts_col} >= ? AND lower({st_col}) IN ('failed','error','canceled','timeout')",
-                            (cutoff,),
-                        ).fetchone()[0])
             conn.close()
         except Exception:
             pass
@@ -861,6 +879,20 @@ def format_markdown(data: Dict[str, Any]) -> str:
             ),
             "",
         ]
+
+        telemetry = delta.get("runtime_telemetry_24h") or {}
+        coverage = telemetry.get("urtlog_read_status")
+        if coverage:
+            lines.append(f"### Dziennik URTLog z ostatnich {hours}h")
+            if coverage == "observed":
+                lines.append(f"Zdarzenia ogółem {telemetry['urtlog_events_24h']}, w tym błędne {telemetry['urtlog_failed_events_24h']}.")
+            elif coverage == "status_unavailable":
+                lines.append(f"Zdarzenia ogółem {telemetry['urtlog_events_24h']}. Dziennik nie podaje statusu zdarzeń.")
+            else:
+                reasons = {"missing": "Brak pliku dziennika.", "unreadable": "Odczyt dziennika nie powiódł się.",
+                           "unsupported_schema": "Schemat dziennika nie zawiera obsługiwanej kolumny czasu."}
+                lines.append(reasons.get(coverage, "Brak danych o zdarzeniach."))
+            lines.append("")
 
         new_blockers = delta.get("new_blockers") or []
         if new_blockers:
