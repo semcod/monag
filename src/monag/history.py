@@ -1,5 +1,7 @@
 """Private SQLite observation history with bounded retention and atomic snapshots."""
+import fcntl
 import json
+import os
 from pathlib import Path
 import sqlite3
 import time
@@ -8,15 +10,30 @@ import time
 def connect(state_dir):
     state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = state_dir / 'history.sqlite3'
-    # Pre-create with restrictive permissions, before SQLite writes any content.
-    import os
-    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
-    os.fchmod(fd, 0o600)
-    os.close(fd)
+    # Closing a raw descriptor for an existing SQLite file can release this
+    # process's POSIX locks on the database. Open it directly only on creation.
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+    except FileExistsError:
+        pass
+    else:
+        os.close(fd)
+    if path.stat().st_mode & 0o777 != 0o600:
+        path.chmod(0o600)
     db = sqlite3.connect(path, timeout=10)
-    db.execute('CREATE TABLE IF NOT EXISTS snapshots (scope TEXT PRIMARY KEY, payload TEXT NOT NULL)')
-    db.execute('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, observed REAL NOT NULL, scope TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL)')
-    db.execute('CREATE INDEX IF NOT EXISTS events_time ON events(observed)')
+    try:
+        objects = db.execute(
+            "SELECT type, name FROM sqlite_master WHERE name IN ('snapshots', 'events', 'events_time')"
+        ).fetchall()
+        if set(objects) != {('table', 'snapshots'), ('table', 'events'), ('index', 'events_time')}:
+            with db:
+                db.execute('BEGIN IMMEDIATE')
+                db.execute('CREATE TABLE IF NOT EXISTS snapshots (scope TEXT PRIMARY KEY, payload TEXT NOT NULL)')
+                db.execute('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, observed REAL NOT NULL, scope TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL)')
+                db.execute('CREATE INDEX IF NOT EXISTS events_time ON events(observed)')
+    except sqlite3.Error:
+        db.close()
+        raise
     return db
 
 
@@ -49,6 +66,16 @@ def compact(data):
 
 
 def record(state_dir, data, retention_days=7):
+    # The first schema write and the first snapshot share the same writer
+    # boundary. Process exit releases the sidecar lock, including after a crash.
+    state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(state_dir / 'history.writer.lock', os.O_CREAT | os.O_RDWR, 0o600)
+    with os.fdopen(fd, 'rb') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _record_snapshot(state_dir, data, retention_days)
+
+
+def _record_snapshot(state_dir, data, retention_days):
     current = compact(data)
     scope, now = scope_of(data), time.time()
     db = connect(state_dir)
