@@ -1,0 +1,26 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-159",
+  "summary": "Detect overdue OQLLM fact advisories from the URTLog journal (PLF-25980)",
+  "workstream": "application",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-159/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/advisory_probe.py",
+    "src/monag/autonomy_probes.py",
+    "tests/test_advisory_probe.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}
