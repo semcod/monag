@@ -6,6 +6,7 @@ import os
 import sqlite3
 import subprocess
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable
@@ -42,6 +43,44 @@ def _http_probe(url: str, timeout: float) -> tuple[int | None, dict[str, Any] | 
             return int(exc.code), raw[:300] or str(exc)
     except Exception as exc:
         return None, str(exc)[:200]
+
+
+def _planfile_bridge_alert(url: str, timeout: float) -> dict[str, Any] | None:
+    """Check the capability advertised by a central Planfile expected to emit telemetry."""
+    try:
+        endpoint = urllib.parse.urlsplit(url)
+        valid_endpoint = endpoint.scheme in {"http", "https"} and bool(endpoint.hostname)
+    except ValueError:
+        valid_endpoint = False
+    status, body = _http_probe(url, timeout) if valid_endpoint else (None, None)
+    fields = ("enabled", "state_dir_configured", "urtlog_importable")
+    bridge = body.get("urtlog_bridge") if status == 200 and isinstance(body, dict) else None
+    flags = (
+        {key: bridge[key] for key in fields if isinstance(bridge.get(key), bool)}
+        if isinstance(bridge, dict) else {}
+    )
+    if len(flags) == len(fields) and all(flags.values()):
+        return None
+    missing = [key for key in fields if flags.get(key) is False]
+    if missing:
+        cause = "planfile-urtlog-unready"
+        detail = "Reported false: " + ", ".join(missing)
+    else:
+        cause = "planfile-urtlog-unverified"
+        detail = f"HTTP {status} returned no complete set of bridge readiness flags" if status else "Health endpoint unavailable"
+        if not valid_endpoint:
+            detail = "Bridge health URL must name an HTTP or HTTPS host"
+    return {
+        "origin": "operator-alert",
+        "category": "telemetry",
+        "priority": "high",
+        "cause": cause,
+        "repo": "subactor/platform",
+        "title": f"Central Planfile URTLog bridge: {cause.removeprefix('planfile-urtlog-')}",
+        "evidence": detail,
+        "http_status": status,
+        "bridge": flags,
+    }
 
 
 def probe_live_autonomy_blockers(
@@ -97,6 +136,13 @@ def probe_live_autonomy_blockers(
             "title": f"P0 Autonomy Blocker: Planfile /tickets/discovery unhealthy ({p_status or 'err'}: {detail})",
             "detail": detail,
         })
+
+    # Setting the health URL declares that this installation should emit URTLog events.
+    bridge_url = urls.get("planfile_urtlog") or os.environ.get("MONAG_PLANFILE_URTLOG_HEALTH_URL")
+    if bridge_url:
+        alert = _planfile_bridge_alert(bridge_url, timeout)
+        if alert is not None:
+            blockers.append(alert)
 
     # 3. Heyasa /health & paused cyclic plans
     h_status, h_body = _http_probe(heyasa_url, timeout)
