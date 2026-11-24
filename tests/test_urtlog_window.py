@@ -66,3 +66,32 @@ def test_distinguishes_empty_partial_unreadable_and_unknown(tmp_path):
     assert _read_urtlog_window(db, 0, 10) == (1, 0, "status_unavailable")
     journal(db, "CREATE TABLE events (at_us INTEGER, status TEXT)")
     assert _read_urtlog_window(db, 0, 10) == (0, 0, "observed")
+
+
+def test_daily_summary_discovers_one_xdg_journal_and_honors_overrides(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.delenv("URTLOG_STATE_DIR", raising=False)
+    deployed = tmp_path / "urtlog" / "urilog.sqlite3"
+    legacy = tmp_path / "uritime" / "urtlog" / "urilog.sqlite3"
+    now = int(datetime.now(timezone.utc).timestamp()) * 1_000_000
+
+    def coverage(**paths):
+        report = gather_summary(tmp_path, github=False, mode="day", telemetry_paths=paths)
+        data = report["delta_24h"]["runtime_telemetry_24h"]
+        return data["urtlog_read_status"], data["urtlog_events_24h"]
+
+    for db, count in ((legacy, 1), (deployed, 2)):
+        db.parent.mkdir(parents=True)
+        journal(db, "CREATE TABLE events (at_us INTEGER, status TEXT)",
+                "INSERT INTO events VALUES (?, ?)", [(now, "success")] * count)
+        assert coverage() == ("observed", count)
+
+    monkeypatch.setenv("URTLOG_STATE_DIR", str(legacy.parent))
+    assert coverage() == ("observed", 1)
+    monkeypatch.setenv("URTLOG_STATE_DIR", str(tmp_path / "absent"))
+    assert coverage() == ("missing", 0)
+    assert coverage(urtlog_db=deployed) == ("observed", 2)
+
+    monkeypatch.delenv("URTLOG_STATE_DIR")
+    legacy.unlink()
+    assert coverage() == ("observed", 2)

@@ -512,15 +512,19 @@ def _collect_runtime_telemetry_24h(
     paths = telemetry_paths or {}
     xdg_state = Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state"))
     willman_db = Path(paths.get("willman_db") or (xdg_state / "subactor" / "willman-project-jobs" / "projects.sqlite"))
-    urtlog_state = Path(os.environ.get("URTLOG_STATE_DIR", "").strip() or (xdg_state / "uritime" / "urtlog"))
-    urtlog_db = Path(paths.get("urtlog_db") or (urtlog_state / "urilog.sqlite3"))
+    urtlog_db = paths.get("urtlog_db")
+    if urtlog_db is None:
+        state_dir = os.environ.get("URTLOG_STATE_DIR", "").strip()
+        urtlog_db = (Path(state_dir) if state_dir else xdg_state / "urtlog") / "urilog.sqlite3"
+        if not state_dir and not urtlog_db.is_file():
+            urtlog_db = xdg_state / "uritime" / "urtlog" / "urilog.sqlite3"
     heyasa_plans = Path(paths.get("heyasa_plans") or (xdg_state / "heyasa" / "plans.json"))
 
     now = datetime.now(timezone.utc)
     end_us = int(now.timestamp()) * 1_000_000 + now.microsecond
     start_us = end_us - int(max(1.0, float(hours)) * 3_600_000_000)
     cutoff = start_us / 1_000_000
-    events, failures, read_status = _read_urtlog_window(urtlog_db, start_us, end_us)
+    events, failures, read_status = _read_urtlog_window(Path(urtlog_db), start_us, end_us)
     out: Dict[str, Any] = {
         "enabled": True,
         "willman_jobs_24h": 0,
