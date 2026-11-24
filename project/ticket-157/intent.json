@@ -1,0 +1,25 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-157",
+  "summary": "Check declared central Planfile telemetry health in live triage (PLF-25978)",
+  "workstream": "application",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-157/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/monag/autonomy_probes.py",
+    "tests/test_planfile_bridge_health.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}
