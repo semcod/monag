@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import queue
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -1241,7 +1242,7 @@ def _parse_subllm_response(text: str, fallback_anomaly: Dict[str, Any]) -> Dict[
         "SYSTEM_LOG_ERROR": "Diagnose root cause of runtime system log error, apply code/configuration fix, and verify service stability with tests.",
         "AUTONOMY_UNIT_FAILED": "Inspect failed systemd --user journal logs, repair unit configuration or runtime crash, and verify active service health.",
         "AUTONOMY_DAEMON_INACTIVE": "Inspect heyasa.service user unit status and restart or re-enable autonomous orchestrator daemon.",
-        "AUTONOMY_UNIT_SKIPPED": "Inspect why the unit ExecCondition declines to start it (journal of the condition check) and restore the missing precondition.",
+        "AUTONOMY_UNIT_SKIPPED": "Inspect the ExecCondition result and determine whether the skipped run matches the configured condition.",
         "AUTONOMY_ELIGIBLE_PROJECTS_ZERO": "Inspect Heyasa flowguard project_exclusions and unblock repository eligibility or lease gates.",
         "AUTONOMY_ADMISSION_STALL": "Inspect Heyasa flowguard blocked_reasons and slot capacity to restore candidate admission.",
         "AUTONOMY_VELOCITY_STALL": "Inspect stalled Heyasa execution pipeline, executor health, and open candidate backlog.",
@@ -1256,6 +1257,14 @@ def _parse_subllm_response(text: str, fallback_anomaly: Dict[str, Any]) -> Dict[
     if code in {"AUTONOMY_UNIT_FAILED", "AUTONOMY_DAEMON_INACTIVE"}:
         unit_name = (fallback_anomaly.get("details") or {}).get("unit", "heyasa.service")
         verify_cmd = f"systemctl --user is-active {unit_name}"
+    elif code == "AUTONOMY_UNIT_SKIPPED":
+        unit = (fallback_anomaly.get("details") or {}).get("unit")
+        verify_cmd = (
+            f"systemctl --user show --property=Result,ExecCondition -- {shlex.quote(unit)}"
+            if unit else "systemctl --user list-units --all --type=service"
+        )
+        ac1 = "AC-01: Identify the ExecCondition and record why it declined this run."
+        ac2 = "AC-02: Confirm the skip was expected or identify the unmet prerequisite."
     elif code in {"AUTONOMY_ELIGIBLE_PROJECTS_ZERO", "AUTONOMY_ADMISSION_STALL", "AUTONOMY_VELOCITY_STALL"}:
         verify_cmd = "curl -fsS http://127.0.0.1:8765/v1/daemon/status || curl -fsS http://127.0.0.1:7080/v1/daemon/status"
     elif code == "HOST_LOAD_SATURATION":
@@ -1308,7 +1317,9 @@ def synthesize_tickets_with_subllm(anomalies: Any,
     for anom in anom_list:
         subllm_result: Optional[str] = None
         remaining_budget = budget_seconds - (time.monotonic() - started_mono)
-        if runner and not circuit_open and remaining_budget > 0.0:
+        # A deliberate systemd skip already has a diagnostic and requires no inferred repair.
+        condition_skipped = anom.get("code") == "AUTONOMY_UNIT_SKIPPED"
+        if runner and not condition_skipped and not circuit_open and remaining_budget > 0.0:
             prompt = _format_subllm_prompt(anom)
             subllm_result = _invoke_runner_bounded(runner, prompt, min(call_timeout, remaining_budget))
             if subllm_result:
@@ -1395,8 +1406,8 @@ Observed technical defect in `{target}`:
 
         inputs_info = {
             "verify_command": cmd,
-            "expect_files_changed": True,
-            "patch_mode": True,
+            "expect_files_changed": not condition_skipped,
+            "patch_mode": not condition_skipped,
             "worktree": True,
             "risk_class": "R1",
             "contract": "wellmanifest.defect-repair/v1",
