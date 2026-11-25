@@ -1,0 +1,25 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-170",
+  "summary": "PLF-29796 Require independent consecutive queue recovery samples",
+  "workstream": "infrastructure",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-170/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "infra/systemd/check-continuation-snapshot.py",
+    "infra/systemd/test_continuation_queue_check.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null
+}
